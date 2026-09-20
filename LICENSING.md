@@ -123,17 +123,20 @@ static case is a **relinking obligation**: a recipient must be able to replace
 their copy of FluidSynth with a modified one and rebuild the result.
 
 For this project that obligation is already satisfied by how it is built. The
-whole thing is GPL-3-or-later with complete corresponding source, FluidSynth is
-consumed at a pinned upstream commit recorded below, and `tools/fetch_deps.sh`
-plus `tools/patches/` reproduce the exact tree that was compiled. Anyone can
-change the pin, or edit `third_party/fluidsynth`, and rebuild. No separate
+whole thing is GPL-3-or-later with complete corresponding source, and
+FluidSynth is a submodule of a public fork at a recorded commit — so the exact
+tree that was compiled is not merely reproducible, it is fetchable. Anyone can
+move the pointer, or edit `third_party/fluidsynth`, and rebuild. No separate
 provision is needed — but the reasoning is recorded here so that a future change
 (shipping a prebuilt `.so` without sources, say) is recognised as the thing that
 would break it.
 
-**The two FluidSynth patches are ours and are GPL-3-or-later**, like the rest of
-this project's code; they are distributed as patch files, not as a fork, so the
-LGPL work itself stays identifiable. `cpp/fluid/fluid_glue.c` is likewise ours.
+**The two FluidSynth modifications are ours and are GPL-3-or-later**, like the
+rest of this project's code. They are two commits on
+`michiel-dewilde/fluidsynth`, branch `bagosynths/main`, each with its reasoning
+in the message — so the LGPL work itself stays identifiable, commit by commit,
+which is a stronger separation than a patch file gave.
+`cpp/fluid/fluid_glue.c` is likewise ours.
 
 **SoundFonts are content and are NOT distributed with this project.** An SF2 or
 SF3 file carries its own licence, and several popular General MIDI fonts are free
@@ -160,11 +163,17 @@ ships to the device but **not** inside the APK — see
 `tools/install_surge_data.sh`. It is distributed by the Surge Synth Team under
 the same terms as the project, and is covered by the same source offer.
 
-**We patch four upstream files**, all recorded in `tools/patches/` and applied by
-`tools/fetch_deps.sh`. Under GPL these are modifications we distribute, so they
-must go out with the corresponding source — keeping them as patch files against
-pinned commits is what makes that honest, and is why the dependency is not
-forked.
+**We modify six upstream files, across five dependencies, and every change is a
+commit on a public fork.** Under GPL these are modifications we distribute, so
+they must go out with the corresponding source. Forks make that stronger rather
+than more complicated: the branch **is** the corresponding source, publicly
+reachable, with each modification attributable to a commit that says why it
+exists. The table below names the fork and the commit for each.
+
+**The obligation this creates: the forks must stay reachable** for as long as
+any binary is distributed. Nothing has been distributed yet, so it costs
+nothing today — but it is the thing that would quietly break, and it is the
+price of the arrangement.
 
 **setBfree, verified rather than assumed.** Every file actually compiled into the
 binary was checked for the "or later" clause, not just the top-level `COPYING`
@@ -177,24 +186,36 @@ carries no header of its own; it inherits the project's terms.
 
 Since the whole binary is GPL-3-or-later, this combines. It also means
 **distributing the APK obliges us to offer the complete corresponding source**,
-including the exact `third_party` revisions — so those must stay pinned and
-recorded, not floating. As built:
+including the exact `third_party` revisions.
 
-| dependency | upstream | commit | dated |
-|---|---|---|---|
-| sfizz | github.com/sfztools/sfizz | `f5c6e29f23b8057867c08e88f5f6ac6738baa30b` | 2025-03-17 |
-| setBfree | github.com/pantherb/setBfree | `2f41983b5b535bda9b1b1db38a06da29d50ff557` | 2026-09-08 |
-| Surge XT | github.com/surge-synthesizer/surge | `58914e59c608ed4384ba6002e44c3465c58b2e71` | 2026-09-18 |
-| Dexed (msfa) | github.com/asb2m10/dexed | `2e182b3db85c09083ab13c8b9b00565ce7d9ff85` | 2026-03-15 |
-| FluidSynth | github.com/FluidSynth/fluidsynth | `71e85b2ca6bf48641ba7e2261d8f2640ae473773` | 2026-09-19 (tagged 2.6.1) |
-| stb (stb_vorbis) | github.com/nothings/stb | `2c980bb59875b0d32144a71867fbdebb2f77cd20` | 2026-08-01 |
+Every dependency is a **submodule of a fork under `michiel-dewilde`**, on the
+branch `bagosynths/main`, so the pin is recorded by git itself rather than by a
+line in a script that could drift from it. The `.gitmodules` urls are relative
+— `../sfizz.git` and so on — which resolves against whatever origin this
+repository was cloned from, over ssh or https alike.
 
-Surge's own submodules are pinned by that commit; `tools/fetch_deps.sh` fetches
-the 15 of 23 that are actually needed.
+| dependency | fork, branch `bagosynths/main` | forked from | upstream base | ours? |
+|---|---|---|---|---|
+| sfizz | michiel-dewilde/sfizz | sfztools/sfizz | `f5c6e29f` (2025-03-17) | 1 commit |
+| setBfree | michiel-dewilde/setbfree | pantherb/setBfree | `2f41983b` (2026-09-08) | unmodified |
+| Surge XT | michiel-dewilde/surge | surge-synthesizer/surge | `58914e59` (2026-09-18) | 2 commits |
+| sst-plugininfra | michiel-dewilde/sst-plugininfra | surge-synthesizer/sst-plugininfra | `ebdaf5e9` | 1 commit |
+| Dexed (msfa) | michiel-dewilde/dexed | asb2m10/dexed | `2e182b3d` (2026-03-15) | 1 commit |
+| FluidSynth | michiel-dewilde/fluidsynth | FluidSynth/fluidsynth | `71e85b2c` (2.6.1, 2026-09-19) | 2 commits |
+| stb (stb_vorbis) | michiel-dewilde/stb | nothings/stb | `2c980bb5` (2026-08-01) | unmodified |
 
-Both were cloned shallow (`--depth 1`). A shallow clone is enough to build and
-enough to identify the revision, but **not** enough to hand someone if the source
-offer is ever exercised — re-clone at that commit with full history.
+setBfree and stb are forked although nothing in them is changed, because
+relative submodule urls require every submodule to live under the same owner.
+Their branches sit exactly on the upstream commit.
+
+sst-plugininfra is a submodule of **Surge**, not of this project: our surge fork
+points `libs/sst/sst-plugininfra` at `../sst-plugininfra.git`, relative from
+itself. The other fourteen Surge submodules stay pointed upstream, and
+`tools/init_deps.sh` fetches the 15 of 23 that are actually needed.
+
+Submodules are checked out shallow (`--depth 1`). That is enough to build and
+enough to identify the revision, but **not** enough to hand someone if the
+source offer is ever exercised — re-clone at that commit with full history.
 
 ### Planned — permissive (no copyleft obligation)
 

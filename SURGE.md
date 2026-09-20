@@ -55,7 +55,8 @@ for a *single* voice; the worst patch in the library costs **0.157 ms** for one.
 
 ## What it actually cost to get there
 
-Four upstream patches, none in DSP, all in [tools/patches/](tools/patches/):
+Four upstream changes, none in DSP, all carried as commits on the forks
+(see [LICENSING.md](LICENSING.md) for which fork and which commit):
 
 * bionic has no `execinfo.h`, so `sst-plugininfra`'s `backtrace()` call is
   stubbed on Android;

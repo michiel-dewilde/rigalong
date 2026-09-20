@@ -9,7 +9,7 @@
  * 16-bit mono PCM".
  *
  * stb_vorbis does that in one public-domain source file. So
- * `tools/patches/fluidsynth-sf3-without-libsndfile.patch` keeps the part that is
+ * The fluidsynth fork's SF3 commit keeps the part that is
  * genuinely FluidSynth's — finding the compressed bytes inside the SoundFont,
  * under its own file callbacks and mutex — and calls out here for the decode.
  * The same split as `beatrix_glue.c` and `dexed_glue.cpp`: supply what the
@@ -36,7 +36,7 @@
  * unprefixed copy is not an ODR hazard to be discovered later -- it is an
  * immediate `duplicate symbol` from the linker, which is how this was found.
  *
- * The same remedy as tools/patches/sfizz-tunings-namespace.patch: rename one
+ * The same remedy as the sfizz fork's Tunings rename: rename one
  * copy rather than hope the two agree. Binding to sfizz's copy instead would
  * have saved about 100 kB and coupled SF3 support to the sampler's private
  * vendoring, which is a worse trade -- this file would then break whenever

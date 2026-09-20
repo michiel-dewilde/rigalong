@@ -45,7 +45,7 @@ if [ ${#files[@]} -eq 0 ]; then
     default_dir="$ROOT/third_party/fluidsynth/sf2"
     if [ ! -d "$default_dir" ]; then
         echo "no files given, and $default_dir is missing." >&2
-        echo "Run tools/fetch_deps.sh first, or pass a .sf2/.sf3 path." >&2
+        echo "Run tools/init_deps.sh first, or pass a .sf2/.sf3 path." >&2
         exit 1
     fi
     files=(

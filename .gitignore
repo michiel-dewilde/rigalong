@@ -21,19 +21,6 @@ app/.cxx/
 # into app/build/generated/dx7-assets/, which the build/ rules above cover.
 # Dexed already publishes them; a second copy here could only drift.
 
-# ------------------------------------------------------------------ third_party
-# Upstream engines, several hundred MB of clones. NOT committed as content: they
-# are recoverable exactly, because every commit they are built from is pinned in
-# tools/fetch_deps.sh and recorded in LICENSING.md.
-#
-# This rule goes away at the step that turns them into submodules with relative
-# URLs, where .gitmodules records the same pins and git fetches them itself.
-#
-# Note for distribution: the GPL source offer covers these. Pinning the revision
-# identifies the corresponding source; shipping an APK to anyone else means
-# actually being able to hand it over, so do not let the pins rot.
-third_party/
-
 # ------------------------------------------------------------------ local only
 # Machine-specific: sdk.dir is an absolute path on one laptop. Every checkout
 # regenerates this, and committing it breaks the next machine.

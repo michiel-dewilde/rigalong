@@ -101,15 +101,19 @@ MIDI In --+--> sfizz    --+
 Builds and runs. Working toolchain: **AGP 8.13.2, Gradle 8.14.5, JDK 21, Kotlin
 2.0.21, NDK 30.0.16248370, CMake 4.1.2, compileSdk/targetSdk 36, Oboe 1.9.3**.
 
-First, fetch the upstream engines. They are not in this repository — ~183 MB of
-other people's code, recoverable exactly from the commits pinned in
-[LICENSING.md](LICENSING.md):
+First, check out the upstream engines. They are submodules of forks, on the
+branch `bagosynths/main`, with relative urls — so this works whether the clone
+came over ssh or https, and nothing has to be edited:
 
 ```
-tools/fetch_deps.sh          # sfizz, setBfree, Surge XT, Dexed, FluidSynth and stb
-                             # (Plaits needs no clone — it is inside Surge's libs/eurorack)
+tools/init_deps.sh           # sfizz, setBfree, Surge XT, Dexed, FluidSynth and stb
+                             # (Plaits needs no clone -- it is inside Surge's libs/eurorack)
 tools/install_soundfont.sh   # put an .sf2/.sf3 on the tablet
 ```
+
+Not `git submodule update --init --recursive`: Surge carries 23 submodules and
+this build uses 15, and the eight left out are JUCE and friends. That is the
+whole reason the script exists.
 
 Then:
 
@@ -200,19 +204,23 @@ reason. Launch the app once first so it creates the files directory.
 
 ## Getting the dependencies
 
-`third_party/` is over a gigabyte of other people's code and is not committed.
+`third_party/` is over a gigabyte of other people's code, and every directory in
+it is a **submodule of a fork** on the branch `bagosynths/main`.
 
 ```
-tools/fetch_deps.sh
+tools/init_deps.sh
 ```
 
-clones sfizz, setBfree, Surge XT and Dexed at the exact pinned commits, fetches
-only the submodules that are actually built, and applies the five small patches
-in `tools/patches/` (bionic has no `execinfo.h`; two upstream CMake bugs that only
-appear via `add_subdirectory`; and a namespace rename that keeps sfizz's and
-Surge's vendored copies of the same tuning library from colliding, and one that
-drops a third copy out of Dexed). It is safe to re-run — already-applied patches
-are skipped.
+checks out the six, then the 15 Surge submodules this build actually needs and
+sfizz's own, all shallow. It is safe to re-run.
+
+The six modifications those forks carry are commits, not patch files, each
+explaining itself in its message: bionic has no `execinfo.h`; three upstream
+CMake bugs that only appear via `add_subdirectory`; a namespace rename that
+keeps sfizz's and Surge's vendored copies of the same tuning library from
+colliding, and the removal of a third copy from Dexed; and SF3 decoding routed
+through stb_vorbis instead of libsndfile. [LICENSING.md](LICENSING.md) names
+each fork and the commit it sits on.
 
 After adding a dependency, run:
 

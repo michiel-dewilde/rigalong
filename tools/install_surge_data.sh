@@ -29,7 +29,7 @@ else
 fi
 
 if [ ! -d "$SRC" ]; then
-    echo "No Surge checkout at $SRC -- run tools/fetch_deps.sh first." >&2
+    echo "No Surge checkout at $SRC -- run tools/init_deps.sh first." >&2
     exit 1
 fi
 

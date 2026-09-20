@@ -87,7 +87,7 @@ target_compile_options(beatrix PRIVATE -w $<$<CONFIG:Release>:-O3>)
 # path, not forcing one. `surge-common` is the library; `surge-juce` that it
 # links is an INTERFACE target carrying only JUCE_* defines, no JUCE code.
 #
-# Three small patches are applied by tools/fetch_deps.sh -- see tools/patches/
+# Three small fixes ride on the forks; see LICENSING.md for each
 # and LICENSING.md. None of them is in DSP.
 set(SURGE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../../../../third_party/surge)
 
@@ -119,7 +119,7 @@ add_subdirectory(${SURGE_DIR} ${CMAKE_BINARY_DIR}/surge EXCLUDE_FROM_ALL)
 #
 # `tuning.cc` is deliberately absent: it is the one file in msfa that pulls in
 # JUCE, and the only thing that needed the tuning library. `createStandardTuning`
-# is supplied by dexed/dexed_glue.cpp instead. See tools/patches/.
+# is supplied by dexed/dexed_glue.cpp instead. See LICENSING.md.
 #
 # EngineMkI and EngineOpl live outside msfa but are equally free of JUCE, and
 # they are the difference between "a DX7" and "a DX7 that sounds right" -- so
@@ -187,7 +187,7 @@ endforeach()
 add_subdirectory(${FLUIDSYNTH_DIR} ${CMAKE_BINARY_DIR}/fluidsynth EXCLUDE_FROM_ALL)
 
 # The Ogg Vorbis decoder FluidSynth would otherwise have taken from libsndfile.
-# See cpp/fluid/fluid_glue.c and tools/patches/fluidsynth-sf3-without-libsndfile.patch:
+# See cpp/fluid/fluid_glue.c and the fluidsynth fork's SF3 commit:
 # one public-domain file instead of libsndfile + libogg + libvorbis.
 add_library(fluidglue STATIC fluid/fluid_glue.c)
 target_include_directories(fluidglue PRIVATE ${STB_DIR})

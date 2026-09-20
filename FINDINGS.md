@@ -254,7 +254,7 @@ upstream and costs only formula modulators and wavetable scripts),
 are needed — **not** JUCE, LuaJIT, pybind11, melatonin_inspector,
 clap-juce-extensions, MTS-ESP or surge-rs.
 
-**Four patches, all tiny, in `tools/patches/`:**
+**Four modifications, all tiny, carried as commits on the forks:**
 
 * bionic has no `execinfo.h`; `sst-plugininfra`'s `misc_linux.cpp` calls
   `backtrace()`. It is a crash-path diagnostic, so it is stubbed on Android.
@@ -674,7 +674,7 @@ Elements would bring a second `stmlib` and a collision to manage. The cheapest
 engine is one that is already linked.
 
 **Confirmed by doing it (2026-09-20).** Plaits went in with no entry in
-`fetch_deps.sh`, no patch and no new archive, because `surge-common` links
+`init_deps.sh`, no patch and no new archive, because `surge-common` links
 `surge::eurorack` **PUBLIC** — and `sst-basic-blocks`, which carries the Lanczos
 resampler, with it. Whether a vendored library's include directories reach you is
 a question of PUBLIC versus PRIVATE on the target that links it, and it is worth
@@ -686,12 +686,21 @@ reading that line before assuming either way.
 
 **Android Gradle builds every target it discovers, not `all`.** So a dependency's `EXCLUDE_FROM_ALL` test programs get built, and their link errors become yours. `targets += "<your lib>"` in `build.gradle.kts` is both the fix and a build-time saving.
 
-**`third_party/` is patched, and the patches are files, not a fork.**
-`tools/fetch_deps.sh` clones at pinned commits and applies `tools/patches/*`,
-skipping any already applied so it is safe to re-run. On Windows, set
-`core.autocrlf false` and `core.eol lf` on every clone **and recursively on every
-submodule** before patching — a CRLF working tree makes every patch fail to
-apply.
+**`third_party/` is submodules of forks, and the modifications are commits.**
+Each fork carries branch `bagosynths/main`, and `.gitmodules` uses a RELATIVE
+url (`../sfizz.git`), which resolves against whatever origin the superproject
+was cloned from — so ssh and https both work and neither is written down.
+`tools/init_deps.sh` checks them out; it exists only because Surge carries 23
+submodules and this build needs 15.
+
+**On Windows, `core.autocrlf false` and `core.eol lf` must be set BEFORE the
+checkout, not after.** Git for Windows ships `core.autocrlf=true` in its SYSTEM
+gitconfig, and `git submodule update` clones and checks out in one subprocess,
+so a `foreach` that sets the flag afterwards is too late: the files are already
+CRLF, every one reads as modified, and the superproject reports every submodule
+dirty. Pass `-c core.autocrlf=false -c core.eol=lf` to the `submodule update`
+itself — it propagates to the clone through `GIT_CONFIG_PARAMETERS`, which is
+the only place early enough.
 
 **Build Surge somewhere with a short path.** `sst-effects` generates object files
 named after preset files, and `CMAKE_OBJECT_PATH_MAX` is 250 characters.

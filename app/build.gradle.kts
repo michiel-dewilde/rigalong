@@ -100,7 +100,7 @@ android {
 // licensing question becomes "we ship what Dexed ships, from Dexed's own tree,
 // at a recorded revision", and there is no second copy left to drift.
 //
-// The consequence to know about: a clone that has not run tools/fetch_deps.sh
+// The consequence to know about: a clone that has not run tools/init_deps.sh
 // builds an APK whose DX7 has only its init voice. That is correct behaviour --
 // the panel already says "no cartridges" -- but it is now reachable by a route
 // that has nothing to do with missing banks.
