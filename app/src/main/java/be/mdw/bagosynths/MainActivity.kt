@@ -1131,13 +1131,20 @@ class MainActivity : Activity() {
 
         statusView.text = buildString {
             appendLine("device     $audioDeviceLabel  [id ${s.deviceId}]")
-            // The presentation position, which is the only reading here that
-            // does not come from this process. When it freezes while `out` is
-            // moving, the audio is dying below the app.
+            // The presentation position: the only reading here that does not
+            // come from this process.
+            //
+            // It says the STREAM IS ALIVE. It does NOT say anything is audible,
+            // and the wording matters because it was read as a guarantee once
+            // already. On an MMAP stream this position can come from a hardware
+            // counter that keeps ticking whether or not the data path reaches
+            // the DAC -- which is exactly what happened on 2026-09-20, when the
+            // dock starved the CP-88 of isochronous bandwidth and every reading
+            // in this app stayed healthy through hours of silence.
             appendLine("presented  " + when {
                 !s.timestampOk -> "no timestamp from the HAL"
                 s.stalledSeconds > 1.0f -> "FROZEN for ${"%.1f".format(s.stalledSeconds)} s"
-                else -> "advancing"
+                else -> "advancing  (stream alive — not proof of sound)"
             })
             appendLine("midi       ${if (NativeBridge.nativeMidiOpen()) "connected" else "NOT CONNECTED"}")
             appendLine("state      ${if (s.running) "running" else "stopped"}   [$warn]")

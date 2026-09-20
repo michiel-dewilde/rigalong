@@ -306,8 +306,9 @@ oboe::DataCallbackResult AudioEngine::onAudioReady(oboe::AudioStream* stream,
     // For the silence that survives a stream restart: the engine meter says
     // 0,148 and nothing is audible, and everything between the two is invisible
     // -- the dither, the probe overwrite, the ring copy. If this reads zero
-    // while  does not, the samples die inside this process. If both read
-    // the same, we are handing real audio to the HAL and the fault is below us.
+    // while the graph meter does not, the samples die inside this process.
+    // If both read the same, we are handing real audio to the HAL and the
+    // fault is below us -- which is how the dock was found on 2026-09-20.
     int16_t cbPeak = 0;
     for (uint32_t i = 0; i < take * 2; ++i) {
         const int16_t v = out[i] < 0 ? static_cast<int16_t>(-out[i]) : out[i];
