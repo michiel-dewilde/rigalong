@@ -283,6 +283,11 @@ private:
     std::atomic<float> mInputPeak{0.0f};
     std::atomic<float> mOutputPeak{0.0f};
 
+    // Peak of the int16 frames handed to AAudio, measured in the callback. The
+    // only reading that sees what leaves this process rather than what the
+    // graph produced.
+    std::atomic<float> mCallbackPeak{0.0f};
+
     // Presentation-position tracking for the dropout hunt. Mutable because
     // stats() is const and is the natural place to sample this: it is called by
     // the UI poller at 4 Hz, which is exactly the cadence that matters and is

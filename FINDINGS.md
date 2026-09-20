@@ -874,6 +874,68 @@ adb shell dumpsys window | grep -c "mCurrentFocus.*be.mdw.bagosynths"   # 1 = sa
 instead of tapping blind. **Button coordinates shift whenever a button is added** —
 re-read them from a screenshot after any UI change.
 
+### The USB topology is part of the instrument
+
+**MIDI surviving while audio dies is a USB bandwidth problem, and nothing else
+looks like it.** Diagnosed 2026-09-20 after the rig went silent for minutes at a
+time with the UI, the voice count and every internal meter reading healthy.
+
+The three transfer types fail differently, and that is the whole diagnosis:
+
+| | transfer type | behaviour when periodic bandwidth is gone |
+|---|---|---|
+| MIDI | **bulk** | keeps working — best-effort, nothing reserved |
+| opening the stream | **control** | keeps working — the DAC still clicks on start/stop |
+| audio | **isochronous** | **dies** — it needs *reserved* bandwidth |
+
+So: notes arrive, voices rise, the stream opens with an audible click, and there
+is no sound. Re-plugging re-enumerates the device and re-reserves the bandwidth,
+which is why it looks like a resettable software fault and is not.
+
+**The cause was a dock.** The tablet has one USB-C port and needs charging, so
+the CP-88 went through an HP Thunderbolt Dock G2:
+
+```
+2-1 USB2.0 Hub -> 2-1.3 USB2807 Hub -> CP88/CP73 @ 12 Mbit/s
+                                       + Logitech C925e webcam
+                                       + a second Generic USB Audio
+```
+
+**The CP-88 is a FULL-SPEED (12 Mbit/s) device.** Behind a high-speed hub its
+isochronous audio runs as split transactions through that hub's Transaction
+Translator, and TT periodic bandwidth is a scarce, shared resource. A webcam is
+the largest isochronous consumer there is.
+
+Read the tree before blaming the code:
+
+```bash
+adb shell 'for d in /sys/bus/usb/devices/*/; do
+    n=$(cat $d/product 2>/dev/null); s=$(cat $d/speed 2>/dev/null)
+    [ -n "$n" ] && echo "$(basename $d) speed=$s $n"; done'
+```
+
+What to look for when choosing a hub: a **multi-TT** design (one Transaction
+Translator per port rather than one for the whole hub), the fewest possible
+devices sharing it, and no webcam on the same tree.
+
+**Two things this rules out as evidence:**
+
+* **"Another app is also silent" proves nothing when two USB audio devices are
+  present.** The dock exposed its own `Generic USB Audio` alongside the piano,
+  and Android routes media to one of them. Only a player that names its output
+  device explicitly — OboeTester — can settle it.
+* **A presentation position that keeps advancing does not prove delivery.** On
+  an MMAP stream that counter can come from a hardware counter that ticks
+  whether or not the data path reaches the DAC. It proves the stream is alive,
+  not that anything is audible.
+
+**What the app can and cannot do about it:** nothing, from userspace, and it
+cannot even detect it — every reading stays healthy. What instrumentation *is*
+for here is ruling the app out, which the callback-side peak (`cb`, the int16
+frames actually handed to AAudio, measured after dither and the ring copy) did
+in one build. When `out` and `cb` both read non-zero during silence, the fault
+is below this process and no amount of reading the graph will show it.
+
 ## 9a. Recovering from a disconnect
 
 **A request is not a result: `setDeviceId()` does not fail on a device that is

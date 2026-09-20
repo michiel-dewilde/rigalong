@@ -300,6 +300,23 @@ oboe::DataCallbackResult AudioEngine::onAudioReady(oboe::AudioStream* stream,
     }
     mRingRead.store(read + take, std::memory_order_release);
 
+    // Peak of what is ACTUALLY handed to AAudio, measured on the int16 frames
+    // in the callback rather than on the float graph output.
+    //
+    // For the silence that survives a stream restart: the engine meter says
+    // 0,148 and nothing is audible, and everything between the two is invisible
+    // -- the dither, the probe overwrite, the ring copy. If this reads zero
+    // while  does not, the samples die inside this process. If both read
+    // the same, we are handing real audio to the HAL and the fault is below us.
+    int16_t cbPeak = 0;
+    for (uint32_t i = 0; i < take * 2; ++i) {
+        const int16_t v = out[i] < 0 ? static_cast<int16_t>(-out[i]) : out[i];
+        if (v > cbPeak) cbPeak = v;
+    }
+    const float cbNow = static_cast<float>(cbPeak) / 32768.0f;
+    const float cbHeld = mCallbackPeak.load(std::memory_order_relaxed) * 0.90f;
+    mCallbackPeak.store(std::max(cbNow, cbHeld), std::memory_order_relaxed);
+
     if (take < want) {
         // The render thread did not keep up. Emit silence for the remainder --
         // audible, but bounded, and the counter says it happened.
@@ -768,10 +785,12 @@ AudioEngine::Stats AudioEngine::stats() const {
         const bool stalled = s.timestampOk != 0 && s.stalledSeconds > 1.0f;
         if (now - lastLog > 10.0 || (stalled && now - lastLog > 1.0)) {
             mLastHealthLogAt.store(now, std::memory_order_relaxed);
-            LOGI("health %s  out=%.4f voices=%d presented=%lld stalled=%.1fs "
+            LOGI("health %s  out=%.4f cb=%.4f voices=%d presented=%lld stalled=%.1fs "
                  "state=%d xruns=%d ringUnder=%lld fill=%.1fms dev=%d",
                  stalled ? "STALLED" : "ok",
-                 static_cast<double>(s.outputPeak), s.activeVoices,
+                 static_cast<double>(s.outputPeak),
+                 static_cast<double>(mCallbackPeak.load(std::memory_order_relaxed)),
+                 s.activeVoices,
                  static_cast<long long>(mLastPresented.load(std::memory_order_relaxed)),
                  static_cast<double>(s.stalledSeconds), s.streamState, s.xRuns,
                  static_cast<long long>(s.ringUnderruns),
