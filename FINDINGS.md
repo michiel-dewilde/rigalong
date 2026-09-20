@@ -705,6 +705,83 @@ the only place early enough.
 **Build Surge somewhere with a short path.** `sst-effects` generates object files
 named after preset files, and `CMAKE_OBJECT_PATH_MAX` is 250 characters.
 
+### Version control and the build, on Windows
+
+**A build script that has only ever been run incrementally is not known to
+work.** `fetch_deps.sh` described a `third_party/` that had actually been built
+up by hand, one engine at a time. The first run into an empty tree failed
+immediately, on a bug that had been in the repository for its whole life. The
+clean-clone test was written to catch a future regression and caught a present
+one on its first attempt, which is why CI now does that clone on every push.
+
+**Set `core.autocrlf=false` and `core.eol=lf` BEFORE the checkout, not after.**
+Git for Windows ships `core.autocrlf=true` in its *system* gitconfig, and
+`git submodule update` clones and checks out in one subprocess. A `foreach` that
+sets the flag afterwards is too late: the files are already CRLF, every one
+reads as modified, the superproject reports every submodule dirty, and any
+`git apply` fails on every hunk. Pass it to the update itself, where it
+propagates through `GIT_CONFIG_PARAMETERS`:
+
+```bash
+git -c core.autocrlf=false -c core.eol=lf submodule update --init --depth 1 ...
+```
+
+The tell is `git status` in a fresh submodule listing **every file in the
+repository** as modified.
+
+**Submodules of submodules run past the Windows path limit.**
+`.git/modules/third_party/surge/modules/libs/sst/sst-plugininfra/modules/...`
+plus a 40-character pack name exceeds 260 characters.
+`core.longpaths=true` fixes `cannot write keep file: Filename too long`. It does
+**not** fix `'$GIT_DIR' too big`, which is a fixed buffer inside git — that one
+only goes away by cloning somewhere shorter. Both present as clone failures that
+look like network trouble.
+
+**Check `git show --stat` before pushing a commit onto a dependency fork.** A
+file count that does not match the change you meant to make is wrong whatever
+the diff says. sfizz's own `src/CMakeLists.txt` does `configure_file(...)` into
+the **source** tree, so every CMake configure leaves `src/sfizz/Config.h` dirty
+with a CRLF-only diff, and `git commit -a` sweeps it into the commit — 338
+changed lines in a patch that touches twenty.
+
+**Mark scripts executable in git, from a Windows checkout.** `chmod +x` does not
+set the git mode there, so `gradlew` and every `tools/*.sh` sat at 100644 for
+the life of the project. On Windows nothing notices; on anything POSIX it is
+exit 126, "Permission denied". `git update-index --chmod=+x <files>`.
+
+### Generated assets and AGP
+
+**Feed a generated directory to a variant with
+`addGeneratedSourceDirectory`, not as a source-set `srcDir`.** Two other routes
+both fail:
+
+* `dependsOn` on the asset-merge task leaves lint's own model task consuming an
+  undeclared output, and Gradle refuses the build. Loud, and easy to fix wrongly
+  by naming the next consumer too.
+* `srcDir(files(dir).builtBy(task))` silences that, but AGP resolves
+  `sourceSets["main"].assets` to plain paths and drops the task dependency. The
+  task then never runs, **silently** — and any tree that has ever built
+  successfully still has the files sitting in `build/`, so it keeps producing a
+  correct artifact. It took a clean clone to see it.
+
+The supported route needs a real task class with a `DirectoryProperty` output:
+
+```kotlin
+androidComponents {
+    onVariants { v -> v.sources.assets?.addGeneratedSourceDirectory(task) { it.outputDir } }
+}
+```
+
+Use `@InputFiles` rather than `@InputFile` for an input that may legitimately be
+absent — here the dexed submodule's `builtin_pgm.zip` before `init_deps.sh` has
+run. A missing `@InputFile` fails the build instead of producing the empty
+output that is the correct answer.
+
+**Anything that is a property of the BUILD rather than of the repository needs
+a check that runs in CI.** The 33 DX7 cartridges are no longer committed, so
+their presence in the APK can regress without a single file changing. The
+workflow counts them.
+
 ## 9. Deployment and storage
 
 **Deploy over wireless adb** — the USB-C port belongs to the piano.
@@ -715,6 +792,36 @@ created by the `shell` user with mode 770 and the app cannot traverse them; the
 files inside being world-readable is irrelevant. Fix with
 `adb shell chmod -R 777 <pack>`. Also, pushing a folder into an existing folder of
 the same name nests it one level deeper.
+
+**Android owns `/sdcard/Android/data/<applicationId>/`, and INSTALLING RESETS
+IT.** Creating that directory with `adb` and filling it before the package is
+installed does not work, and fails in the worst way: silently, completely, and
+only at install time. Measured 2026-09-20 — 1.16 GB moved in at 15:08 was gone
+by 15:20, the moment the app was installed and launched, with every directory
+recreated empty and owned by the new app uid.
+
+So the order is fixed: **install the app, then push the content.**
+`tools/device_content.sh push` refuses to run when the package is not
+installed. The corollary is that **changing `applicationId` orphans the whole
+external library**, because that path is keyed by it.
+
+**`chmod` and ownership, precisely.** `shell` cannot chmod a file owned by an app
+uid, and does not need to: files that `adb push` puts inside an app-owned
+directory land world-readable and the app reads them fine. The rule above is
+about *directories created by shell*, which come out 770 and cannot be
+traversed. If the app sees an empty library, look at the directory modes, not
+the file modes.
+
+**A new `applicationId` has no permissions, and the dialog looks like a hang.**
+The first launch after a rename sat behind `GrantPermissionsActivity` asking for
+RECORD_AUDIO (the latency probe) with the audio engine never starting and
+logcat silent under every tag. `adb shell pm grant <pkg>
+android.permission.RECORD_AUDIO` before the first automated launch.
+
+**Internal storage cannot be migrated at all on a release build.** `run-as`
+refuses a non-debuggable package, so saved patches, `patch-last.json` and the
+instrument preference do not survive an `applicationId` change. Plan to lose
+them.
 
 **Always verify the app is in the foreground before sending taps.** Blind
 coordinate tapping once sent 18 taps into the launcher and opened random apps,
