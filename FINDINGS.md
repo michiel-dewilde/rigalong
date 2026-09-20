@@ -874,67 +874,84 @@ adb shell dumpsys window | grep -c "mCurrentFocus.*be.mdw.bagosynths"   # 1 = sa
 instead of tapping blind. **Button coordinates shift whenever a button is added** —
 re-read them from a screenshot after any UI change.
 
-### The USB topology is part of the instrument
+### The USB audio path to the CP-88 stalls, and it is not this app
 
-**MIDI surviving while audio dies is a USB bandwidth problem, and nothing else
-looks like it.** Diagnosed 2026-09-20 after the rig went silent for minutes at a
-time with the UI, the voice count and every internal meter reading healthy.
+**Established 2026-09-20, and the one thing here that is certain: the fault is
+outside this project.** It was reproduced with **Bag-O-Synths force-stopped**,
+nothing holding the device, and only the CP-88 on the bus by a direct cable —
+and YouTube produced the same click-then-silence.
 
-The three transfer types fail differently, and that is the whole diagnosis:
+What the fault looks like:
 
-| | transfer type | behaviour when periodic bandwidth is gone |
-|---|---|---|
-| MIDI | **bulk** | keeps working — best-effort, nothing reserved |
-| opening the stream | **control** | keeps working — the DAC still clicks on start/stop |
-| audio | **isochronous** | **dies** — it needs *reserved* bandwidth |
+| observed | |
+|---|---|
+| audio | silent, in **every** app, after some minutes of use |
+| a click when a stream starts | the device's own start transient still gets through |
+| MIDI | keeps working perfectly |
+| cured by | **re-plugging the USB cable**; a software stream restart does not do it |
+| the app's own readings | all healthy throughout |
 
-So: notes arrive, voices rise, the stream opens with an audible click, and there
-is no sound. Re-plugging re-enumerates the device and re-reserves the bandwidth,
-which is why it looks like a resettable software fault and is not.
+**MIDI surviving while audio dies** is the signature. MIDI is a separate endpoint
+with no clocking and no reserved bandwidth; the audio stream is isochronous and
+needs both. Something in the isochronous playback path — Android's USB audio
+stack or the instrument's own receiver — stops passing samples, and only
+re-enumeration clears it.
 
-**The cause was a dock.** The tablet has one USB-C port and needs charging, so
-the CP-88 went through an HP Thunderbolt Dock G2:
+**The app cannot detect this and cannot fix it.** Every reading inside the
+process stays healthy: the graph produces, the callback hands real frames to
+AAudio, and the presentation position keeps advancing. What instrumentation is
+for here is *ruling the app out*, which one number did:
 
 ```
-2-1 USB2.0 Hub -> 2-1.3 USB2807 Hub -> CP88/CP73 @ 12 Mbit/s
-                                       + Logitech C925e webcam
-                                       + a second Generic USB Audio
+20:43  out=0.1176  cb=0.1198  voices=64   <- audible
+20:59  out=0.4912  cb=0.7797  voices=64   <- inaudible
 ```
 
-**The CP-88 is a FULL-SPEED (12 Mbit/s) device.** Behind a high-speed hub its
-isochronous audio runs as split transactions through that hub's Transaction
-Translator, and TT periodic bandwidth is a scarce, shared resource. A webcam is
-the largest isochronous consumer there is.
+`out` is the graph's meter; `cb` is the peak of the int16 frames the callback
+hands to AAudio, after the dither and the ring copy. Louder when silent than
+when audible. Nothing downstream of that is visible from userspace, and
+`/proc/asound` is SELinux-blocked to the shell user, so the ALSA and USB-stream
+counters that would localise it further need root.
 
-Read the tree before blaming the code:
+### What is NOT true, though it was written down confidently
 
-```bash
-adb shell 'for d in /sys/bus/usb/devices/*/; do
-    n=$(cat $d/product 2>/dev/null); s=$(cat $d/speed 2>/dev/null)
-    [ -n "$n" ] && echo "$(basename $d) speed=$s $n"; done'
-```
+**It is not the dock.** The rig ran through an HP Thunderbolt Dock G2 (the
+tablet has one USB-C port and needs charging), and an A/B looked decisive:
+silent through the dock, playing on a direct cable. The reasoning built on top
+of it — the CP-88 is a full-speed device, so behind a high-speed hub its
+isochronous audio runs as split transactions through a shared Transaction
+Translator, competing with a webcam — is all *true*, and all *irrelevant*: the
+bare cable failed the same way fifteen minutes later.
 
-What to look for when choosing a hub: a **multi-TT** design (one Transaction
-Translator per port rather than one for the whole hub), the fewest possible
-devices sharing it, and no webcam on the same tree.
+**One passing A/B is not a control.** "Direct works" meant "direct has not
+failed yet", and the fault takes minutes. For an intermittent fault, a
+configuration is only exonerated by running it as long as the failing one.
 
-**Two things this rules out as evidence:**
+### Three confounds, all of which made a test look decisive when it was not
 
-* **"Another app is also silent" proves nothing when two USB audio devices are
-  present.** The dock exposed its own `Generic USB Audio` alongside the piano,
-  and Android routes media to one of them. Only a player that names its output
-  device explicitly — OboeTester — can settle it.
-* **A presentation position that keeps advancing does not prove delivery.** On
-  an MMAP stream that counter can come from a hardware counter that ticks
-  whether or not the data path reaches the DAC. It proves the stream is alive,
-  not that anything is audible.
+Worth keeping together, because the pattern is the lesson and it repeated three
+times in one evening:
 
-**What the app can and cannot do about it:** nothing, from userspace, and it
-cannot even detect it — every reading stays healthy. What instrumentation *is*
-for here is ruling the app out, which the callback-side peak (`cb`, the int16
-frames actually handed to AAudio, measured after dither and the ring copy) did
-in one build. When `out` and `cb` both read non-zero during silence, the fault
-is below this process and no amount of reading the graph will show it.
+1. **"Another app is silent too"** — invalid while the dock was present, because
+   the dock exposed its own `Generic USB Audio` and Android routes media to one
+   `usb_device`. The other app may have been playing perfectly, elsewhere.
+2. **"Another app is silent, and now there is only one audio device"** — still
+   invalid, because *this app* held that device in EXCLUSIVE mode. The other
+   app may have been failing to open it rather than playing silence.
+3. **"A replug fixes it, so the fault is in the tablet"** — invalid, because the
+   cable resets both ends.
+
+The test that finally held was the one with every variable removed: our app
+**stopped**, one device, direct cable, another app. Before believing a negative
+result, ask what else could produce it.
+
+### What is still open
+
+Whether it is Android's USB audio stack or the CP-88 itself. The discriminator
+is a **different host**: run the piano's USB audio into a laptop for half an
+hour. If it fails there too, it is the instrument; if it is solid, it is the
+tablet. Also worth checking the CP-88's firmware level.
+
 
 ## 9a. Recovering from a disconnect
 
