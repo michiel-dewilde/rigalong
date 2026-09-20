@@ -28,7 +28,8 @@ OUT="${TMPDIR:-/tmp}/bagosynths-engine-tests"
     -o "$OUT" \
     "$ENGINE/src/Graph.cpp" \
     "$HERE/harness.cpp" \
-    "$HERE/test_graph.cpp"
+    "$HERE/test_graph.cpp" \
+    "$HERE/test_paramqueue.cpp"
 
 echo "engine tests ($("$CXX" --dumpversion 2>/dev/null || echo "$CXX"))"
 exec "$OUT" "$@"
