@@ -176,7 +176,7 @@ class MainActivity : Activity() {
             // instrument, which is the worst possible failure.
             startEngine()
             openMidi()
-            enableInputIfPermitted()
+            // NOT enableInputIfPermitted() here any more -- see that function.
             loadFirstInstrument()
             startSurge()
             startDexed()
@@ -201,8 +201,22 @@ class MainActivity : Activity() {
     }
 
     /**
-     * The loopback probe needs an input stream, which needs RECORD_AUDIO. Purely
-     * optional — the instrument is fully functional without it.
+     * Opens the probe's input stream. Call it from the thing that needs it.
+     *
+     * It used to be opened at startup and held for the whole session, which is a
+     * second EXCLUSIVE MMAP stream -- on the built-in mic, at 48 kHz, while the
+     * output runs at 44100 -- kept alive continuously for a measurement taken
+     * perhaps three times in a session. That is a cost paid always for a benefit
+     * taken rarely, and asking a HAL to hold two exclusive MMAP streams at
+     * different rates is an unusual thing to do besides.
+     *
+     * It became worth fixing on 2026-09-20, while hunting a USB audio path that
+     * dies after about fifteen minutes: the fewer odd things the rig asks of the
+     * audio stack, the shorter the list of suspects. Whether it had anything to
+     * do with that fault is a separate question, and this change is defensible
+     * either way.
+     *
+     * Purely optional: the instrument is fully functional without it.
      */
     private fun enableInputIfPermitted() {
         val granted = checkSelfPermission(android.Manifest.permission.RECORD_AUDIO) ==
@@ -978,6 +992,7 @@ class MainActivity : Activity() {
         })
 
         buttonRow.addView(makeButton("MEASURE") {
+            enableInputIfPermitted()
             NativeBridge.nativeStartLatencyProbe()
         })
 
@@ -991,6 +1006,7 @@ class MainActivity : Activity() {
             // asking a human to replay a passage per threshold tweak.
             val dir = java.io.File(getExternalFilesDir(null), "captures").apply { mkdirs() }
             if (NativeBridge.nativeIsRecording()) return@makeButton
+            enableInputIfPermitted()
             NativeBridge.nativeStartRecording(30)
             b.text = "RECORDING…"
             handler.postDelayed({
@@ -1003,6 +1019,7 @@ class MainActivity : Activity() {
         })
 
         buttonRow.addView(makeButton("KEY→TONE") {
+            enableInputIfPermitted()
             NativeBridge.nativeStartNoteProbe()
         })
 
