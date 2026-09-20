@@ -125,6 +125,45 @@ This is what makes layering two instruments into one effects chain work, and it
 was **not** implemented until the organ needed it: a second edge into any input
 pin used to produce silence, with no error.
 
+**Every parameter change crosses threads through one `ParamQueue`**
+(`engine/include/bagosynths/ParamQueue.h`): single producer, single consumer,
+fixed capacity, no allocation, no locks. The UI thread pushes; the node drains
+the whole queue at the top of a block, so a change always lands on a block
+boundary and never halfway through one.
+
+**Full means DROP, and say so.** Blocking is not available — the producer is the
+UI thread and the consumer has a 2 ms deadline — and overwriting unread entries
+would silently discard a change already promised to the audio thread. Dropping
+is safe only because the UI holds the authoritative value and re-sends, so a
+knob at rest converges. 256 changes inside one 2,9 ms block is not a finger.
+
+**The counters are free-running `uint32_t` and are never reduced modulo the
+capacity.** This is the part to leave alone:
+
+```cpp
+return (write - read) >= capacity;     // correct across the wrap
+return !(write < read + capacity);     // WRONG, and looks tidier
+```
+
+After about 2^32 changes the write index wraps past zero while the read index
+has not. Unsigned subtraction wraps to the true distance, so the first form
+survives it; the second overflows and reports the queue permanently full. The
+symptom in the instrument would be **knobs that stop working after a few days of
+uptime**, which is not a bug anyone finds by looking.
+
+It is a free function (`detail::queueFull`) purely so a test can reach that
+boundary. Four billion pushes is not a test. Substituting the tidier form fails
+exactly one case and passes every other, which is the measure of how invisible
+it is.
+
+**This existed five times before it existed once.** Every instrument node
+carried its own byte-identical copy, and by the time they were merged two had
+already drifted — one declared its capacity `int` rather than `uint32_t` and left
+its slot array uninitialised. Neither was a bug yet. The general rule: **a
+lock-free algorithm copied per node is untestable by construction**, because the
+copies live in files that include a third-party engine header, and anything that
+cannot be built on a laptop will not be tested.
+
 ## 4. sfizz
 
 **`renderBlock(buffers, frames, numOutputs)` counts stereo PAIRS, not channels.**
