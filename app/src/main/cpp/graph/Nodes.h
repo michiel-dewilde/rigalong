@@ -5,7 +5,7 @@
 #include <string>
 #include <vector>
 
-#include "Graph.h"
+#include <bagosynths/Graph.h>
 
 namespace sfz { class Sfizz; }
 

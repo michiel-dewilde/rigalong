@@ -12,7 +12,7 @@
 #include <pthread.h>
 #include <thread>
 
-#include "Denormals.h"
+#include <bagosynths/Denormals.h>
 
 #define LOG_TAG "bos-audio"
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)

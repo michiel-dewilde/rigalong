@@ -258,7 +258,48 @@ The **Buffer** button cycles 1→4 bursts and restarts the stream. 2 is the
 sensible default: it costs about 2 ms over a single burst and doubles the margin
 against callback jitter.
 
+## Tests
+
+```
+engine/tests/run_tests.sh              # everything
+engine/tests/run_tests.sh fan_in       # just the cases whose name contains this
+```
+
+One compiler invocation, about a second, **no device and no Android SDK**. On
+Windows there is no host compiler in this toolchain — the NDK's clang targets
+Android — so run them under WSL: `wsl bash engine/tests/run_tests.sh`. CI runs
+them on Linux before it builds anything, because they need nothing and they are
+the fastest way to learn that the graph compiler is broken.
+
+They cover `Graph::compile`, which is pure logic and was untestable until
+`engine/` existed: fan-in mixing, the `first` flag that makes one edge copy
+where the rest add, width and type validation, cycle detection, topological
+order, buffer assignment, and the bounds on `MidiBuffer`.
+
+The first case is a regression test for a real bug — **a second edge into any
+input pin produced silence, with no error** — which survived in this project
+until an organ needed fan-in, because the only way to exercise the compiler was
+to play a tablet.
+
+The harness is sixty lines in `engine/tests/harness.h` and has no dependency.
+GoogleTest was considered and rejected: `engine/` exists to prove that a piece
+of this code needs nothing, and a test runner that needs a package manager
+undoes that on the first line.
+
 ## Architecture notes
+
+**`engine/` is the portable half**, and the rule is absolute: nothing in it may
+include an Android, Oboe, JNI or third-party-engine header. It holds the node
+graph, its compiler, and the numeric helpers around them, and it builds and runs
+on a laptop. Everything device-shaped — the Oboe stream, AMidi, the render
+thread, the JNI bridge and the six instrument nodes — lives under
+`app/src/main/cpp/`.
+
+The instrument nodes are the deliberate exception: each includes a third-party
+engine header, none of those libraries is built for the host here, and moving
+them would mean cross-compiling six engines for a laptop to gain nothing
+testable. They move when there is a reason better than symmetry.
+
 
 The audio thread lives entirely in C++ and never calls into Java. MIDI is polled
 from inside the audio callback (as in Google's native-midi sample) rather than

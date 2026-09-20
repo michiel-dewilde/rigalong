@@ -5,7 +5,7 @@
 #include <cstdint>
 #include <jni.h>
 
-#include "graph/Graph.h"
+#include <bagosynths/Graph.h>
 
 // Native MIDI input via AMidi (API 29+).
 //

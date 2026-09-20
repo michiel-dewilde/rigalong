@@ -7,7 +7,7 @@
 #include <string>
 #include <vector>
 
-#include "Graph.h"
+#include <bagosynths/Graph.h>
 
 // SF2 and SF3 SoundFonts, as a graph node: FluidSynth.
 //

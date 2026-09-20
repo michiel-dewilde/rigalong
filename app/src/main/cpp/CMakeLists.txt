@@ -213,12 +213,17 @@ target_compile_definitions(libfluidsynth-OBJ PRIVATE BAGOSYNTHS_STB_VORBIS=1)
 # resolves its undefined symbols against what follows it on the link line, which
 # is the oldest rule there is, and it leaves FluidSynth's CMake untouched.
 
+# The portable half of this project. Nothing in engine/ may include an Android,
+# Oboe, JNI or third-party-engine header, which is what makes it testable on a
+# laptop -- see engine/CMakeLists.txt. Everything in THIS file is the other
+# half: the parts that can only run on the device.
+add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../../../../engine engine)
+
 add_library(bagosynths SHARED
         native_bridge.cpp
         AudioEngine.cpp
         MidiInput.cpp
         Synth.cpp
-        graph/Graph.cpp
         graph/Nodes.cpp
         graph/HammondNode.cpp
         graph/SurgeNode.cpp
@@ -255,6 +260,7 @@ target_compile_options(bagosynths PRIVATE
         )
 
 target_link_libraries(bagosynths
+        bagosynths::engine
         beatrix
         msfa
         libfluidsynth

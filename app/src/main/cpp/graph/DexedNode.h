@@ -7,7 +7,7 @@
 #include <string>
 #include <vector>
 
-#include "Graph.h"
+#include <bagosynths/Graph.h>
 
 // The DX7 as a graph node: Dexed's `msfa` engine.
 //

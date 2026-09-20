@@ -110,7 +110,13 @@ public:
     virtual PinSpec outputPin(int) const { return {}; }
 
     // Frames of delay this node introduces. Non-zero for convolution and
-    // lookahead limiters; the compiler aligns parallel paths that reconverge.
+    // lookahead limiters.
+    //
+    // RESERVED, NOT IMPLEMENTED. compile() does not read this and does not
+    // align parallel paths that reconverge -- an earlier version of this
+    // comment said it did, which was never true. Harmless so far because every
+    // node in the project returns zero, and engine/tests/test_graph.cpp asserts
+    // exactly that, so the day one does not the gap stops being silent.
     virtual int latencyFrames() const { return 0; }
 
     // Parameter access, used by the UI and by Param edges. Index space is the

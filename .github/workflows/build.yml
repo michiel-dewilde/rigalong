@@ -41,6 +41,13 @@ jobs:
           git submodule status --recursive | wc -l
           du -sh third_party
 
+      - name: Engine tests
+        # Before anything Android-shaped. They need a compiler and nothing else
+        # -- no SDK, no NDK, no device -- so they are the fastest possible way
+        # to learn that the graph compiler is broken, and they run first for
+        # exactly that reason.
+        run: engine/tests/run_tests.sh
+
       - name: JDK 21
         uses: actions/setup-java@v4
         with:

@@ -6,7 +6,7 @@
 #include <string>
 #include <vector>
 
-#include "Graph.h"
+#include <bagosynths/Graph.h>
 
 // Surge XT's synthesis engine as a graph node.
 //

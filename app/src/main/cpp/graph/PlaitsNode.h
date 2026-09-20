@@ -6,7 +6,7 @@
 #include <string>
 #include <vector>
 
-#include "Graph.h"
+#include <bagosynths/Graph.h>
 
 // Mutable Instruments Plaits as a graph node: sixteen synthesis models, from a
 // two-oscillator virtual analog through granular, speech, physical modelling

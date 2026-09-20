@@ -4,7 +4,7 @@
 #include <string>
 #include <vector>
 
-#include "Graph.h"
+#include <bagosynths/Graph.h>
 
 // The tonewheel organ: setBfree's Beatrix engine as a graph node.
 //

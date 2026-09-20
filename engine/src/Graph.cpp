@@ -1,4 +1,4 @@
-#include "Graph.h"
+#include <bagosynths/Graph.h>
 
 #include <algorithm>
 #include <cstring>

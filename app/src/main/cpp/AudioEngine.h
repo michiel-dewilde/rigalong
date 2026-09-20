@@ -10,9 +10,9 @@
 #include <string>
 #include <thread>
 
-#include "Dither.h"
+#include <bagosynths/Dither.h>
 #include "MidiInput.h"
-#include "graph/Graph.h"
+#include <bagosynths/Graph.h>
 #include "graph/HammondNode.h"
 #include "graph/SurgeNode.h"
 #include "graph/DexedNode.h"
