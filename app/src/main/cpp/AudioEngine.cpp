@@ -67,7 +67,9 @@ bool AudioEngine::openStream(int32_t deviceId, int bufferBursts) {
 
     builder.setDirection(oboe::Direction::Output)
             ->setPerformanceMode(oboe::PerformanceMode::LowLatency)
-            ->setSharingMode(oboe::SharingMode::Exclusive)
+            ->setSharingMode(mWantExclusive.load(std::memory_order_relaxed)
+                                     ? oboe::SharingMode::Exclusive
+                                     : oboe::SharingMode::Shared)
             ->setFormat(oboe::AudioFormat::I16)
             ->setChannelCount(oboe::ChannelCount::Stereo)
             ->setSampleRate(44100)

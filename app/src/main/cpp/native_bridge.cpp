@@ -613,6 +613,11 @@ Java_be_mdw_bagosynths_NativeBridge_nativeEdges(JNIEnv* env, jobject) {
 
 // Stats come back as a float array rather than a formatted string: no allocation
 // or text handling on the native side, and the UI decides how to present them.
+JNIEXPORT void JNICALL
+Java_be_mdw_bagosynths_NativeBridge_nativeSetExclusive(JNIEnv*, jobject, jboolean e) {
+    engine().setExclusive(e == JNI_TRUE);
+}
+
 JNIEXPORT jfloatArray JNICALL
 Java_be_mdw_bagosynths_NativeBridge_nativeGetStats(JNIEnv* env, jobject) {
     const AudioEngine::Stats s = engine().stats();

@@ -156,6 +156,9 @@ class MainActivity : Activity() {
      */
     private var engineBroughtUp = false
 
+    /** EXCLUSIVE by default; long-press Buffer to switch. See that handler. */
+    private var wantExclusive = true
+
     override fun onResume() {
         super.onResume()
 
@@ -920,6 +923,30 @@ class MainActivity : Activity() {
             NativeBridge.nativeStop()
             NativeBridge.nativeStart(findCp88OutputDeviceId(), bufferBursts)
             NativeBridge.nativeResetPeaks()
+        }.apply {
+            // LONG-PRESS: EXCLUSIVE <-> SHARED.
+            //
+            // Deliberately hung off an existing button rather than given one of
+            // its own. Every control added to this row moves the ones after it,
+            // and the adb tap coordinates in tools/ are read from a screenshot
+            // and go stale silently when they move -- which has now cost time
+            // twice, once from a button and once from a single status LINE.
+            //
+            // The mode already shows on the `path` line, so nothing new has to
+            // be displayed either.
+            setOnLongClickListener {
+                wantExclusive = !wantExclusive
+                NativeBridge.nativeSetExclusive(wantExclusive)
+                NativeBridge.nativeStop()
+                NativeBridge.nativeStart(findCp88OutputDeviceId(), bufferBursts)
+                NativeBridge.nativeResetPeaks()
+                android.widget.Toast.makeText(
+                    this@MainActivity,
+                    if (wantExclusive) "EXCLUSIVE" else "SHARED",
+                    android.widget.Toast.LENGTH_SHORT,
+                ).show()
+                true
+            }
         })
 
         // The part switch lives in the TOP row on purpose: it is the control most

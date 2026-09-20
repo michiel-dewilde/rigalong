@@ -203,6 +203,12 @@ public:
     Stats stats() const;
     void resetPeaks();
 
+    /// Takes effect on the next openStream(), so the caller stops and starts.
+    void setExclusive(bool exclusive) {
+        mWantExclusive.store(exclusive, std::memory_order_relaxed);
+    }
+    bool exclusive() const { return mWantExclusive.load(std::memory_order_relaxed); }
+
 private:
     bool openStream(int32_t deviceId, int bufferBursts);
     void closeStream();
@@ -287,6 +293,15 @@ private:
     // only reading that sees what leaves this process rather than what the
     // graph produced.
     std::atomic<float> mCallbackPeak{0.0f};
+
+    // EXCLUSIVE or SHARED, for the next open.
+    //
+    // EXCLUSIVE + MMAP is what this project asks for and what every
+    // measurement in MEASUREMENTS.md was taken on. It is also the one
+    // unusual thing the rig does, so when the USB audio path started dying
+    // after a quarter of an hour it became a hypothesis worth being able to
+    // test rather than argue about. Toggled by long-pressing Buffer.
+    std::atomic<bool> mWantExclusive{true};
 
     // Presentation-position tracking for the dropout hunt. Mutable because
     // stats() is const and is the natural place to sample this: it is called by

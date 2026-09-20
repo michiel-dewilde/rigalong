@@ -25,6 +25,15 @@ object NativeBridge {
     external fun nativeTestNote(note: Int, velocity: Int)
     external fun nativeGetStats(): FloatArray
 
+    /**
+     * EXCLUSIVE (true, the default) or SHARED for the NEXT stream open.
+     *
+     * Exists to make the sharing mode testable on the rig rather than
+     * arguable: EXCLUSIVE + MMAP is the one unusual thing this project asks
+     * of the audio stack, and it is a suspect whenever the USB path misbehaves.
+     */
+    external fun nativeSetExclusive(exclusive: Boolean)
+
     /** Opens an input stream on the CP-88 for the loopback probe. Needs RECORD_AUDIO. */
     external fun nativeEnableInput(deviceId: Int): Boolean
     external fun nativeStartLatencyProbe()
