@@ -8,6 +8,7 @@
 #include <vector>
 
 #include <bagosynths/Graph.h>
+#include <bagosynths/ParamQueue.h>
 
 // The DX7 as a graph node: Dexed's `msfa` engine.
 //
@@ -180,11 +181,7 @@ private:
     float mChunkBuf[kChunk] = {};
     int mOffset = kChunk;
 
-    struct Change { int index; float value; };
-    static constexpr uint32_t kQueueCapacity = 256;
-    Change mQueue[kQueueCapacity] = {};
-    std::atomic<uint32_t> mQueueWrite{0};
-    std::atomic<uint32_t> mQueueRead{0};
+    ParamQueue<256> mQueue;
 
     float mMaxRenderMs = 0.0f;
 };

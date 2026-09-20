@@ -7,6 +7,7 @@
 #include <vector>
 
 #include <bagosynths/Graph.h>
+#include <bagosynths/ParamQueue.h>
 
 // Surge XT's synthesis engine as a graph node.
 //
@@ -148,11 +149,7 @@ private:
     // across calls whose length is not a multiple of it.
     int mOffset = 0;   // == blockSize means "nothing buffered"
 
-    struct Change { int index; float value; };
-    static constexpr uint32_t kQueueCapacity = 256;
-    Change mQueue[kQueueCapacity] = {};
-    std::atomic<uint32_t> mQueueWrite{0};
-    std::atomic<uint32_t> mQueueRead{0};
+    ParamQueue<256> mQueue;
 
     float mMaxRenderMs = 0.0f;
 };

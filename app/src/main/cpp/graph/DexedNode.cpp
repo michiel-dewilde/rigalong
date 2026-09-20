@@ -380,11 +380,7 @@ int DexedNode::activeVoices() const {
 // ---------------------------------------------------------------- parameters
 
 void DexedNode::pushParam(int index, float value) {
-    const uint32_t w = mQueueWrite.load(std::memory_order_relaxed);
-    const uint32_t r = mQueueRead.load(std::memory_order_acquire);
-    if (w - r >= kQueueCapacity) return;
-    mQueue[w % kQueueCapacity] = {index, value};
-    mQueueWrite.store(w + 1, std::memory_order_release);
+    mQueue.push(index, value);
 }
 
 void DexedNode::setParam(int index, float value) {
@@ -564,14 +560,9 @@ void DexedNode::process(const ProcessArgs& args) {
     const double t0 = nowSec();
 
     {
-        const uint32_t w = mQueueWrite.load(std::memory_order_acquire);
-        uint32_t r = mQueueRead.load(std::memory_order_relaxed);
-        while (r != w) {
-            const Change& c = mQueue[r % kQueueCapacity];
-            applyParam(c.index, c.value);
-            ++r;
-        }
-        mQueueRead.store(r, std::memory_order_release);
+        mQueue.drain([this](int index, float value) {
+            applyParam(index, value);
+        });
     }
     takePendingVoice();
 

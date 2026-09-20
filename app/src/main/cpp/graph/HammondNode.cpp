@@ -160,11 +160,7 @@ void HammondNode::prepare(double sampleRate, int maxFrames) {
 // ---------------------------------------------------------------- parameters
 
 void HammondNode::pushParam(int index, float value) {
-    const uint32_t w = mQueueWrite.load(std::memory_order_relaxed);
-    const uint32_t r = mQueueRead.load(std::memory_order_acquire);
-    if (w - r >= kQueueCapacity) return;   // full: drop, the UI will resend
-    mQueue[w % kQueueCapacity] = {index, value};
-    mQueueWrite.store(w + 1, std::memory_order_release);
+    mQueue.push(index, value);
 }
 
 void HammondNode::setParam(int index, float value) {
@@ -325,14 +321,9 @@ void HammondNode::process(const ProcessArgs& args) {
     // Drain the parameter queue before any audio is generated, so a change
     // always lands on a fragment boundary rather than halfway through one.
     {
-        const uint32_t w = mQueueWrite.load(std::memory_order_acquire);
-        uint32_t r = mQueueRead.load(std::memory_order_relaxed);
-        while (r != w) {
-            const Change& c = mQueue[r % kQueueCapacity];
-            applyParam(c.index, c.value);
-            ++r;
-        }
-        mQueueRead.store(r, std::memory_order_release);
+        mQueue.drain([this](int index, float value) {
+            applyParam(index, value);
+        });
     }
 
     // Render `upto` frames, pulling fresh 128-sample fragments as needed. This

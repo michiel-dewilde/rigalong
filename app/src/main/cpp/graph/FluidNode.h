@@ -8,6 +8,7 @@
 #include <vector>
 
 #include <bagosynths/Graph.h>
+#include <bagosynths/ParamQueue.h>
 
 // SF2 and SF3 SoundFonts, as a graph node: FluidSynth.
 //
@@ -164,11 +165,7 @@ private:
     // the two would otherwise alias.
     std::vector<float> mScratchR;
 
-    struct Change { int index; float value; };
-    static constexpr uint32_t kQueueCapacity = 256;
-    Change mQueue[kQueueCapacity] = {};
-    std::atomic<uint32_t> mQueueWrite{0};
-    std::atomic<uint32_t> mQueueRead{0};
+    ParamQueue<256> mQueue;
 
     float mMaxRenderMs = 0.0f;
 };

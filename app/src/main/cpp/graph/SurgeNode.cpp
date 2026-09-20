@@ -235,11 +235,7 @@ bool SurgeNode::loadPatchNamed(const std::string& name) {
 // ---------------------------------------------------------------- parameters
 
 void SurgeNode::pushParam(int index, float value) {
-    const uint32_t w = mQueueWrite.load(std::memory_order_relaxed);
-    const uint32_t r = mQueueRead.load(std::memory_order_acquire);
-    if (w - r >= kQueueCapacity) return;   // full: drop, the UI will resend
-    mQueue[w % kQueueCapacity] = {index, value};
-    mQueueWrite.store(w + 1, std::memory_order_release);
+    mQueue.push(index, value);
 }
 
 void SurgeNode::setParam(int index, float value) {
@@ -301,14 +297,9 @@ void SurgeNode::process(const ProcessArgs& args) {
 
     // Parameter changes land on a block boundary, never halfway through one.
     {
-        const uint32_t w = mQueueWrite.load(std::memory_order_acquire);
-        uint32_t r = mQueueRead.load(std::memory_order_relaxed);
-        while (r != w) {
-            const Change& c = mQueue[r % kQueueCapacity];
-            applyParam(c.index, c.value);
-            ++r;
-        }
-        mQueueRead.store(r, std::memory_order_release);
+        mQueue.drain([this](int index, float value) {
+            applyParam(index, value);
+        });
     }
 
     int written = 0;

@@ -7,6 +7,7 @@
 #include <vector>
 
 #include <bagosynths/Graph.h>
+#include <bagosynths/ParamQueue.h>
 
 // Mutable Instruments Plaits as a graph node: sixteen synthesis models, from a
 // two-oscillator virtual analog through granular, speech, physical modelling
@@ -141,11 +142,7 @@ private:
     float mModWheel = 0.0f;   // 0..1
     uint32_t mVoiceTick = 0;
 
-    struct Change { int index; float value; };
-    static constexpr uint32_t kQueueCapacity = 256;
-    Change mQueue[kQueueCapacity] = {};
-    std::atomic<uint32_t> mQueueWrite{0};
-    std::atomic<uint32_t> mQueueRead{0};
+    ParamQueue<256> mQueue;
 
     float mMaxRenderMs = 0.0f;
 };

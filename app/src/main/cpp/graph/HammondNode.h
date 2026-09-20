@@ -5,6 +5,7 @@
 #include <vector>
 
 #include <bagosynths/Graph.h>
+#include <bagosynths/ParamQueue.h>
 
 // The tonewheel organ: setBfree's Beatrix engine as a graph node.
 //
@@ -119,11 +120,7 @@ private:
     // engine state directly -- recomputing wheel gains, reloading key tables --
     // so calling them from the UI thread while oscGenerateFragment runs would be
     // the same race that sfizz's loader turned out to be. Queue, drain, apply.
-    struct Change { int index; float value; };
-    static constexpr int kQueueCapacity = 256;
-    Change mQueue[kQueueCapacity];
-    std::atomic<uint32_t> mQueueWrite{0};
-    std::atomic<uint32_t> mQueueRead{0};
+    ParamQueue<256> mQueue;
 
     // setBfree generates in fixed 128-sample fragments (BUFFER_SIZE_SAMPLES).
     // That is not a coincidence with our 128-frame render block, but it is a
