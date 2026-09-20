@@ -47,14 +47,22 @@ jobs:
           distribution: temurin
           java-version: '21'
 
-      - name: Android SDK
-        uses: android-actions/setup-android@v3
-
       - name: The pinned NDK and CMake
+        # No setup-android action. The runner image already ships the Android
+        # SDK with ANDROID_HOME set, so there is nothing to install -- and
+        # android-actions/setup-android@v3 actively breaks here, because it asks
+        # sdkmanager for the long-obsolete `tools` package and dies when it is
+        # not found.
+        #
         # Both versions are pinned in app/build.gradle.kts, because AGP
         # otherwise goes looking for its own defaults and fails on a machine
         # that has something else. Keep these two lines and that file in step.
-        run: sdkmanager --install "ndk;30.0.16248370" "cmake;4.1.2"
+        run: |
+          set -euo pipefail
+          SDKMANAGER="$(ls "$ANDROID_HOME"/cmdline-tools/*/bin/sdkmanager | head -1)"
+          echo "using $SDKMANAGER"
+          yes | "$SDKMANAGER" --licenses > /dev/null 2>&1 || true
+          "$SDKMANAGER" --install "ndk;30.0.16248370" "cmake;4.1.2"
 
       - name: Gradle
         uses: gradle/actions/setup-gradle@v4
