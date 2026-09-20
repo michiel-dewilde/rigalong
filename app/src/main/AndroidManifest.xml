@@ -13,6 +13,26 @@
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <uses-feature android:name="android.hardware.microphone" android:required="false" />
 
+    <!--
+      The instrument keeps playing when the activity is not in front.
+      onPause() used to stop the stream, which meant a power button caught with
+      a sleeve, a system dialog, an alarm or an incoming call killed the sound
+      mid-song. A mediaPlayback foreground service is the supported way to tell
+      Android that this process is producing audio someone is listening to; see
+      EngineService for the whole argument.
+
+      POST_NOTIFICATIONS is for the service's own notification on API 33+.
+      Refusing it is not fatal, because the service still runs, but the Stop
+      button on that notification is the only way out of the instrument short of
+      killing the app, so it is worth asking for.
+
+      (Note for the next person: a double hyphen is illegal inside an XML
+      comment, which is why this paragraph reads the way it does.)
+    -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
     <application
         android:label="Bag-O-Synths"
         android:allowBackup="false"
@@ -29,6 +49,11 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <service
+            android:name=".EngineService"
+            android:exported="false"
+            android:foregroundServiceType="mediaPlayback" />
     </application>
 
 </manifest>

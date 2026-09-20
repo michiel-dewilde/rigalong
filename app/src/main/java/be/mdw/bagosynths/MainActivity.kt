@@ -114,25 +114,50 @@ class MainActivity : Activity() {
         setContentView(buildUi())
     }
 
+    /**
+     * Whether the engine has been brought up in this process. Not the same
+     * question as whether the activity is resumed: since the instrument now
+     * keeps playing while the activity is away (see [EngineService]), a resume
+     * is usually a return to something already running, and re-running the whole
+     * bring-up would reload sfizz and re-scan 641 Surge patches underneath audio
+     * that never stopped.
+     */
+    private var engineBroughtUp = false
+
     override fun onResume() {
         super.onResume()
-        // Output FIRST and always. Established by experiment 2026-09-19: the
-        // CP-88's capture and playback are mutually exclusive on Android's USB
-        // audio HAL. Whichever direction opens first wins, and the other fails
-        // with ErrorDisconnected. Opening capture first silently costs you the
-        // instrument, which is the worst possible failure.
-        startEngine()
-        openMidi()
-        enableInputIfPermitted()
-        loadFirstInstrument()
-        startSurge()
-        startDexed()
-        startFluid()
-        // Restore AFTER loadFirstInstrument(), which picks a default: a patch that
-        // names an instrument should win over the default, not race it.
-        restorePatch()
-        // Only now do the nodes exist and hold the restored values, so only now
-        // can the panels show what they actually are.
+
+        // Before anything else, and while this activity is genuinely in front:
+        // starting a foreground service from the background is refused on
+        // Android 12 and later, so this is the only moment it is legal.
+        EngineService.start(this)
+
+        if (!engineBroughtUp) {
+            // Output FIRST and always. Established by experiment 2026-09-19: the
+            // CP-88's capture and playback are mutually exclusive on Android's USB
+            // audio HAL. Whichever direction opens first wins, and the other fails
+            // with ErrorDisconnected. Opening capture first silently costs you the
+            // instrument, which is the worst possible failure.
+            startEngine()
+            openMidi()
+            enableInputIfPermitted()
+            loadFirstInstrument()
+            startSurge()
+            startDexed()
+            startFluid()
+            // Restore AFTER loadFirstInstrument(), which picks a default: a patch
+            // that names an instrument should win over the default, not race it.
+            restorePatch()
+            engineBroughtUp = true
+        } else if (!NativeBridge.nativeMidiOpen()) {
+            // It kept playing while we were away. The one thing worth checking is
+            // MIDI, because the port can be lost to a cable event without the
+            // audio stream noticing.
+            openMidi()
+        }
+
+        // The nodes hold the live values either way, so the panels can show what
+        // they actually are.
         organPanel.refresh()
         surgePanel.refresh()
         syncPartTabs()
@@ -146,15 +171,26 @@ class MainActivity : Activity() {
     private fun enableInputIfPermitted() {
         val granted = checkSelfPermission(android.Manifest.permission.RECORD_AUDIO) ==
             android.content.pm.PackageManager.PERMISSION_GRANTED
+        // POST_NOTIFICATIONS is asked for alongside, on API 33+: the foreground
+        // service runs either way, but its notification carries the only Stop
+        // button the instrument has.
+        val wanted = mutableListOf<String>()
+        if (!granted) wanted += android.Manifest.permission.RECORD_AUDIO
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) !=
+            android.content.pm.PackageManager.PERMISSION_GRANTED
+        ) {
+            wanted += android.Manifest.permission.POST_NOTIFICATIONS
+        }
+
         if (granted) {
             // Explicitly the BUILT-IN MIC. "Unspecified" is not good enough:
             // with the CP-88 attached, Android makes the piano the default input,
             // so an unspecified input stream resolves to the CP-88's capture and
             // fails -- the two directions are mutually exclusive on that card.
             NativeBridge.nativeEnableInput(findBuiltinMicDeviceId())
-        } else {
-            requestPermissions(arrayOf(android.Manifest.permission.RECORD_AUDIO), 1)
         }
+        if (wanted.isNotEmpty()) requestPermissions(wanted.toTypedArray(), 1)
     }
 
     /** The tablet's own microphone — the only input usable while the CP-88 plays. */
@@ -190,8 +226,17 @@ class MainActivity : Activity() {
         grantResults: IntArray
     ) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
-        if (grantResults.firstOrNull() == android.content.pm.PackageManager.PERMISSION_GRANTED) {
-            NativeBridge.nativeEnableInput(NativeBridge.DEVICE_UNSPECIFIED)
+        // Match by NAME rather than by position: the request now carries either
+        // or both of RECORD_AUDIO and POST_NOTIFICATIONS, so grantResults[0] is
+        // no longer reliably the microphone. It also asks for the BUILT-IN mic
+        // explicitly, which the old unspecified call got wrong -- with the CP-88
+        // attached, an unspecified input resolves to the piano and fails.
+        permissions.forEachIndexed { i, permission ->
+            val ok = grantResults.getOrNull(i) ==
+                android.content.pm.PackageManager.PERMISSION_GRANTED
+            if (ok && permission == android.Manifest.permission.RECORD_AUDIO) {
+                NativeBridge.nativeEnableInput(findBuiltinMicDeviceId())
+            }
         }
     }
 
@@ -201,10 +246,39 @@ class MainActivity : Activity() {
         // a patch you lose, and capturing the graph is a few dozen plain reads.
         savePatch(named = false)
         handler.removeCallbacks(poller)
+
+        // THE AUDIO AND MIDI DELIBERATELY STAY UP.
+        //
+        // This used to call nativeStop() and nativeCloseMidi(), which is correct
+        // behaviour for an app and wrong behaviour for an instrument: it meant
+        // anything that backgrounded the activity killed the sound. Measured
+        // 2026-09-20 -- a press of the power button stopped audio outright, and
+        // it stayed stopped until the app was brought back to the front.
+        //
+        // FLAG_KEEP_SCREEN_ON already stops the screen timing out on its own. It
+        // does not stop a power button caught with a sleeve, a system dialog, an
+        // alarm, or an incoming call on a tablet that has a SIM. On a stage every
+        // one of those was a dead instrument in the middle of a song.
+        //
+        // EngineService is what makes keeping it running legitimate. onDestroy
+        // below is what shuts it down, along with the notification Stop button.
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        // isFinishing distinguishes the user closing the instrument from a
+        // recreation. The manifest already absorbs rotation and uiMode through
+        // configChanges, so this should not fire otherwise -- but tearing the
+        // stream down on a configuration change would be a very confusing bug to
+        // chase, and the guard costs one line.
+        if (!isFinishing) return
+        handler.removeCallbacks(poller)
         NativeBridge.nativeCloseMidi()
         midiDevice?.close()
         midiDevice = null
         NativeBridge.nativeStop()
+        EngineService.stop(this)
+        engineBroughtUp = false
     }
 
     // ---------------------------------------------------------------- patches
