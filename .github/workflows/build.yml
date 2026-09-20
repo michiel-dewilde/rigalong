@@ -86,9 +86,12 @@ jobs:
         # submodule. That makes their presence a property of the BUILD, which
         # means it can regress silently, which means it gets checked.
         run: |
+          # The trailing "or true" is because grep -c exits 1 when it counts
+          # nothing, and under bash -e that kills the step before it can say
+          # what it found -- which is the one case where the number matters.
           count=$(unzip -l app/build/outputs/apk/release/app-release.apk \
-                  | grep -c "assets/dx7/.*\.syx")
-          echo "cartridges in the APK: $count"
+                  | grep -c "assets/dx7/.*\.syx" || true)
+          echo "cartridges in the APK: $count (expected 33)"
           test "$count" -eq 33
 
       - name: Upload
