@@ -477,6 +477,75 @@ Same run, 30-note cluster across all six:
 sfizz's note-on path remains the largest spike in the rig, as it has been since
 M2, and it is known, budgeted and absorbed by the ring rather than heard.
 
+## 5g. After the rework: a numerical no-op (2026-09-20)
+
+The product rework renamed the app, moved the graph compiler into a separate
+portable library, replaced six patch files with commits on seven forks and
+turned `third_party/` into submodules. **None of it was supposed to change a
+number**, and this section is the check.
+
+Same tablet, same cable, same release build path, six instruments live (ALL),
+peaks reset before each reading.
+
+### The stream is identical
+
+```
+path       AAudio  EXCLUSIVE  LOW_LATENCY
+rate       44100 Hz
+burst      89 fr  (2,02 ms)
+buffer     267 fr (6,05 ms)
+latency    8,5 ms idle
+xruns      0  (total 0)
+state      running  [clean]
+```
+
+Every one of those matches section 1. The graph is also unchanged — *10 steps,
+11 audio buffers* — which matters because the compiler is the thing that moved.
+
+### Idle cost, per node
+
+`last` at idle, obtained by STRESS-then-PANIC so the profile fires 1.5 s later
+on a block with nothing ringing. The `max` column is from the stress that
+preceded it and is included only for scale.
+
+| node | last (idle) | max (under stress) |
+|---|---|---|
+| MIDI In | 0,001 ms | 0,002 ms |
+| FluidSynth | 0,009 ms | 0,240 ms |
+| Plaits | 0,003 ms | 0,679 ms |
+| Dexed | 0,003 ms | 0,221 ms |
+| Surge XT | 0,069 ms | 7,437 ms |
+| Hammond | 0,046 ms | 0,227 ms |
+| sfizz | 0,043 ms | 2,389 ms |
+| Reverb | 0,103 ms | 0,152 ms |
+| Limiter | 0,005 ms | 0,071 ms |
+| Audio Out | 0,002 ms | 0,051 ms |
+| **total** | **0,284 ms** | |
+
+**0,284 ms against a 0,31 ms baseline.** That is the same number: both are sums
+of ten `last` readings taken one run apart, and the run-to-run spread on the
+individual nodes is larger than the difference. The rework cost nothing.
+
+### Under stress, the ring does its job
+
+```
+ring   13,2 ms reserve, 0 underruns, target 13,1 ms, render peak 10,10 ms
+xruns  0  (total 0)
+```
+
+A 10,10 ms render peak against a 2,018 ms callback deadline, and **zero xruns
+and zero underruns**. That is not a contradiction, it is the architecture: the
+render thread is decoupled from the callback by the adaptive ring, which grew
+its reserve to 13,2 ms and absorbed the spike. Surge XT owns the spike (7,437 ms
+of it) and it is patch-loading, not steady-state synthesis.
+
+### What this does NOT establish
+
+The app was **started, stressed and profiled, not played**. Every number here
+comes from synthetic chords driven over adb. The idle figure, the stream
+configuration and the underrun count are solid; how it *feels* under hands is
+not measured here and is not measurable this way.
+
 ## 6. Still open
 
 | Question | Status |
