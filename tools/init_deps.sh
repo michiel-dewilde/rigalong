@@ -31,7 +31,13 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # reads as modified, and the superproject reports every submodule dirty.
 # Passing -c propagates through GIT_CONFIG_PARAMETERS to that subprocess, which
 # is the only place early enough.
-LF=(-c core.autocrlf=false -c core.eol=lf)
+#
+# core.longpaths belongs in the same breath. Submodules of submodules nest their
+# git directories -- .git/modules/third_party/surge/modules/libs/eurorack/... --
+# and a pack file at the bottom of that runs past the Windows 260-character
+# limit, which surfaces as "cannot write keep file: Filename too long" followed
+# by a clone that fails and retries forever. It costs nothing anywhere else.
+LF=(-c core.autocrlf=false -c core.eol=lf -c core.longpaths=true)
 
 # Shallow where it can be. A shallow submodule fetch fails when the recorded
 # commit is not the tip of its branch, which happens as soon as a fork moves on,
@@ -81,7 +87,7 @@ update "$ROOT/third_party/sfizz" --recursive
 # Persist the line-ending settings so later work in these repositories agrees,
 # and re-normalise anything an earlier checkout left as CRLF.
 git -C "$ROOT" submodule foreach --recursive --quiet \
-    'git config core.autocrlf false; git config core.eol lf; git reset --hard -q' >/dev/null
+    'git config core.autocrlf false; git config core.eol lf; git config core.longpaths true; git reset --hard -q' >/dev/null
 
 echo
 echo "third_party is ready. Build with:"
