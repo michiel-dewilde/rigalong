@@ -1,0 +1,29 @@
+diff --git a/Source/msfa/tuning.h b/Source/msfa/tuning.h
+index cf7f287..fbd7d84 100644
+--- a/Source/msfa/tuning.h
++++ b/Source/msfa/tuning.h
+@@ -4,7 +4,6 @@
+ #include "synth.h"
+ #include <memory>
+ #include <string>
+-#include "Tunings.h"
+ 
+ class TuningState {
+ public:
+@@ -15,10 +14,12 @@ public:
+     virtual int scale_length() { return 12; }
+     virtual std::string display_tuning_str() { return "Standard Tuning"; }
+ 
+-    virtual Tunings::Tuning &getTuning() {
+-        static Tunings::Tuning t;
+-        return t;
+-    }
++    // getTuning() removed: it was the ONLY thing in msfa that needed the
++    // Surge Synth Team tuning library, and only tuning.cc -- which is JUCE
++    // bound and not compiled here -- ever implemented or called it. Keeping the
++    // include would have put a THIRD copy of Tunings:: into a binary that
++    // already links sfizz's and Surge's, which is how you get a crash nobody
++    // can read. See FINDINGS section 8.
+ };
+ 
+ std::shared_ptr<TuningState> createStandardTuning();

@@ -1,0 +1,26 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 1269857..1b0da4a 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -972,10 +972,17 @@ if ( UNIX )
+     endif ( DEFINED FLUID_DAEMON_ENV_FILE )
+ 
+     # uninstall custom target
+-    configure_file ( "${FluidSynth_SOURCE_DIR}/cmake_admin/cmake_uninstall.cmake.in"
+-      "${FluidSynth_BINARY_DIR}/cmake_uninstall.cmake" IMMEDIATE @ONLY)
+-    add_custom_target ( uninstall
+-      "${CMAKE_COMMAND}" -P "${FluidSynth_BINARY_DIR}/cmake_uninstall.cmake")
++    #
++    # A target name is global to the whole CMake build, not scoped to this
++    # project, so `uninstall` collides with any other subproject that offers the
++    # same convenience target -- which several vendored libraries do. Guard it,
++    # so that FluidSynth can be consumed via add_subdirectory alongside them.
++    if ( NOT TARGET uninstall )
++        configure_file ( "${FluidSynth_SOURCE_DIR}/cmake_admin/cmake_uninstall.cmake.in"
++          "${FluidSynth_BINARY_DIR}/cmake_uninstall.cmake" IMMEDIATE @ONLY)
++        add_custom_target ( uninstall
++          "${CMAKE_COMMAND}" -P "${FluidSynth_BINARY_DIR}/cmake_uninstall.cmake")
++    endif ( NOT TARGET uninstall )
+ endif ( UNIX )
+ 
+ include ( report )

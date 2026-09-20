@@ -1,0 +1,31 @@
+diff --git a/src/common/CMakeLists.txt b/src/common/CMakeLists.txt
+index 457347f..adf204a 100644
+--- a/src/common/CMakeLists.txt
++++ b/src/common/CMakeLists.txt
+@@ -326,8 +326,11 @@ option(SURGE_RELIABLE_VERSION_INFO "Update version info on every build (off: gen
+ if(SURGE_RELIABLE_VERSION_INFO)
+   add_custom_target(version-info BYPRODUCTS ${CMAKE_BINARY_DIR}/geninclude/version.cpp
+     WORKING_DIRECTORY ${SURGE_SOURCE_DIR}
+-    COMMAND ${CMAKE_COMMAND} -D CMAKE_PROJECT_VERSION_MAJOR=${CMAKE_PROJECT_VERSION_MAJOR}
+-    -D CMAKE_PROJECT_VERSION_MINOR=${CMAKE_PROJECT_VERSION_MINOR}
++    # Surge_VERSION_*, not CMAKE_PROJECT_VERSION_*: the latter is the TOP-LEVEL
++    # project's version, which is empty when Surge is consumed via
++    # add_subdirectory, and generates a version.cpp that does not compile.
++    COMMAND ${CMAKE_COMMAND} -D CMAKE_PROJECT_VERSION_MAJOR=${Surge_VERSION_MAJOR}
++    -D CMAKE_PROJECT_VERSION_MINOR=${Surge_VERSION_MINOR}
+     -D SURGESRC=${SURGE_SOURCE_DIR} -D SURGEBLD=${CMAKE_BINARY_DIR}
+     -D AZURE_PIPELINE=${AZURE_PIPELINE}
+     -D WIN32=${WIN32}
+@@ -346,8 +349,10 @@ endif()
+ target_sources(${PROJECT_NAME} PRIVATE ${CMAKE_BINARY_DIR}/geninclude/version.cpp)
+ 
+ # r8brain isn't cmaked but it's just one file
+-target_sources(${PROJECT_NAME} PRIVATE ${CMAKE_SOURCE_DIR}/libs/r8brain-free-src/r8bbase.cpp)
+-target_include_directories(${PROJECT_NAME} PRIVATE ${CMAKE_SOURCE_DIR}/libs/r8brain-free-src)
++# SURGE_SOURCE_DIR, not CMAKE_SOURCE_DIR: the latter is the top of whoever is
++# building, which is wrong as soon as Surge is consumed via add_subdirectory.
++target_sources(${PROJECT_NAME} PRIVATE ${SURGE_SOURCE_DIR}/libs/r8brain-free-src/r8bbase.cpp)
++target_include_directories(${PROJECT_NAME} PRIVATE ${SURGE_SOURCE_DIR}/libs/r8brain-free-src)
+ 
+ add_library(surge::${PROJECT_NAME} ALIAS ${PROJECT_NAME})
+ target_link_libraries(${PROJECT_NAME}

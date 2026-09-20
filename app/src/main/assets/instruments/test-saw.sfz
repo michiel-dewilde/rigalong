@@ -1,0 +1,33 @@
+// Bag-O-Synths test instrument.
+// Uses sfizz's built-in generators, so it needs no sample files at all --
+// enough to prove the sfizz node renders, responds to velocity and releases
+// cleanly, before a multi-gigabyte piano library is involved.
+
+<global>
+ampeg_attack=0.004
+ampeg_decay=0.9
+ampeg_sustain=55
+ampeg_release=0.45
+
+fil_type=lpf_2p
+cutoff=900
+resonance=4
+fileg_attack=0.002
+fileg_decay=0.55
+fileg_sustain=25
+fileg_release=0.40
+fileg_depth=4200
+fileg_vel2depth=2400
+
+amp_veltrack=85
+
+<region>
+sample=*saw
+lokey=0 hikey=127 pitch_keycenter=60
+volume=-9
+
+<region>
+sample=*saw
+lokey=0 hikey=127 pitch_keycenter=60
+tune=7
+volume=-12
