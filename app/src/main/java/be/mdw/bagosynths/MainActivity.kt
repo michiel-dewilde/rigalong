@@ -1005,6 +1005,10 @@ class MainActivity : Activity() {
             !s.running -> "STREAM DOWN"
             piano == NativeBridge.DEVICE_UNSPECIFIED -> "NO PIANO — waiting"
             !onPiano -> "WRONG DEVICE (${s.deviceId}) — recovering"
+            // Above xruns deliberately: this one means NO SOUND AT ALL while
+            // everything else on screen still looks alive, which is precisely
+            // why it went undiagnosed for a whole session.
+            s.audioStalled -> "AUDIO STALLED ${"%.0f".format(s.stalledSeconds)}s — replug"
             s.sharingMode != 0 -> "not exclusive"
             xrunsNow > 0 -> "$xrunsNow xruns"
             else -> "clean"
@@ -1012,6 +1016,14 @@ class MainActivity : Activity() {
 
         statusView.text = buildString {
             appendLine("device     $audioDeviceLabel  [id ${s.deviceId}]")
+            // The presentation position, which is the only reading here that
+            // does not come from this process. When it freezes while `out` is
+            // moving, the audio is dying below the app.
+            appendLine("presented  " + when {
+                !s.timestampOk -> "no timestamp from the HAL"
+                s.stalledSeconds > 1.0f -> "FROZEN for ${"%.1f".format(s.stalledSeconds)} s"
+                else -> "advancing"
+            })
             appendLine("midi       ${if (NativeBridge.nativeMidiOpen()) "connected" else "NOT CONNECTED"}")
             appendLine("state      ${if (s.running) "running" else "stopped"}   [$warn]")
             appendLine("path       ${if (s.usesAAudio) "AAudio" else "OpenSLES"}  " +

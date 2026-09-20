@@ -186,6 +186,31 @@ object NativeBridge {
          * only way to notice that a recovery landed somewhere useless.
          */
         val deviceId get() = v[23].toInt()
+
+        /**
+         * How long the HARDWARE has presented nothing, in seconds. 0 when
+         * healthy.
+         *
+         * This is the number that separates "the app stopped making audio" from
+         * "the audio stopped leaving the box", because it comes from the HAL's
+         * own timestamp rather than from anything this process does. Read it
+         * together with [outputPeak]: signal present AND this counting up is
+         * the dropout that needs a replug, and nothing else looks like that.
+         *
+         * Seconds rather than a frame position on purpose -- an int64 of frames
+         * stops being exact as a float after about six minutes at 44100 Hz,
+         * which is exactly the timescale the fault lives on.
+         */
+        val stalledSeconds get() = v[24]
+
+        /** 0 when the HAL gave no timestamp, so absent cannot pass for healthy. */
+        val timestampOk get() = v[25].toInt() == 1
+
+        /** oboe::StreamState. 2 = Open, 4 = Started, 6 = Paused, 8 = Stopped. */
+        val streamState get() = v[26].toInt()
+
+        /** The unambiguous combination: making signal, and nothing coming out. */
+        val audioStalled get() = timestampOk && stalledSeconds > 1.0f && outputPeak > 0.001f
         val probeState get() = v[13].toInt()
         val roundTripMs get() = v[14]
         val inputPeak get() = v[15]

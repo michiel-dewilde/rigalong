@@ -617,7 +617,7 @@ JNIEXPORT jfloatArray JNICALL
 Java_be_mdw_bagosynths_NativeBridge_nativeGetStats(JNIEnv* env, jobject) {
     const AudioEngine::Stats s = engine().stats();
 
-    constexpr int kCount = 24;
+    constexpr int kCount = 27;
     jfloat values[kCount] = {
             s.latencyMs,                             // 0
             s.cpuLoadPercent,                        // 1
@@ -643,6 +643,14 @@ Java_be_mdw_bagosynths_NativeBridge_nativeGetStats(JNIEnv* env, jobject) {
             s.ringTargetMs,                          // 21
             s.outputPeak,                            // 22
             static_cast<jfloat>(s.deviceId),         // 23
+            // Output-path health, for the dropout that needs a replug. NOT a
+            // frame count: an int64 of frames stops being representable as a
+            // float after about six minutes at 44100, which is precisely the
+            // timescale this bug lives on. Seconds-since-frozen is exact for as
+            // long as anyone cares.
+            s.stalledSeconds,                        // 24
+            static_cast<jfloat>(s.timestampOk),      // 25
+            static_cast<jfloat>(s.streamState),      // 26
     };
 
     jfloatArray array = env->NewFloatArray(kCount);

@@ -181,6 +181,23 @@ public:
         // The device the stream is really on, so the UI can tell whether a
         // recovery landed on the piano or on the tablet speaker.
         int32_t deviceId = 0;
+
+        // --- output-path health ------------------------------------------
+        //
+        // For the dropout that needs a replug to clear: after some minutes the
+        // UI still reacts, voices still rise, and nothing is heard.
+        //
+        // `stalledSeconds` is how long the HARDWARE presentation position has
+        // been frozen. It is the one number that separates "the app stopped
+        // making audio" from "the audio stopped leaving the box", because it
+        // comes from the timestamp the HAL reports for frames it has actually
+        // played -- not from anything this process does. Zero when healthy.
+        //
+        // Read it together with outputPeak: signal present AND the position
+        // frozen is the stall, and nothing else looks like that.
+        float stalledSeconds = 0.0f;
+        int32_t streamState = 0;        // oboe::StreamState
+        int32_t timestampOk = 0;        // 0 = the HAL gave us no timestamp
     };
 
     Stats stats() const;
@@ -265,6 +282,15 @@ private:
     std::atomic<float> mRoundTripMs{0.0f};
     std::atomic<float> mInputPeak{0.0f};
     std::atomic<float> mOutputPeak{0.0f};
+
+    // Presentation-position tracking for the dropout hunt. Mutable because
+    // stats() is const and is the natural place to sample this: it is called by
+    // the UI poller at 4 Hz, which is exactly the cadence that matters and is
+    // far too slow to be worth a thread of its own.
+    mutable std::atomic<int64_t> mLastPresented{-1};
+    mutable std::atomic<double> mLastPresentedAt{0.0};
+    mutable std::atomic<float> mStalledSeconds{0.0f};
+    mutable std::atomic<double> mLastHealthLogAt{0.0};
     int64_t mFramesSinceClick = 0;
     int32_t mClickRemaining = 0;
     float mNoiseFloor = 0.0f;

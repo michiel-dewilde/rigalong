@@ -693,6 +693,49 @@ AudioEngine::Stats AudioEngine::stats() const {
         s.sharingMode = static_cast<int32_t>(stream->getSharingMode());
         s.performanceMode = static_cast<int32_t>(stream->getPerformanceMode());
         s.usesAAudio = stream->usesAAudio() ? 1 : 0;
+        s.streamState = static_cast<int32_t>(stream->getState());
+
+        // --- is the audio actually LEAVING the box? -----------------------
+        //
+        // For the dropout that needs a replug to clear. Everything this process
+        // can see stays healthy through it -- the callback fires, the ring
+        // drains, voices rise, the meter moves -- so ask the one source that is
+        // NOT this process: the HAL's timestamp, which reports the frame
+        // position the hardware has actually PRESENTED.
+        //
+        // If that stops advancing while the engine is still producing signal,
+        // the audio is dying below us and nothing in the graph will show it. If
+        // it keeps advancing and there is still no sound, the fault is past the
+        // USB socket and not in this program at all. Either answer is worth
+        // more than any amount of staring at the node graph.
+        //
+        // Sampled here, from the UI poller at 4 Hz, and deliberately not from
+        // the render thread: getTimestamp() is a call into the HAL and has no
+        // business on a thread with a 2 ms deadline.
+        auto ts = stream->getTimestamp(CLOCK_MONOTONIC);
+        const double nowTs = nowSeconds();
+        if (ts) {
+            s.timestampOk = 1;
+            const int64_t pos = ts.value().position;
+            const int64_t last = mLastPresented.load(std::memory_order_relaxed);
+            if (pos != last) {
+                mLastPresented.store(pos, std::memory_order_relaxed);
+                mLastPresentedAt.store(nowTs, std::memory_order_relaxed);
+                mStalledSeconds.store(0.0f, std::memory_order_relaxed);
+            } else if (last >= 0) {
+                mStalledSeconds.store(
+                        static_cast<float>(nowTs - mLastPresentedAt.load(std::memory_order_relaxed)),
+                        std::memory_order_relaxed);
+            }
+        } else {
+            // No timestamp. SAY so rather than reporting a healthy zero: an
+            // absent measurement and a good one must never look the same. That
+            // is the lesson from the disconnect that reported success while
+            // sitting on the wrong device.
+            s.timestampOk = 0;
+            mStalledSeconds.store(0.0f, std::memory_order_relaxed);
+        }
+        s.stalledSeconds = mStalledSeconds.load(std::memory_order_relaxed);
 
         auto latency = stream->calculateLatencyMillis();
         if (latency) s.latencyMs = static_cast<float>(latency.value());
@@ -711,6 +754,40 @@ AudioEngine::Stats AudioEngine::stats() const {
     if (input) {
         auto inLatency = input->calculateLatencyMillis();
         if (inLatency) s.inputLatencyMs = static_cast<float>(inLatency.value());
+    }
+
+    // --- the heartbeat ----------------------------------------------------
+    //
+    // Ten seconds apart, so a logcat left running across a set stays readable
+    // and the state BEFORE a dropout is on the record rather than reconstructed
+    // after it. An intermittent fault that takes minutes to appear is only ever
+    // diagnosed from what was captured while it was happening.
+    if (stream) {
+        const double now = nowSeconds();
+        const double lastLog = mLastHealthLogAt.load(std::memory_order_relaxed);
+        const bool stalled = s.timestampOk != 0 && s.stalledSeconds > 1.0f;
+        if (now - lastLog > 10.0 || (stalled && now - lastLog > 1.0)) {
+            mLastHealthLogAt.store(now, std::memory_order_relaxed);
+            LOGI("health %s  out=%.4f voices=%d presented=%lld stalled=%.1fs "
+                 "state=%d xruns=%d ringUnder=%lld fill=%.1fms dev=%d",
+                 stalled ? "STALLED" : "ok",
+                 static_cast<double>(s.outputPeak), s.activeVoices,
+                 static_cast<long long>(mLastPresented.load(std::memory_order_relaxed)),
+                 static_cast<double>(s.stalledSeconds), s.streamState, s.xRuns,
+                 static_cast<long long>(s.ringUnderruns),
+                 static_cast<double>(s.ringFillMs), s.deviceId);
+
+            // The one unambiguous combination, shouted so it is findable in a
+            // long log: the engine is making signal, and the hardware is not
+            // playing it.
+            if (stalled && s.outputPeak > 0.001f) {
+                LOGE("AUDIO STALLED: producing signal (peak %.4f) but the device has "
+                     "presented nothing for %.1f s -- the output path is dead below "
+                     "this process, not in the graph",
+                     static_cast<double>(s.outputPeak),
+                     static_cast<double>(s.stalledSeconds));
+            }
+        }
     }
     return s;
 }
