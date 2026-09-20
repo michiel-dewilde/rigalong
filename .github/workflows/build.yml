@@ -1,0 +1,91 @@
+# Build the release APK on every push.
+#
+# This is not here to catch bad DSP -- CI cannot hear anything, and the only
+# measurements that count are taken on the tablet. It is here for exactly one
+# risk, the one introduced by moving the dependencies onto forks and submodules:
+#
+#   THAT THIS REPOSITORY QUIETLY STOPS BEING CLONABLE AND BUILDABLE BY ANYONE
+#   BUT THE LAPTOP IT WAS WRITTEN ON.
+#
+# A fresh runner is a clean clone into an empty directory every single time,
+# which is the one test that would have caught the two bugs the submodule
+# conversion uncovered: a dependency script that had only ever been run
+# incrementally, and a path length that only fails when the checkout is deep.
+name: build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  apk:
+    name: release APK (arm64-v8a)
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+        # Deliberately NOT submodules: true. Surge carries 23 submodules and
+        # this build uses 15; the eight left out are JUCE and friends, and are
+        # most of the weight. tools/init_deps.sh exists for that reason alone,
+        # and running it here is what keeps it honest.
+
+      - name: Check out the dependencies
+        run: tools/init_deps.sh
+
+      - name: Report what was checked out
+        run: |
+          git submodule status --recursive | wc -l
+          du -sh third_party
+
+      - name: JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: The pinned NDK and CMake
+        # Both versions are pinned in app/build.gradle.kts, because AGP
+        # otherwise goes looking for its own defaults and fails on a machine
+        # that has something else. Keep these two lines and that file in step.
+        run: sdkmanager --install "ndk;30.0.16248370" "cmake;4.1.2"
+
+      - name: Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: assembleRelease
+        run: ./gradlew assembleRelease --no-daemon --stacktrace
+
+      - name: No stray identifiers
+        # The rename to Bag-O-Synths left exactly one legitimate use of "mdw":
+        # the reverse-domain package be.mdw.bagosynths. Anything else is a
+        # leftover, and leftovers are how two spellings of one name start.
+        run: |
+          if git grep -nI "mdw" -- . ':!third_party' ':!.github' \
+               | grep -vE "be\.mdw\.bagosynths|be_mdw_bagosynths|be/mdw/bagosynths"; then
+            echo "::error::stray mdw identifier -- see the naming rule in README.md"
+            exit 1
+          fi
+
+      - name: The DX7 cartridges are in the APK
+        # They are not committed: they are unpacked at build time from the dexed
+        # submodule. That makes their presence a property of the BUILD, which
+        # means it can regress silently, which means it gets checked.
+        run: |
+          count=$(unzip -l app/build/outputs/apk/release/app-release.apk \
+                  | grep -c "assets/dx7/.*\.syx")
+          echo "cartridges in the APK: $count"
+          test "$count" -eq 33
+
+      - name: Upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: bagosynths-release-apk
+          path: app/build/outputs/apk/release/app-release.apk
+          if-no-files-found: error
