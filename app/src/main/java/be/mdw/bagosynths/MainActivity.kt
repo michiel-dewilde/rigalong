@@ -108,6 +108,38 @@ class MainActivity : Activity() {
         }
     }
 
+    /**
+     * What keeps watch while the activity is NOT in front.
+     *
+     * Since the instrument now keeps playing when backgrounded (see
+     * [EngineService]), it also has to keep RECOVERING when backgrounded, and
+     * that did not follow for free. The disconnect watchdog lives in the poller
+     * above, and the poller used to stop in onPause -- which was harmless only
+     * because the audio stopped there too.
+     *
+     * It matters because of the division of labour in a recovery. The native
+     * retry re-opens the device id it remembers, which catches a cable that was
+     * merely nudged; only this Kotlin side can ask AudioManager for the piano
+     * BY NAME, which is the only thing that works after a real re-enumeration,
+     * because that hands out a new id and makes every remembered one useless.
+     * Without this, a replug behind a dialog left a silent instrument that
+     * believed it was playing.
+     *
+     * Once a second rather than four times, and no UI work at all: nothing is
+     * on screen to update, and this runs while the user is doing something else
+     * with the tablet.
+     *
+     * It also keeps [NativeBridge.stats] being called, which is what emits the
+     * health heartbeat -- so the dropout hunt in HANDOFF section 13 is no longer
+     * blind whenever the app is not in front.
+     */
+    private val backgroundPoller = object : Runnable {
+        override fun run() {
+            watchAudioDevice()
+            handler.postDelayed(this, 1000)
+        }
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
@@ -131,6 +163,7 @@ class MainActivity : Activity() {
         // starting a foreground service from the background is refused on
         // Android 12 and later, so this is the only moment it is legal.
         EngineService.start(this)
+        handler.removeCallbacks(backgroundPoller)
 
         if (!engineBroughtUp) {
             // Output FIRST and always. Established by experiment 2026-09-19: the
@@ -246,6 +279,9 @@ class MainActivity : Activity() {
         // a patch you lose, and capturing the graph is a few dozen plain reads.
         savePatch(named = false)
         handler.removeCallbacks(poller)
+        // Hand over to the cut-down watchdog. The instrument keeps playing, so
+        // it has to keep recovering too.
+        handler.post(backgroundPoller)
 
         // THE AUDIO AND MIDI DELIBERATELY STAY UP.
         //
@@ -266,13 +302,18 @@ class MainActivity : Activity() {
 
     override fun onDestroy() {
         super.onDestroy()
+        // Unconditionally, and BEFORE the isFinishing guard: both runnables hold
+        // a reference to this activity, and one that outlived it would keep the
+        // whole view hierarchy alive and go on poking a dead UI.
+        handler.removeCallbacks(poller)
+        handler.removeCallbacks(backgroundPoller)
+
         // isFinishing distinguishes the user closing the instrument from a
         // recreation. The manifest already absorbs rotation and uiMode through
         // configChanges, so this should not fire otherwise -- but tearing the
         // stream down on a configuration change would be a very confusing bug to
         // chase, and the guard costs one line.
         if (!isFinishing) return
-        handler.removeCallbacks(poller)
         NativeBridge.nativeCloseMidi()
         midiDevice?.close()
         midiDevice = null
