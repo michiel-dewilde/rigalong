@@ -1,3 +1,5 @@
+import javax.inject.Inject
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
@@ -102,27 +104,69 @@ android {
 //
 // The consequence to know about: a clone that has not run tools/init_deps.sh
 // builds an APK whose DX7 has only its init voice. That is correct behaviour --
-// the panel already says "no cartridges" -- but it is now reachable by a route
-// that has nothing to do with missing banks.
-val dx7BankZip = file("../third_party/dexed/assets/builtin_pgm.zip")
-val dx7AssetsDir = layout.buildDirectory.dir("generated/dx7-assets")
+// the panel says "no cartridges -- none bundled, none in the dx7 folder" -- but
+// it is now reachable by a route that has nothing to do with missing banks.
+//
+// ON WIRING THIS UP, WHICH TOOK THREE TRIES.
+//
+// Adding the output as a plain assets srcDir does not work, and fails in two
+// different ways. dependsOn on the asset-merge task leaves lint's model task
+// consuming an undeclared output, and Gradle refuses the build. Carrying the
+// dependency on a FileCollection with builtBy silences that -- but AGP resolves
+// sourceSets["main"].assets to paths and drops the task dependency, so the task
+// simply never runs and the APK ships with no cartridges at all. That one is
+// worse, because it is silent: it only showed up in a clean clone, since a tree
+// that had ever built successfully still had the files sitting in build/.
+//
+// addGeneratedSourceDirectory is the supported way to feed a generated
+// directory to a variant, and it wires the dependency itself. It needs a task
+// with a DirectoryProperty output, which is why this is a real task class
+// rather than a Copy.
+abstract class UnpackDx7Banks : DefaultTask() {
+    // InputFiles, not InputFile: the zip is absent until the submodules are
+    // checked out, and a missing @InputFile fails the build rather than
+    // producing an empty directory.
+    @get:InputFiles
+    abstract val banksZip: ConfigurableFileCollection
 
-val unpackDx7Banks by tasks.registering(Copy::class) {
-    description = "Unpack Dexed's builtin DX7 cartridges into generated assets."
-    // Guarded rather than failed: without the submodule there is simply nothing
-    // to copy, and a Copy with no source is a no-op.
-    if (dx7BankZip.exists()) {
-        from(zipTree(dx7BankZip))
+    @get:OutputDirectory
+    abstract val outputDir: DirectoryProperty
+
+    @get:Inject
+    abstract val archives: ArchiveOperations
+
+    @get:Inject
+    abstract val fs: FileSystemOperations
+
+    @TaskAction
+    fun unpack() {
+        val zip = banksZip.files.firstOrNull { it.isFile }
+        // The .syx files go in a dx7/ subdirectory, because the app reads them
+        // with assets.list("dx7").
+        fs.sync {
+            into(outputDir.dir("dx7"))
+            if (zip != null) {
+                from(archives.zipTree(zip))
+            }
+        }
+        logger.lifecycle(
+            if (zip == null) "DX7: no builtin_pgm.zip -- run tools/init_deps.sh"
+            else "DX7: unpacked ${outputDir.get().dir("dx7").asFile.listFiles()?.size ?: 0} cartridges"
+        )
     }
-    into(dx7AssetsDir.map { it.dir("dx7") })
 }
 
-// builtBy rather than a dependsOn on the merge task: the asset directory has
-// more consumers than the obvious one -- lint builds a model of it too -- and
-// naming them individually means finding out about each new one by a build
-// failure. Carrying the dependency on the FileCollection tells Gradle once, and
-// every consumer inherits it.
-android.sourceSets["main"].assets.srcDir(files(dx7AssetsDir).builtBy(unpackDx7Banks))
+val unpackDx7Banks = tasks.register<UnpackDx7Banks>("unpackDx7Banks") {
+    description = "Unpack Dexed's builtin DX7 cartridges into generated assets."
+    banksZip.from(file("../third_party/dexed/assets/builtin_pgm.zip"))
+    outputDir.set(layout.buildDirectory.dir("generated/dx7-assets"))
+}
+
+androidComponents {
+    onVariants { variant ->
+        variant.sources.assets?.addGeneratedSourceDirectory(unpackDx7Banks) { it.outputDir }
+    }
+}
 
 dependencies {
     implementation("com.google.oboe:oboe:1.9.3")
