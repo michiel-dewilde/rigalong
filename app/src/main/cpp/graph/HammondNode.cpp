@@ -1,5 +1,7 @@
 #include "HammondNode.h"
 
+#include <android/log.h>
+
 #include <algorithm>
 #include <cmath>
 #include <cstring>
@@ -24,6 +26,8 @@ extern "C" {
 
 extern double SampleRateD;   // beatrix_glue.c; read by tonegen.c and vibrato.c
 }
+
+#define LOGI(...) __android_log_print(ANDROID_LOG_INFO, "bos-organ", __VA_ARGS__)
 
 namespace {
 inline double nowSec() {
@@ -120,9 +124,53 @@ HammondNode::~HammondNode() {
 
 void HammondNode::prepare(double sampleRate, int maxFrames) {
     // prepare() runs on every graph compile. Building the tone generator means
-    // computing 91 wheels' worth of wavetables, which takes real time and must
-    // happen exactly once.
-    if (mInitialised) return;
+    // computing 91 wheels' worth of wavetables, which takes real time, so it
+    // happens once per RATE rather than once per compile.
+    //
+    // Once per compile was wrong and it was audible: tonegen.c bakes the rate
+    // into the wavetables themselves --
+    //
+    //     nws = (SampleRateD * i) / Hz;   /* ideal nof samples */
+    //
+    // -- so wheels built at 44100 and then played at 48000 run 8,8 % sharp,
+    // which is most of a whole tone. Reported 2026-09-21: "organ and sf2 sound
+    // transposed, C sounds like D", and only those two, because sfizz takes
+    // setSampleRate() on every prepare and the rest re-init on a rate change.
+    //
+    // It was invisible until the rate stopped being hardcoded at 44100. Now it
+    // changes whenever the output moves between the CP-88 (44100) and the
+    // tablet's own speaker (48000).
+    if (mInitialised) {
+        if (std::abs(mRate - sampleRate) < 0.5) return;
+
+        // Re-initialise IN PLACE, without reallocating. This is upstream's own
+        // pattern: b_synth/lv2.c's initSynth() runs exactly this sequence on an
+        // existing instance and is called repeatedly, so it is a supported thing
+        // to do rather than a trick.
+        //
+        // Tearing down and rebuilding would also work -- the destructor above
+        // shows setbfree does provide freeToneGenerator and friends -- but it
+        // would drop every sounding note and cost the wavetable build again,
+        // for no gain.
+        LOGI("hammond: rebuilding the tone generator for %.0f Hz (was %.0f)",
+             sampleRate, mRate);
+        mRate = sampleRate;
+        SampleRateD = sampleRate;
+
+        initToneGenerator(mInst->synth, mInst->midicfg);
+        initVibrato(mInst->synth, mInst->midicfg);
+        initPreamp(mInst->preamp, mInst->midicfg);
+        initReverb(mInst->reverb, mInst->midicfg, sampleRate);
+        initWhirl(mInst->whirl, mInst->midicfg, sampleRate);
+        initRunningConfig(mInst->state, mInst->midicfg);
+        initMidiTables(mInst->midicfg);
+
+        // The re-init resets the engine to its defaults, so put the registration
+        // back. mParams is the node's own copy and survives all of this, which
+        // is why a device change does not cost you your drawbars.
+        for (int i = 0; i < kNumParams; ++i) applyParam(i, mParams[i]);
+        return;
+    }
 
     mRate = sampleRate;
     SampleRateD = sampleRate;

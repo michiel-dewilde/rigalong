@@ -86,7 +86,21 @@ const char* FluidNode::paramName(int index) const {
 }
 
 void FluidNode::prepare(double sampleRate, int maxFrames) {
-    mRate = sampleRate > 0 ? sampleRate : 44100.0;
+    const double rate = sampleRate > 0 ? sampleRate : 44100.0;
+
+    // The rate reaches FluidSynth at init() and, before this, never again --
+    // so a synth built at 44100 kept rendering as if it were at 44100 after the
+    // output moved to a 48000 device, and played 8,8 % sharp. Reported
+    // 2026-09-21 together with the organ, which had the same bug for the same
+    // reason: both are built once, asynchronously, while sfizz takes
+    // setSampleRate() on every prepare and was therefore always right.
+    if (fluid_synth_t* s = mSynth.load(std::memory_order_acquire);
+        s != nullptr && std::abs(mRate - rate) > 0.5) {
+        LOGI("fluid: sample rate %.0f -> %.0f", mRate, rate);
+        fluid_synth_set_sample_rate(s, static_cast<float>(rate));
+    }
+
+    mRate = rate;
     // Only the scratch buffer is allocated here. Building the synth reads
     // settings and allocates voices, which is cheap but still belongs on the
     // loader thread with the SoundFont scan -- see AudioEngine::initFluidAsync.
