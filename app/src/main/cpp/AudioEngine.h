@@ -223,6 +223,15 @@ public:
         mPreferredRate.store(rate, std::memory_order_relaxed);
     }
 
+    /// The format the CHOSEN DEVICE declares, as an oboe::AudioFormat value
+    /// (1 = I16, 2 = Float, 3 = I24, 4 = I32). 0 = let Oboe decide.
+    ///
+    /// Asked of the device for the same reason the rate is: the CP-88 declares
+    /// 24-bit packed, and asking it for I16 has the HAL pad eight bits away.
+    void setPreferredFormat(int32_t format) {
+        mPreferredFormat.store(format, std::memory_order_relaxed);
+    }
+
     /// Takes effect on the next openStream(), so the caller stops and starts.
     void setExclusive(bool exclusive) {
         mWantExclusive.store(exclusive, std::memory_order_relaxed);
@@ -235,7 +244,7 @@ private:
 
     // Runs on the audio thread, after the synth has rendered. May overwrite the
     // output block with a click while a measurement is in flight.
-    void runLatencyProbe(int16_t* out, int32_t numFrames);
+    void runLatencyProbe(float* out, int32_t numFrames);
 
 public:
     // Capture the microphone plus note-on markers for `seconds`, then analyse
@@ -324,6 +333,11 @@ private:
     std::atomic<bool> mWantExclusive{true};
 
     std::atomic<int32_t> mPreferredRate{0};
+    std::atomic<int32_t> mPreferredFormat{0};
+
+    // What the stream actually granted, cached so the callback does not ask.
+    oboe::AudioFormat mStreamFormat = oboe::AudioFormat::I16;
+    int32_t mBytesPerFrame = 4;
 
     // Presentation-position tracking for the dropout hunt. Mutable because
     // stats() is const and is the natural place to sample this: it is called by
@@ -429,7 +443,16 @@ private:
     static constexpr int kShrinkFrames = 32;       // -0.7 ms per calm period
     static constexpr double kShrinkAfterSeconds = 6.0;   // give latency back slowly
 
-    std::vector<int16_t> mRing;
+    // FLOAT, not int16. The engine renders in float and the devices differ:
+    // the CP-88 wants 24-bit packed, the tablet speaker 16-bit. Keeping the ring
+    // at the engine's own precision means the single conversion to the device's
+    // format happens once, in the callback, at the last possible moment --
+    // instead of quantising to 16 bits here and padding back up afterwards.
+    std::vector<float> mRing;
+
+    // Contiguous copy of one callback's worth, because the ring wraps and the
+    // dither wants a straight run of samples. Preallocated at open.
+    std::vector<float> mCbScratch;
     std::atomic<uint32_t> mRingWrite{0};
     std::atomic<uint32_t> mRingRead{0};
     std::thread mRenderThread;
