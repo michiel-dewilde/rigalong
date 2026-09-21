@@ -151,10 +151,15 @@ class MainActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        // Before buildUi, so the button is built with the right face on it.
+        loadRecyclePrefs()
         setContentView(buildUi())
 
         val filter = android.content.IntentFilter("be.mdw.bagosynths.RECYCLE")
         filter.addAction("be.mdw.bagosynths.NOTE")
+        filter.addAction("be.mdw.bagosynths.PANIC")
+        filter.addAction("be.mdw.bagosynths.STRESS")
+        filter.addAction("be.mdw.bagosynths.RESETPEAKS")
         if (Build.VERSION.SDK_INT >= 33) {
             registerReceiver(recycleReceiver, filter, Context.RECEIVER_EXPORTED)
         } else {
@@ -628,10 +633,18 @@ class MainActivity : Activity() {
      * move, and the sound is coming out of a speaker nobody on a stage can hear.
      */
     private fun watchAudioDevice() {
+        // A recycle deliberately leaves the device closed for several seconds.
+        // Without this guard the watchdog sees "not running", decides the piano
+        // has been lost, and reopens after two -- cutting the hold short and
+        // quietly defeating the one thing that prevents the dropout.
+        if (recycling) return
+
         val stats = NativeBridge.stats()
         val piano = findCp88OutputDeviceId()
         lastKnownPianoId = piano
         val havePiano = piano != NativeBridge.DEVICE_UNSPECIFIED
+
+        tickRecycle()
 
         val healthy = stats.running && havePiano && stats.deviceId == piano
         if (healthy) {
@@ -732,7 +745,65 @@ class MainActivity : Activity() {
     //
     // Triggered for testing with:
     //     adb shell am broadcast -a be.mdw.bagosynths.RECYCLE --el hold 1500
-    private var recycling = false
+    @Volatile private var recycling = false
+
+    /**
+     * The feature as a whole. On by default, but it only ARMS when the output is
+     * actually the CP-88 — a Scarlett or the tablet's own speaker has no such
+     * fault and must not be interrupted every ten minutes for nothing.
+     */
+    private var recycleEnabled = true
+    private var recycleIntervalMs = 10 * 60_000L
+    private var recycleHoldMs = 4_000L
+
+    /** uptimeMillis of the next automatic recycle, or 0 when disarmed. */
+    private var nextRecycleAt = 0L
+
+    private fun loadRecyclePrefs() {
+        val p = prefs()
+        recycleEnabled = p.getBoolean("recycleEnabled", true)
+        recycleIntervalMs = p.getLong("recycleIntervalMs", 10 * 60_000L)
+        recycleHoldMs = p.getLong("recycleHoldMs", 4_000L)
+    }
+
+    private fun saveRecyclePrefs() {
+        prefs().edit()
+            .putBoolean("recycleEnabled", recycleEnabled)
+            .putLong("recycleIntervalMs", recycleIntervalMs)
+            .putLong("recycleHoldMs", recycleHoldMs)
+            .apply()
+    }
+
+    /** True when the stream is really on the piano, which is the only case that needs this. */
+    private fun outputIsCp88(): Boolean {
+        val piano = lastKnownPianoId
+        return piano != NativeBridge.DEVICE_UNSPECIFIED &&
+            NativeBridge.stats().deviceId == piano
+    }
+
+    /**
+     * Drives the countdown. Called from the watchdog, so it runs both while the
+     * activity is in front and while it is away — a set does not stop because
+     * the screen did.
+     */
+    private fun tickRecycle() {
+        if (!recycleEnabled || !outputIsCp88()) {
+            nextRecycleAt = 0L
+            return
+        }
+        val now = android.os.SystemClock.uptimeMillis()
+        if (nextRecycleAt == 0L) {
+            nextRecycleAt = now + recycleIntervalMs
+            return
+        }
+        if (now >= nextRecycleAt) recycleAudio(recycleHoldMs)
+    }
+
+    private fun recycleSecondsLeft(): Long {
+        if (nextRecycleAt == 0L) return -1
+        val left = nextRecycleAt - android.os.SystemClock.uptimeMillis()
+        return if (left < 0) 0 else left / 1000
+    }
 
     private fun recycleAudio(holdMs: Long) {
         if (recycling) {
@@ -740,6 +811,10 @@ class MainActivity : Activity() {
             return
         }
         recycling = true
+        // Push the countdown out immediately, so a manual recycle at a
+        // convenient moment genuinely buys a full interval rather than leaving
+        // an automatic one to land thirty seconds into the next number.
+        nextRecycleAt = android.os.SystemClock.uptimeMillis() + recycleIntervalMs
         val device = findCp88OutputDeviceId()
         val bursts = bufferBursts
         android.util.Log.i("bos-ui", "recycle: closing, holding ${holdMs} ms, device $device")
@@ -749,10 +824,10 @@ class MainActivity : Activity() {
                 try { Thread.sleep(holdMs) } catch (_: InterruptedException) {}
             }
             val ok = NativeBridge.nativeStart(device, bursts)
-            android.util.Log.i("bos-ui",
-                "recycle: reopened after ${holdMs} ms -> $ok")
+            android.util.Log.i("bos-ui", "recycle: reopened after ${holdMs} ms -> $ok")
             handler.post {
                 recycling = false
+                nextRecycleAt = android.os.SystemClock.uptimeMillis() + recycleIntervalMs
                 NativeBridge.nativeResetPeaks()
             }
         }.start()
@@ -775,7 +850,41 @@ class MainActivity : Activity() {
                 "be.mdw.bagosynths.NOTE" -> NativeBridge.nativeTestNote(
                     intent.getIntExtra("note", 48),
                     intent.getIntExtra("vel", 90))
-                else -> recycleAudio(intent?.getLongExtra("hold", 4000L) ?: 4000L)
+                // Driven by name rather than by tapping a coordinate. The soak
+                // and stress scripts used to tap fixed screen positions, which
+                // went stale silently three times -- the script still runs, the
+                // tap lands on nothing, and the run is quietly worthless. There
+                // is no repairing that by correcting the numbers again, and
+                // uiautomator cannot help either: this screen never reaches the
+                // idle state its dump requires, because the meters refresh four
+                // times a second.
+                "be.mdw.bagosynths.PANIC" -> NativeBridge.nativePanic()
+                "be.mdw.bagosynths.STRESS" -> NativeBridge.nativeStressChord(
+                    intent.getIntExtra("count", 30))
+                "be.mdw.bagosynths.RESETPEAKS" -> NativeBridge.nativeResetPeaks()
+                else -> {
+                    // Settings are scriptable as well as reachable by long-press,
+                    // so an unattended soak can set them without anyone tapping:
+                    //   adb shell am broadcast -a be.mdw.bagosynths.RECYCLE \
+                    //       --ez enabled true --el minutes 10 --el hold 4000 --ez fire false
+                    intent?.let { i ->
+                        if (i.hasExtra("enabled")) recycleEnabled = i.getBooleanExtra("enabled", true)
+                        if (i.hasExtra("minutes")) recycleIntervalMs = i.getLongExtra("minutes", 10) * 60_000L
+                        if (i.hasExtra("hold")) recycleHoldMs = i.getLongExtra("hold", 4000L)
+                        if (i.hasExtra("enabled") || i.hasExtra("minutes") || i.hasExtra("hold")) {
+                            nextRecycleAt = 0L
+                            saveRecyclePrefs()
+                            android.util.Log.i("bos-ui",
+                                "recycle settings: enabled=$recycleEnabled " +
+                                    "interval=${recycleIntervalMs}ms hold=${recycleHoldMs}ms")
+                        }
+                    }
+                    // `fire false` sets the parameters without recycling, which
+                    // is what a script wants before a soak starts.
+                    if (intent?.getBooleanExtra("fire", true) != false) {
+                        recycleAudio(recycleHoldMs)
+                    }
+                }
             }
         }
     }
@@ -1041,6 +1150,19 @@ class MainActivity : Activity() {
             setPadding(0, 32, 0, 0)
         }
 
+        // THE RECYCLE. See USB-AUDIO-HALT.md: the CP-88's USB output halts after
+        // 34-42 M frames, and closing the stream, staying silent about four
+        // seconds and reopening PREVENTS that. It does not cure it -- measured
+        // 2026-09-21, a recycle against an already-dead device fails at every
+        // hold up to six seconds -- so the countdown has to fire before the
+        // fault, not after it.
+        //
+        // Tap to take the hit NOW, between numbers, where four seconds of
+        // silence costs nothing. Long-press for the settings.
+        recycleButton = makeButton("Recycle") { recycleAudio(recycleHoldMs) }
+        recycleButton.setOnLongClickListener { showRecycleSettings(); true }
+        buttonRow.addView(recycleButton)
+
         buttonRow.addView(makeButton("Buffer: $bufferBursts") { button ->
             bufferBursts = if (bufferBursts >= 4) 1 else bufferBursts + 1
             button.text = "Buffer: $bufferBursts"
@@ -1141,7 +1263,14 @@ class MainActivity : Activity() {
             loadFirstInstrument()
         })
 
-        root.addView(buttonRow)
+        // Scrollable sideways, because the row is now wider than the tablet and
+        // a button that has fallen off the edge is a button that does not exist.
+        // Recycle sits FIRST so it is reachable without scrolling: it is the one
+        // control here that gets used mid-set, between numbers.
+        root.addView(android.widget.HorizontalScrollView(this).apply {
+            isHorizontalScrollBarEnabled = false
+            addView(buttonRow)
+        })
 
         // The instrument selector, in place of the old PART cycle.
         //
@@ -1250,16 +1379,69 @@ class MainActivity : Activity() {
      * leverage at the back. Without it every note is mezzo-forte and a sampled
      * piano with sixteen velocity layers sounds like a toy.
      */
+    private lateinit var recycleButton: Button
+
+    /** Keeps the button's face honest: armed and counting, off, or not applicable. */
+    private fun refreshRecycleButton() {
+        if (!::recycleButton.isInitialized) return
+        val left = recycleSecondsLeft()
+        recycleButton.text = when {
+            recycling -> "Recycle: now"
+            !recycleEnabled -> "Recycle: off"
+            // Armed only for the piano. Saying so is better than a dash,
+            // because "why is it not counting" is otherwise a puzzle.
+            left < 0 -> "Recycle: n/a"
+            else -> "Recycle: %d:%02d".format(left / 60, left % 60)
+        }
+    }
+
+    /**
+     * Long-press settings. A list of cycling choices rather than a form: it is
+     * three values, it has to be usable in a hurry, and a custom layout would be
+     * more code than the feature.
+     */
+    private fun showRecycleSettings() {
+        val intervals = longArrayOf(5, 8, 10, 15, 20, 30).map { it * 60_000L }
+        val holds = longArrayOf(2000, 3000, 4000, 6000, 8000)
+        val items = arrayOf(
+            "Automatic recycle: " + if (recycleEnabled) "ON" else "off",
+            "Every: ${recycleIntervalMs / 60_000} min",
+            "Silent hold: %.1f s".format(recycleHoldMs / 1000.0),
+            "Recycle now",
+        )
+        android.app.AlertDialog.Builder(this)
+            .setTitle("Recycle (CP-88 dropout workaround)")
+            .setItems(items) { _, which ->
+                when (which) {
+                    0 -> recycleEnabled = !recycleEnabled
+                    1 -> recycleIntervalMs =
+                        intervals[(intervals.indexOf(recycleIntervalMs) + 1) % intervals.size]
+                    2 -> recycleHoldMs =
+                        holds[(holds.indexOf(recycleHoldMs) + 1) % holds.size]
+                    3 -> recycleAudio(recycleHoldMs)
+                }
+                // Any change restarts the countdown, so a new interval takes
+                // effect from now rather than from whenever the last one began.
+                nextRecycleAt = 0L
+                saveRecyclePrefs()
+                refreshRecycleButton()
+                if (which != 3) showRecycleSettings()
+            }
+            .setNegativeButton("Close", null)
+            .show()
+    }
+
     private fun makeTestKeys(): View {
         return PianoKeyboardView(this) { note, velocity ->
             NativeBridge.nativeTestNote(note, velocity)
         }.apply {
             layoutParams = LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, 320)
+                ViewGroup.LayoutParams.MATCH_PARENT, 360)
         }
     }
 
     private fun updateStats() {
+        refreshRecycleButton()
         val s = NativeBridge.stats()
 
         val xrunsNow = s.xRuns - xrunBaseline

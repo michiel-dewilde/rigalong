@@ -69,10 +69,34 @@ class PianoKeyboardView(
 
     private fun isBlack(note: Int) = (note % 12) in setOf(1, 3, 6, 8, 10)
 
+    override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
+        super.onSizeChanged(w, h, oldw, oldh)
+        // Reported rather than guessed from a screenshot. The number that
+        // decides whether a chord is playable is the white-only strip, and
+        // reading it off a scaled screenshot got it wrong twice.
+        android.util.Log.i("bos-ui",
+            "keyboard: ${w}x${h} px, white key ${"%.0f".format(whiteWidth)} wide, " +
+                "black ${"%.0f".format(blackHeight)} long, " +
+                "white-only strip ${"%.0f".format(h - blackHeight)} px")
+    }
+
     private val whiteWidth: Float
         get() = if (whiteNotes.isEmpty()) 1f else width.toFloat() / whiteNotes.size
     private val blackWidth: Float get() = whiteWidth * 0.62f
-    private val blackHeight: Float get() = height * 0.62f
+
+    // A real piano's black keys are about 63 % of the white key's length, and
+    // that ratio was the first thing tried. On glass it plays badly: what
+    // matters for a chord is not the RATIO but the absolute size of the strip of
+    // white key left reachable below the black ones, and at 320 px tall that
+    // strip was 122 px -- about 1,3 cm, too little to hit reliably with three
+    // fingers at once.
+    //
+    // Taken mostly out of the ratio rather than out of the screen: at 0,55 and
+    // 360 px the black keys stay the same absolute length they already were
+    // (198 px) while the white-only strip grows to 162 px, a third more, for
+    // 40 px of extra height. Slightly stubby black keys, a keyboard that can be
+    // played.
+    private val blackHeight: Float get() = height * 0.55f
 
     override fun onDraw(canvas: Canvas) {
         val w = whiteWidth
@@ -117,9 +141,23 @@ class PianoKeyboardView(
         val note = noteAt(x, y) ?: return
         val already = heldByPointer[pointerId]
         if (already == note) return
-        if (already != null) onNote(already, 0)
+
+        // Whether this note is ALREADY sounding under some other finger, asked
+        // before this pointer's own entry is changed.
+        val soundingElsewhere = heldByPointer.any { it.key != pointerId && it.value == note }
+
         heldByPointer[pointerId] = note
-        onNote(note, velocityAt(y, note))
+
+        // Release the note this finger was on -- but only if no OTHER finger is
+        // still holding it. Without that test, a left hand sustaining a chord is
+        // cut off the moment a right hand slides off the same note, which is
+        // exactly what happens when two hands meet in the middle of the keyboard.
+        if (already != null && !heldByPointer.containsValue(already)) onNote(already, 0)
+
+        // And do not double-trigger a note two fingers happen to share: on a real
+        // keybed one key makes one sound, and sfizz would otherwise start a
+        // second voice and play it twice as loud.
+        if (!soundingElsewhere) onNote(note, velocityAt(y, note))
     }
 
     private fun release(pointerId: Int) {
