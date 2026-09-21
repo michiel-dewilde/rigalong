@@ -144,6 +144,14 @@ class MainActivity : Activity() {
         super.onCreate(savedInstanceState)
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         setContentView(buildUi())
+
+        val filter = android.content.IntentFilter("be.mdw.bagosynths.RECYCLE")
+        if (Build.VERSION.SDK_INT >= 33) {
+            registerReceiver(recycleReceiver, filter, Context.RECEIVER_EXPORTED)
+        } else {
+            @Suppress("UnspecifiedRegisterReceiverFlag")
+            registerReceiver(recycleReceiver, filter)
+        }
     }
 
     /**
@@ -318,6 +326,7 @@ class MainActivity : Activity() {
     }
 
     override fun onDestroy() {
+        runCatching { unregisterReceiver(recycleReceiver) }
         super.onDestroy()
         // Unconditionally, and BEFORE the isFinishing guard: both runnables hold
         // a reference to this activity, and one that outlived it would keep the
@@ -669,6 +678,60 @@ class MainActivity : Activity() {
     }
 
     // ------------------------------------------------------------------ audio
+
+    // ---------------------------------------------------------------- recycle
+    //
+    // The USB output halts after 34-42 M frames (see USB-AUDIO-HALT.md). The
+    // only thing that brings it back short of a replug is closing the stream and
+    // leaving the device ALONE for long enough that it reaches standby, then
+    // reopening. A close followed immediately by an open does not do it, because
+    // AudioFlinger keeps the HAL stream open through its standby delay and the
+    // USB substream is therefore never torn down.
+    //
+    // `holdMs` is the silence between close and open. Proven at 4000 ms on the
+    // AudioTrack path; this is the hook that establishes the minimum on the path
+    // the instrument actually uses (Oboe, EXCLUSIVE, MMAP).
+    //
+    // Triggered for testing with:
+    //     adb shell am broadcast -a be.mdw.bagosynths.RECYCLE --el hold 1500
+    private var recycling = false
+
+    private fun recycleAudio(holdMs: Long) {
+        if (recycling) {
+            android.util.Log.i("bos-ui", "recycle: already in flight, ignoring")
+            return
+        }
+        recycling = true
+        val device = findCp88OutputDeviceId()
+        val bursts = bufferBursts
+        android.util.Log.i("bos-ui", "recycle: closing, holding ${holdMs} ms, device $device")
+        Thread {
+            NativeBridge.nativeStop()
+            if (holdMs > 0) {
+                try { Thread.sleep(holdMs) } catch (_: InterruptedException) {}
+            }
+            val ok = NativeBridge.nativeStart(device, bursts)
+            android.util.Log.i("bos-ui",
+                "recycle: reopened after ${holdMs} ms -> $ok")
+            handler.post {
+                recycling = false
+                NativeBridge.nativeResetPeaks()
+            }
+        }.start()
+    }
+
+    /**
+     * Debug trigger for [recycleAudio], so the hold can be bracketed from a
+     * script rather than by tapping a button and guessing at the timing. It is
+     * registered for the life of the process, not just while resumed, because
+     * the engine outlives the activity.
+     */
+    private val recycleReceiver = object : android.content.BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: android.content.Intent?) {
+            val hold = intent?.getLongExtra("hold", 4000L) ?: 4000L
+            recycleAudio(hold)
+        }
+    }
 
     private fun startEngine() {
         val deviceId = findCp88OutputDeviceId()
