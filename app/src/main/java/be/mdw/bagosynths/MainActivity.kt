@@ -1006,6 +1006,7 @@ class MainActivity : Activity() {
         chosenOutputName?.let { want ->
             outputCandidates().firstOrNull { it.productName?.toString() == want }?.let { d ->
                 audioDeviceLabel = "${d.productName}  [chosen]"
+                NativeBridge.nativeSetPreferredRate(nativeRateOf(d))
                 return d.id
             }
         }
@@ -1020,7 +1021,25 @@ class MainActivity : Activity() {
             else -> "built-in (NO USB DEVICE — piano not connected?)"
         }
 
+        NativeBridge.nativeSetPreferredRate(nativeRateOf(chosen))
         return chosen?.id ?: NativeBridge.DEVICE_UNSPECIFIED
+    }
+
+    /**
+     * The rate the device itself declares, or 0 for "let AAudio pick".
+     *
+     * This has to be asked of the DEVICE. Leaving the rate unspecified and
+     * trusting what comes back was wrong: AAudio returned 48000 for the CP-88,
+     * which declares 44100 and nothing else, and the stream opened happily with
+     * a resampler in the HAL. Android's own policy dump shows the single
+     * profile -- 44100, 24-bit packed, stereo -- and it agrees with Yamaha's
+     * documentation.
+     *
+     * Where a device offers several rates, the highest is taken.
+     */
+    private fun nativeRateOf(d: AudioDeviceInfo?): Int {
+        val rates = d?.sampleRates ?: return 0
+        return rates.maxOrNull() ?: 0
     }
 
     /**

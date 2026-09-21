@@ -21,12 +21,22 @@
 #include "graph/Nodes.h"
 
 // Stream settings measured as working on this rig (Galaxy Tab S9 Ultra -> CP-88
-// over USB, 2026-09-19): AAudio, MMAP + EXCLUSIVE granted, 44100 Hz, I16 at the
-// HAL, 89-frame burst, 5.5-9.9 ms reported output latency at a one-burst buffer.
+// over USB, 2026-09-19): AAudio, MMAP + EXCLUSIVE granted, 44100 Hz, 89-frame
+// burst, 5.5-9.9 ms reported output latency at a one-burst buffer.
 //
-// The format is I16 on purpose. The device endpoint is 16-bit whatever we ask
-// for, so we ask for I16 and do the float -> int conversion ourselves, with
-// dither, instead of letting Oboe round.
+// CORRECTED 2026-09-21. This used to claim the device endpoint is 16-bit
+// "whatever we ask for". It is not. Android's own policy dump enumerates the
+// CP-88's single profile straight from its USB descriptors:
+//
+//   Port ID 1240  "USB-Audio - CP88/CP73"
+//     1. [dynamic format]; AUDIO_FORMAT_PCM_24_BIT_PACKED (0x6)
+//        sampling rates: 44100
+//        channel masks: 0x0003
+//
+// 44100 only -- which matches Yamaha's documentation -- and TWENTY-FOUR bit.
+// We ask for I16 because the render ring is int16 and its dither is deliberate,
+// so the HAL pads our 16 bits out to 24. Feeding the device its full resolution
+// means making that ring float, which is a real change and is not done yet.
 class AudioEngine : public oboe::AudioStreamDataCallback,
                     public oboe::AudioStreamErrorCallback {
 public:
@@ -203,6 +213,16 @@ public:
     Stats stats() const;
     void resetPeaks();
 
+    /// The rate the CHOSEN DEVICE declares, from AudioDeviceInfo. 0 = let
+    /// AAudio decide. Takes effect on the next openStream().
+    ///
+    /// This has to come from the device's own profile and not from whatever
+    /// AAudio hands back: the CP-88 declares 44100 only, and opening it at
+    /// 48000 succeeds while putting a resampler in the HAL underneath.
+    void setPreferredRate(int32_t rate) {
+        mPreferredRate.store(rate, std::memory_order_relaxed);
+    }
+
     /// Takes effect on the next openStream(), so the caller stops and starts.
     void setExclusive(bool exclusive) {
         mWantExclusive.store(exclusive, std::memory_order_relaxed);
@@ -302,6 +322,8 @@ private:
     // after a quarter of an hour it became a hypothesis worth being able to
     // test rather than argue about. Toggled by long-pressing Buffer.
     std::atomic<bool> mWantExclusive{true};
+
+    std::atomic<int32_t> mPreferredRate{0};
 
     // Presentation-position tracking for the dropout hunt. Mutable because
     // stats() is const and is the natural place to sample this: it is called by

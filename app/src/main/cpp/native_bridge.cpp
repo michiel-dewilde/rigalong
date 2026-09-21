@@ -666,3 +666,8 @@ Java_be_mdw_bagosynths_NativeBridge_nativeGetStats(JNIEnv* env, jobject) {
 }
 
 }  // extern "C"
+
+extern "C" JNIEXPORT void JNICALL
+Java_be_mdw_bagosynths_NativeBridge_nativeSetPreferredRate(JNIEnv*, jobject, jint rate) {
+    engine().setPreferredRate(rate);
+}

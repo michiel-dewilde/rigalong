@@ -65,19 +65,9 @@ bool AudioEngine::start(int32_t deviceId, int bufferBursts) {
 bool AudioEngine::openStream(int32_t deviceId, int bufferBursts) {
     oboe::AudioStreamBuilder builder;
 
-    // TWO ATTEMPTS, and the second one matters for anything that is not a CP-88.
-    //
-    // Every constraint below was chosen for the piano: it is 44,1 kHz only, and
-    // its endpoint is 16-bit whatever we ask for, so asking for I16 at 44100 and
-    // refusing conversion is exactly right THERE -- it guarantees no resampler
-    // is hiding in the live path.
-    //
-    // It is wrong everywhere else. A Scarlett 2i2 is a 24-bit device that is
-    // equally happy at 48 kHz, and `setFormatConversionAllowed(false)` turns a
-    // perfectly good interface into a failed open. So: ask strictly first, and
-    // if that is refused, ask again and let Oboe negotiate. The strict attempt
-    // always wins on the CP-88, so its measurements are untouched; a relaxed
-    // open is only ever reached by a device that would otherwise not open at all.
+    // TWO ATTEMPTS: strictly first, then letting Oboe negotiate. Only a device
+    // that would otherwise fail to open ever reaches the second, so the piano's
+    // measurements are untouched.
     //
     // This is interim. Once the graph editor exists the output is a property of
     // the patch and none of it is hardcoded.
@@ -102,23 +92,27 @@ bool AudioEngine::openStream(int32_t deviceId, int bufferBursts) {
                 ->setDataCallback(this)
                 ->setErrorCallback(this);
 
-        // THE RATE IS NEVER REQUESTED. Leaving it unspecified makes AAudio open
-        // the device at ITS OWN native rate, which is the only way to be sure
-        // nothing is resampling underneath: asking for 44100 on the CP-88 got us
-        // a stream that SAYS 44100 while the HAL thread runs at 48000 and
-        // converts, and setSampleRateConversionQuality(None) does not reach that
-        // layer. Whatever comes back is handed to Graph::compile(), and every
-        // node takes the rate in prepare(), so the whole instrument follows --
-        // sfizz included, which resamples its own content and therefore needs no
-        // separate 48 kHz Salamander.
+        // The FORMAT is asked for as I16 because the render ring is int16 and
+        // the dither that fills it is deliberate. The two attempts differ only
+        // in whether a device that cannot do I16 is allowed AAudio's conversion.
         //
-        // The FORMAT is still asked for as I16, because the render ring is int16
-        // and the dither that fills it is deliberate. The two attempts differ
-        // only in whether a device that cannot do I16 -- a 24-bit interface like
-        // the Scarlett -- is allowed to have AAudio convert for it.
+        // Whatever rate comes back is handed to Graph::compile(), and every node
+        // takes the rate in prepare(), so the whole instrument follows -- sfizz
+        // included, which resamples its own content and therefore needs no
+        // separate 48 kHz Salamander.
         b.setFormat(oboe::AudioFormat::I16)
                 ->setSampleRateConversionQuality(oboe::SampleRateConversionQuality::None)
                 ->setFormatConversionAllowed(relaxed);
+
+        // Ask for the rate the DEVICE ITSELF declares, which Kotlin reads from
+        // AudioDeviceInfo. Leaving it unspecified is not the same thing and was
+        // a mistake: AAudio handed back 48000 for the CP-88, which declares
+        // 44100 and nothing else, and the stream opened happily with the HAL
+        // resampling underneath. Neither setSampleRateConversionQuality(None)
+        // nor setFormatConversionAllowed(false) prevents that -- both govern
+        // OBOE's own conversion layer, not the HAL's.
+        const int32_t want = mPreferredRate.load(std::memory_order_relaxed);
+        if (want > 0) b.setSampleRate(want);
 
         result = b.openStream(mStream);
         if (result == oboe::Result::OK && mStream) break;

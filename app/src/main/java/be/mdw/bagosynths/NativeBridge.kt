@@ -34,6 +34,9 @@ object NativeBridge {
      */
     external fun nativeSetExclusive(exclusive: Boolean)
 
+    /** The rate the chosen device declares, from AudioDeviceInfo. 0 = let AAudio pick. */
+    external fun nativeSetPreferredRate(rate: Int)
+
     /** Opens an input stream on the CP-88 for the loopback probe. Needs RECORD_AUDIO. */
     external fun nativeEnableInput(deviceId: Int): Boolean
     external fun nativeStartLatencyProbe()
