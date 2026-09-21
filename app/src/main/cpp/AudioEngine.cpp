@@ -138,7 +138,27 @@ bool AudioEngine::openStream(int32_t deviceId, int bufferBursts) {
     mRing.assign(static_cast<size_t>(kRingFrames) * 2, 0);
     mRingWrite.store(0, std::memory_order_relaxed);
     mRingRead.store(0, std::memory_order_relaxed);
-    mTargetFill.store(kMinFillFrames, std::memory_order_relaxed);
+    // The ring's floor and ceiling are RELATIVE TO THE BURST, not constants.
+    //
+    // The constants were chosen against the CP-88's 89-frame burst, where a
+    // 192-frame floor is a comfortable two bursts. Without the piano the app
+    // opens the tablet's own speaker, which is SHARED, not MMAP, and hands the
+    // callback 882 frames at a time -- so a 192-frame floor is less than a
+    // QUARTER of one callback, the ring is drained to empty every time, and the
+    // callback zero-fills the remainder. Measured 2026-09-21 with no CP-88
+    // attached: ringUnder climbing 52 per second, which is exactly the callback
+    // rate, and choppy sound.
+    //
+    // A floor of one and a half bursts restores the original intent on any
+    // device. The CP-88 path is untouched by construction: 89 + 44 = 133, below
+    // the 192-frame constant, so it still gets 192 and every measurement taken
+    // on it still stands.
+    const int32_t minFill = std::min(std::max(kMinFillFrames, burst + burst / 2),
+                                     kRingFrames / 2);
+    mMinFill.store(minFill, std::memory_order_relaxed);
+    mMaxFill.store(std::min(std::max(kMaxFillFrames, minFill + 2 * kGrowFrames),
+                            kRingFrames / 2), std::memory_order_relaxed);
+    mTargetFill.store(minFill, std::memory_order_relaxed);
 
     mFlushDenormalsDone.store(false, std::memory_order_relaxed);
     mCallbackMaxMs.store(0.0f, std::memory_order_relaxed);
@@ -434,12 +454,13 @@ void AudioEngine::renderLoop() {
             // It actually hurt. Deepen immediately -- latency is cheaper than a
             // dropout, and this is the only evidence that matters.
             seenUnderruns = underruns;
-            target = std::min(target + kGrowFrames, kMaxFillFrames);
+            target = std::min(target + kGrowFrames, mMaxFill.load(std::memory_order_relaxed));
             mTargetFill.store(target, std::memory_order_relaxed);
             lastChange = now;
-        } else if (now - lastChange > kShrinkAfterSeconds && target > kMinFillFrames) {
+        } else if (now - lastChange > kShrinkAfterSeconds &&
+                   target > mMinFill.load(std::memory_order_relaxed)) {
             // Calm for a while: give the latency back, a little at a time.
-            target = std::max(target - kShrinkFrames, kMinFillFrames);
+            target = std::max(target - kShrinkFrames, mMinFill.load(std::memory_order_relaxed));
             mTargetFill.store(target, std::memory_order_relaxed);
             lastChange = now;
         }

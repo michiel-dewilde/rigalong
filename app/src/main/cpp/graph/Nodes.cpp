@@ -80,7 +80,46 @@ bool SfizzNode::loadFile(const std::string& id, const std::string& path) {
         std::this_thread::sleep_for(std::chrono::milliseconds(1));
     }
 
-    const bool ok = mSynth->loadSfzFile(path);
+    // NOT loadSfzFile(). sfizz's default voice-stealing algorithm is Oldest
+    // (VoiceManager.cpp: setStealingAlgorithm(StealingAlgorithm::Oldest) in the
+    // constructor), and Oldest is exactly wrong for a piano: the oldest sounding
+    // voice IS the bass note being deliberately held under a passage, so it is
+    // the first thing stolen when the right hand fills the voice pool. The
+    // symptom is a pedal note that vanishes mid-bar.
+    //
+    // Checked before changing anything, because a setting already present in the
+    // content would make this the content's business and not the app's: neither
+    // SalamanderGrandPianoV3.sfz nor salamander-tight.sfz contains hint_stealing
+    // at all. Their only <group> headers are the sustain-pedal noise groups. So
+    // the instrument is running on sfizz's default, and improving the default is
+    // ours to do.
+    //
+    // Applied by WRAPPING rather than by editing the SFZ, so that third-party
+    // content keeps working untouched and an instrument that DOES specify
+    // hint_stealing still wins -- its own <control> block is parsed after this
+    // one and overrides it.
+    //
+    // Note the cost: EnvelopeAndAge calls enablePowerFollower() on every voice,
+    // which Oldest does not. That is a per-voice envelope tracker running
+    // whether or not stealing ever happens, so it is a real CPU charge and is
+    // measured, not assumed -- see MEASUREMENTS.md.
+    bool ok = false;
+    {
+        const auto slash = path.find_last_of("/\\");
+        const std::string file = slash == std::string::npos ? path : path.substr(slash + 1);
+        const std::string wrapper =
+            "<control>\n"
+            "hint_stealing=envelope_and_age\n"
+            "#include \"" + file + "\"\n";
+        ok = mSynth->loadSfzString(path, wrapper);
+        if (!ok) {
+            // An instrument that will not parse through the wrapper must still
+            // load. Better a piano with the wrong stealing than no piano.
+            LOGE("sfizz: the hint_stealing wrapper failed for %s, loading it plain",
+                 path.c_str());
+            ok = mSynth->loadSfzFile(path);
+        }
+    }
 
     mLoadRequested.store(false, std::memory_order_release);
     if (ok) {

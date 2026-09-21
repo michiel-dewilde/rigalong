@@ -417,6 +417,14 @@ private:
     std::atomic<float> mRenderMaxMs{0.0f};
     std::atomic<int32_t> mTargetFill{160};
 
+    // Floor and ceiling for mTargetFill, computed at open time from the burst
+    // the stream actually granted. The constants above are the CP-88's numbers
+    // (89-frame burst); the tablet's own speaker hands the callback 882 frames
+    // at a time and needs a proportionally deeper reserve or it underruns on
+    // every callback. See openStream().
+    std::atomic<int32_t> mMinFill{kMinFillFrames};
+    std::atomic<int32_t> mMaxFill{kMaxFillFrames};
+
     void renderLoop();
     void renderBlockIntoRing(int frames);
 

@@ -57,6 +57,14 @@ class MainActivity : Activity() {
 
     /** All 0 when the engine is healthy. See watchAudioDevice(). */
     private var deviceLostSince = 0L
+
+    /**
+     * How long the CP-88 must be missing before the instrument falls back to
+     * the tablet's own speaker. Long enough that a jogged cable re-enumerating
+     * is recovered onto the piano instead, short enough that a demo with no
+     * piano in the room is playable without anyone waiting.
+     */
+    private val SPEAKER_FALLBACK_AFTER_MS = 6000L
     private var lastRestartAttempt = 0L
     private var lastMidiAttempt = 0L
 
@@ -146,6 +154,7 @@ class MainActivity : Activity() {
         setContentView(buildUi())
 
         val filter = android.content.IntentFilter("be.mdw.bagosynths.RECYCLE")
+        filter.addAction("be.mdw.bagosynths.NOTE")
         if (Build.VERSION.SDK_INT >= 33) {
             registerReceiver(recycleReceiver, filter, Context.RECEIVER_EXPORTED)
         } else {
@@ -642,11 +651,40 @@ class MainActivity : Activity() {
         if (now - lastRestartAttempt < 2000L) return
         lastRestartAttempt = now
 
-        // Never start on a non-USB device. Playing a set out of the tablet's own
-        // speaker is worse than silence: the player cannot hear it over a stage
-        // and the audience never hears it at all, so the failure goes unnoticed
-        // until someone asks why the keyboard is quiet.
-        if (!havePiano) return
+        // No piano. Two bad answers, and the least bad one depends on where you
+        // are standing.
+        //
+        // The original rule was to refuse the tablet's own speaker outright,
+        // because on a stage a speaker nobody can hear is worse than silence:
+        // the meters move, the player believes the rig works, and the failure
+        // goes unnoticed until someone asks why the keyboard is quiet.
+        //
+        // But measured 2026-09-21: pulling the cable left the app silent and
+        // STUCK -- no stream, and playing did nothing until it was restarted.
+        // That is not a rig that "works without the CP-88" in any sense, and it
+        // is a trap anywhere the piano is simply not part of the setup.
+        //
+        // So: fall back to the built-in speaker, but only after the piano has
+        // been missing for a good while, and SAY SO loudly -- findCp88OutputDeviceId
+        // already labels it "built-in (NO USB DEVICE ...)" and the status line
+        // shows that label. The piano is still preferred and is taken back the
+        // moment it reappears, which is the branch above.
+        if (!havePiano) {
+            if (now - deviceLostSince < SPEAKER_FALLBACK_AFTER_MS) return
+            if (stats.running && stats.deviceId != NativeBridge.DEVICE_UNSPECIFIED &&
+                stats.deviceId != 0) {
+                // Already playing somewhere that is not the piano, which after
+                // this fallback means the speaker. Leave it alone.
+                return
+            }
+            NativeBridge.nativeStop()
+            if (NativeBridge.nativeStart(NativeBridge.DEVICE_UNSPECIFIED, bufferBursts)) {
+                android.util.Log.i("bos-ui",
+                    "no CP-88 for ${SPEAKER_FALLBACK_AFTER_MS} ms -- fell back to the " +
+                        "built-in speaker so the instrument still plays")
+            }
+            return
+        }
 
         // Stop first, unconditionally. `start()` returns true immediately when it
         // thinks it is already running, so a stream sitting on the wrong device
@@ -728,8 +766,17 @@ class MainActivity : Activity() {
      */
     private val recycleReceiver = object : android.content.BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: android.content.Intent?) {
-            val hold = intent?.getLongExtra("hold", 4000L) ?: 4000L
-            recycleAudio(hold)
+            when (intent?.action) {
+                // A note, so that an unattended soak can make the rig do WORK
+                // rather than push silence. The first silent soak ran 83 M
+                // frames without the fault, against a worst case of 42 M with
+                // signal, which makes "does the fault need a working engine?"
+                // the question to answer before anything else is measured.
+                "be.mdw.bagosynths.NOTE" -> NativeBridge.nativeTestNote(
+                    intent.getIntExtra("note", 48),
+                    intent.getIntExtra("vel", 90))
+                else -> recycleAudio(intent?.getLongExtra("hold", 4000L) ?: 4000L)
+            }
         }
     }
 
@@ -1148,14 +1195,30 @@ class MainActivity : Activity() {
         // moment from now, and forcing a solo would overwrite it.
         applyPanelVisibility(visiblePart)
 
-        // A touch keyboard for testing the audio path with no piano attached.
-        root.addView(makeTestKeys())
-
         // The panel makes the screen taller than the tablet in landscape, and a
         // control that cannot be reached is worse than one that is not there.
-        return android.widget.ScrollView(this).apply {
+        //
+        // The keyboard is PINNED BELOW the scroller rather than placed inside
+        // it. Inside, it sat under the drawbars and needed a scroll past every
+        // panel to reach -- fine as a test fixture, useless as an instrument.
+        // Pinned, it is playable whatever the rest of the screen is showing,
+        // which is what makes the app demonstrable with no CP-88 attached.
+        val scroller = android.widget.ScrollView(this).apply {
             setBackgroundColor(Color.parseColor("#14161A"))
             addView(root)
+            layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f)
+        }
+        return LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setBackgroundColor(Color.parseColor("#14161A"))
+            // Inset for the navigation bar and the taskbar. Without this the
+            // system bar sits over the BOTTOM of the keys -- which is where the
+            // loudest velocities are, so the keyboard lost its forte and the
+            // octave labels at the same time.
+            fitsSystemWindows = true
+            addView(scroller)
+            addView(makeTestKeys())
         }
     }
 
@@ -1172,43 +1235,28 @@ class MainActivity : Activity() {
         }
     }
 
+    /**
+     * A playable touch keyboard, so the instrument can be demonstrated with no
+     * CP-88 attached — through the tablet's own speaker if need be.
+     *
+     * Two octaves from C3, which is what a piano demo actually needs: one
+     * octave forces everything into the right hand. Black keys are drawn as
+     * narrower, darker keys in the same row rather than overlaid, because an
+     * overlay needs a custom ViewGroup and hit-testing, and this has to be
+     * right today rather than pretty.
+     *
+     * Velocity comes from WHERE the key is touched — near the top is soft, near
+     * the bottom is loud, as on a real keybed where the pivot gives you less
+     * leverage at the back. Without it every note is mezzo-forte and a sampled
+     * piano with sixteen velocity layers sounds like a toy.
+     */
     private fun makeTestKeys(): View {
-        val row = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            setPadding(0, 48, 0, 0)
+        return PianoKeyboardView(this) { note, velocity ->
+            NativeBridge.nativeTestNote(note, velocity)
+        }.apply {
+            layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, 320)
         }
-
-        // One octave from middle C.
-        for (semitone in 0..12) {
-            val note = 60 + semitone
-            val key = TextView(this).apply {
-                text = note.toString()
-                gravity = Gravity.CENTER
-                textSize = 16f
-                setTextColor(Color.parseColor("#14161A"))
-                setBackgroundColor(Color.parseColor("#C9D1E0"))
-                layoutParams = LinearLayout.LayoutParams(0, 220, 1f).apply {
-                    rightMargin = 8
-                }
-                setOnTouchListener { view, event ->
-                    when (event.action) {
-                        MotionEvent.ACTION_DOWN -> {
-                            NativeBridge.nativeTestNote(note, 100)
-                            view.setBackgroundColor(Color.parseColor("#7FD1B9"))
-                            true
-                        }
-                        MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
-                            NativeBridge.nativeTestNote(note, 0)
-                            view.setBackgroundColor(Color.parseColor("#C9D1E0"))
-                            true
-                        }
-                        else -> false
-                    }
-                }
-            }
-            row.addView(key)
-        }
-        return row
     }
 
     private fun updateStats() {
