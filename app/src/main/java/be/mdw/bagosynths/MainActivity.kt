@@ -706,7 +706,11 @@ class MainActivity : Activity() {
         if (NativeBridge.nativeStart(output, bufferBursts)) {
             android.util.Log.i("bos-ui", "audio restarted on $audioDeviceLabel (device $output)")
             deviceLostSince = 0L
-            reopenMidi()
+            // Only if MIDI is actually down. It used to be reopened
+            // unconditionally, which was harmless while both directions were the
+            // same cable and is wrong now that they need not be: restarting
+            // audio on a Scarlett would drop the notes coming from the piano.
+            if (!NativeBridge.nativeMidiOpen()) reopenMidi()
         }
     }
 
@@ -761,6 +765,8 @@ class MainActivity : Activity() {
 
     private fun loadRecyclePrefs() {
         val p = prefs()
+        chosenOutputName = p.getString("chosenOutputName", null)
+        chosenMidiName = p.getString("chosenMidiName", null)
         recycleEnabled = p.getBoolean("recycleEnabled", true)
         recycleIntervalMs = p.getLong("recycleIntervalMs", 10 * 60_000L)
         recycleHoldMs = p.getLong("recycleHoldMs", 4_000L)
@@ -913,8 +919,61 @@ class MainActivity : Activity() {
     private var cp88DeviceId = NativeBridge.DEVICE_UNSPECIFIED
 
     /**
-     * Picks the output. Interim ordering, hardcoded on purpose until the graph
-     * editor makes the output a property of the patch:
+     * The output the user picked with the Audio button, by PRODUCT NAME rather
+     * than by id: ids are handed out per connection, so anything remembered by
+     * id is wrong the moment a cable is pulled. Null means automatic.
+     */
+    private var chosenOutputName: String? = null
+
+    /** Same, for MIDI in. Deliberately independent of the audio choice. */
+    private var chosenMidiName: String? = null
+
+    /** Everything that could be an output, in the order the button cycles. */
+    private fun outputCandidates(): List<AudioDeviceInfo> {
+        val am = getSystemService(Context.AUDIO_SERVICE) as AudioManager
+        return am.getDevices(AudioManager.GET_DEVICES_OUTPUTS).filter {
+            it.type == AudioDeviceInfo.TYPE_USB_DEVICE ||
+                it.type == AudioDeviceInfo.TYPE_USB_HEADSET ||
+                it.type == AudioDeviceInfo.TYPE_USB_ACCESSORY ||
+                it.type == AudioDeviceInfo.TYPE_BUILTIN_SPEAKER
+        }.distinctBy { it.productName?.toString().orEmpty() }
+    }
+
+    /**
+     * Cycles: automatic, then each device present, then back to automatic. The
+     * new device is opened at ITS OWN native rate, and since the graph is
+     * compiled against whatever rate the stream reports, the whole instrument
+     * reconfigures itself.
+     */
+    private fun cycleOutput() {
+        val names = listOf<String?>(null) + outputCandidates().map { it.productName.toString() }
+        val i = names.indexOf(chosenOutputName)
+        chosenOutputName = names[(if (i < 0) 0 else i + 1) % names.size]
+        prefs().edit().putString("chosenOutputName", chosenOutputName).apply()
+        // Reopen right away rather than waiting for the watchdog, so the button
+        // does something audible when it is pressed.
+        NativeBridge.nativeStop()
+        NativeBridge.nativeStart(findOutputDeviceId(), bufferBursts)
+        // The arming of the recycle depends on where we landed.
+        nextRecycleAt = 0L
+        refreshRecycleButton()
+    }
+
+    private fun shortName(n: String?): String {
+        val s = n.orEmpty()
+        return when {
+            s.isEmpty() -> "auto"
+            s.contains("CP88") || s.contains("CP73") -> "CP-88"
+            s.uppercase().contains("SCARLETT") -> "Scarlett"
+            s.length > 14 -> s.takeLast(14)
+            else -> s
+        }
+    }
+
+    /**
+     * Picks the output. The user's choice wins; otherwise an interim ordering,
+     * hardcoded on purpose until the graph editor makes the output a property
+     * of the patch:
      *
      *   1. an audio interface (Scarlett), because where one is present it is
      *      the monitoring path and the piano is just a controller;
@@ -940,6 +999,16 @@ class MainActivity : Activity() {
         val interfaceDev = named("SCARLETT", "FOCUSRITE")
         val piano = named("CP88", "CP73", "YAMAHA")
         cp88DeviceId = piano?.id ?: NativeBridge.DEVICE_UNSPECIFIED
+
+        // An explicit choice wins, resolved by name because the id changes with
+        // every reconnection. If the chosen device is not here, fall through to
+        // the automatic order rather than going silent.
+        chosenOutputName?.let { want ->
+            outputCandidates().firstOrNull { it.productName?.toString() == want }?.let { d ->
+                audioDeviceLabel = "${d.productName}  [chosen]"
+                return d.id
+            }
+        }
 
         val chosen = interfaceDev ?: piano ?: usb.firstOrNull()
         audioDeviceLabel = when {
@@ -1107,8 +1176,15 @@ class MainActivity : Activity() {
                 manager.devices
             }
 
-        val info = devices.firstOrNull { it.outputPortCount > 0 && it.isLikelyCp88() }
-            ?: devices.firstOrNull { it.outputPortCount > 0 }
+        // MIDI IN IS CHOSEN INDEPENDENTLY OF THE AUDIO OUT. With a Scarlett
+        // carrying the sound and the CP-88 carrying the notes, the two are
+        // different devices on different cables, and tying them together -- as
+        // this did when both were the piano -- means changing one silently
+        // changes the other.
+        val ports = devices.filter { it.outputPortCount > 0 }
+        val info = chosenMidiName?.let { want ->
+            ports.firstOrNull { it.midiName() == want }
+        } ?: ports.firstOrNull { it.isLikelyCp88() } ?: ports.firstOrNull()
 
         if (info == null) {
             midiView.text = "MIDI: no input device found"
@@ -1127,6 +1203,32 @@ class MainActivity : Activity() {
                 midiView.text = if (opened) "MIDI: $name (port 0)" else "MIDI: failed to open port"
             }
         }, handler)
+    }
+
+    private fun MidiDeviceInfo.midiName(): String =
+        properties.getString(MidiDeviceInfo.PROPERTY_NAME)
+            ?: properties.getString(MidiDeviceInfo.PROPERTY_PRODUCT)
+            ?: "device"
+
+    private fun midiCandidates(): List<MidiDeviceInfo> {
+        val manager = getSystemService(Context.MIDI_SERVICE) as? MidiManager ?: return emptyList()
+        val devices = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            manager.getDevicesForTransport(MidiManager.TRANSPORT_MIDI_BYTE_STREAM).toTypedArray()
+        } else {
+            @Suppress("DEPRECATION") manager.devices
+        }
+        return devices.filter { it.outputPortCount > 0 }
+    }
+
+    /** Cycles MIDI in: automatic, then each port present, then back. */
+    private fun cycleMidi() {
+        val names = listOf<String?>(null) + midiCandidates().map { it.midiName() }
+        val i = names.indexOf(chosenMidiName)
+        chosenMidiName = names[(if (i < 0) 0 else i + 1) % names.size]
+        prefs().edit().putString("chosenMidiName", chosenMidiName).apply()
+        // Force it, rather than waiting for the rate limiter in reopenMidi().
+        lastMidiAttempt = 0L
+        reopenMidi()
     }
 
     private fun MidiDeviceInfo.isLikelyCp88(): Boolean {
@@ -1187,6 +1289,13 @@ class MainActivity : Activity() {
         recycleButton = makeButton("Recycle") { recycleAudio(recycleHoldMs) }
         recycleButton.setOnLongClickListener { showRecycleSettings(); true }
         buttonRow.addView(recycleButton)
+
+        // Audio out and MIDI in, cycled independently. Two cables, two choices:
+        // a Scarlett can carry the sound while the CP-88 carries the notes.
+        audioButton = makeButton("Audio: auto") { cycleOutput(); refreshDeviceButtons() }
+        buttonRow.addView(audioButton)
+        midiButton = makeButton("MIDI: auto") { cycleMidi(); refreshDeviceButtons() }
+        buttonRow.addView(midiButton)
 
         buttonRow.addView(makeButton("Buffer: $bufferBursts") { button ->
             bufferBursts = if (bufferBursts >= 4) 1 else bufferBursts + 1
@@ -1405,6 +1514,14 @@ class MainActivity : Activity() {
      * piano with sixteen velocity layers sounds like a toy.
      */
     private lateinit var recycleButton: Button
+    private lateinit var audioButton: Button
+    private lateinit var midiButton: Button
+
+    private fun refreshDeviceButtons() {
+        if (::audioButton.isInitialized) audioButton.text = "Audio: ${shortName(chosenOutputName)}"
+        if (::midiButton.isInitialized) midiButton.text = "MIDI: ${shortName(chosenMidiName)}"
+    }
+
 
     /** Keeps the button's face honest: armed and counting, off, or not applicable. */
     private fun refreshRecycleButton() {
@@ -1467,6 +1584,7 @@ class MainActivity : Activity() {
 
     private fun updateStats() {
         refreshRecycleButton()
+        refreshDeviceButtons()
         val s = NativeBridge.stats()
 
         val xrunsNow = s.xRuns - xrunBaseline

@@ -102,17 +102,23 @@ bool AudioEngine::openStream(int32_t deviceId, int bufferBursts) {
                 ->setDataCallback(this)
                 ->setErrorCallback(this);
 
-        if (!relaxed) {
-            b.setFormat(oboe::AudioFormat::I16)
-                    ->setSampleRate(44100)
-                    ->setSampleRateConversionQuality(oboe::SampleRateConversionQuality::None)
-                    ->setFormatConversionAllowed(false);
-        } else {
-            // Let the device say what it wants. Medium-quality resampling only
-            // applies if a rate conversion is actually needed.
-            b.setSampleRateConversionQuality(oboe::SampleRateConversionQuality::Medium)
-                    ->setFormatConversionAllowed(true);
-        }
+        // THE RATE IS NEVER REQUESTED. Leaving it unspecified makes AAudio open
+        // the device at ITS OWN native rate, which is the only way to be sure
+        // nothing is resampling underneath: asking for 44100 on the CP-88 got us
+        // a stream that SAYS 44100 while the HAL thread runs at 48000 and
+        // converts, and setSampleRateConversionQuality(None) does not reach that
+        // layer. Whatever comes back is handed to Graph::compile(), and every
+        // node takes the rate in prepare(), so the whole instrument follows --
+        // sfizz included, which resamples its own content and therefore needs no
+        // separate 48 kHz Salamander.
+        //
+        // The FORMAT is still asked for as I16, because the render ring is int16
+        // and the dither that fills it is deliberate. The two attempts differ
+        // only in whether a device that cannot do I16 -- a 24-bit interface like
+        // the Scarlett -- is allowed to have AAudio convert for it.
+        b.setFormat(oboe::AudioFormat::I16)
+                ->setSampleRateConversionQuality(oboe::SampleRateConversionQuality::None)
+                ->setFormatConversionAllowed(relaxed);
 
         result = b.openStream(mStream);
         if (result == oboe::Result::OK && mStream) break;
