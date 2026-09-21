@@ -1007,6 +1007,7 @@ class MainActivity : Activity() {
             outputCandidates().firstOrNull { it.productName?.toString() == want }?.let { d ->
                 audioDeviceLabel = "${d.productName}  [chosen]"
                 NativeBridge.nativeSetPreferredRate(nativeRateOf(d))
+                NativeBridge.nativeSetPreferredFormat(nativeFormatOf(d))
                 return d.id
             }
         }
@@ -1022,6 +1023,7 @@ class MainActivity : Activity() {
         }
 
         NativeBridge.nativeSetPreferredRate(nativeRateOf(chosen))
+        NativeBridge.nativeSetPreferredFormat(nativeFormatOf(chosen))
         return chosen?.id ?: NativeBridge.DEVICE_UNSPECIFIED
     }
 
@@ -1040,6 +1042,34 @@ class MainActivity : Activity() {
     private fun nativeRateOf(d: AudioDeviceInfo?): Int {
         val rates = d?.sampleRates ?: return 0
         return rates.maxOrNull() ?: 0
+    }
+
+    /**
+     * The widest format the device declares, as an Oboe AudioFormat value.
+     *
+     * Widest, not most convenient: the CP-88 declares 24-bit packed and asking
+     * it for I16 had the HAL pad eight bits away. The render ring is float, so
+     * handing it any of these costs one conversion in the callback and loses
+     * nothing on our side. Dither is applied only for a 16-bit target, where
+     * truncation would otherwise be audible as a modulating noise floor.
+     *
+     * If the wide format turns out not to be granted -- EXCLUSIVE/MMAP may only
+     * be available at one format -- Oboe's own fallback attempt covers it, and
+     * the granted format is logged on every open.
+     */
+    private fun nativeFormatOf(d: AudioDeviceInfo?): Int {
+        val enc = d?.encodings ?: return 0
+        val has24 = enc.contains(android.media.AudioFormat.ENCODING_PCM_24BIT_PACKED)
+        val has32 = enc.contains(android.media.AudioFormat.ENCODING_PCM_32BIT)
+        val hasFloat = enc.contains(android.media.AudioFormat.ENCODING_PCM_FLOAT)
+        val has16 = enc.contains(android.media.AudioFormat.ENCODING_PCM_16BIT)
+        return when {
+            has24 -> 3      // oboe I24
+            has32 -> 4      // oboe I32
+            hasFloat -> 2   // oboe Float
+            has16 -> 1      // oboe I16
+            else -> 0
+        }
     }
 
     /**

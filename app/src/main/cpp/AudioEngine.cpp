@@ -13,6 +13,7 @@
 #include <thread>
 
 #include <bagosynths/Denormals.h>
+#include <bagosynths/SampleFormat.h>
 
 #define LOG_TAG "bos-audio"
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
@@ -100,7 +101,13 @@ bool AudioEngine::openStream(int32_t deviceId, int bufferBursts) {
         // takes the rate in prepare(), so the whole instrument follows -- sfizz
         // included, which resamples its own content and therefore needs no
         // separate 48 kHz Salamander.
-        b.setFormat(oboe::AudioFormat::I16)
+        // Ask the DEVICE's format, as with the rate. The CP-88 declares 24-bit
+        // packed; asking it for I16 had the HAL pad eight bits away. The ring
+        // is float now, so any of these costs one conversion in the callback
+        // and no loss on our side.
+        const int32_t wantFmt = mPreferredFormat.load(std::memory_order_relaxed);
+        b.setFormat(wantFmt > 0 ? static_cast<oboe::AudioFormat>(wantFmt)
+                                : oboe::AudioFormat::I16)
                 ->setSampleRateConversionQuality(oboe::SampleRateConversionQuality::None)
                 ->setFormatConversionAllowed(relaxed);
 
@@ -127,6 +134,20 @@ bool AudioEngine::openStream(int32_t deviceId, int bufferBursts) {
         LOGE("openStream failed: %s", oboe::convertToText(result));
         return false;
     }
+
+    // Cache what was granted. The callback must not ask the stream on every
+    // block, and it needs the frame size to fill an underrun correctly.
+    mStreamFormat = mStream->getFormat();
+    switch (mStreamFormat) {
+        case oboe::AudioFormat::I16:   mBytesPerFrame = 2 * 2; break;
+        case oboe::AudioFormat::I24:   mBytesPerFrame = 3 * 2; break;
+        case oboe::AudioFormat::I32:
+        case oboe::AudioFormat::Float: mBytesPerFrame = 4 * 2; break;
+        default:                       mBytesPerFrame = 2 * 2; break;
+    }
+    LOGI("format granted: %d (%d bytes per frame), asked for %d",
+         static_cast<int>(mStreamFormat), mBytesPerFrame,
+         mPreferredFormat.load(std::memory_order_relaxed));
 
     if (relaxed) {
         LOGI("opened on the device's own terms: rate=%d format=%d channels=%d",
@@ -177,7 +198,8 @@ bool AudioEngine::openStream(int32_t deviceId, int bufferBursts) {
     mScratchFrames = std::max(2048, burst * 16);
     mScratch.assign(static_cast<size_t>(mScratchFrames) * 2, 0.0f);
     mDitherOut.assign(static_cast<size_t>(mScratchFrames) * 2, 0);
-    mRing.assign(static_cast<size_t>(kRingFrames) * 2, 0);
+    mRing.assign(static_cast<size_t>(kRingFrames) * 2, 0.0f);
+    mCbScratch.assign(static_cast<size_t>(mScratchFrames) * 2, 0.0f);
     mRingWrite.store(0, std::memory_order_relaxed);
     mRingRead.store(0, std::memory_order_relaxed);
     // The ring's floor and ceiling are RELATIVE TO THE BURST, not constants.
@@ -347,22 +369,63 @@ void AudioEngine::stop() {
 oboe::DataCallbackResult AudioEngine::onAudioReady(oboe::AudioStream* stream,
                                                    void* audioData,
                                                    int32_t numFrames) {
-    // Deliberately trivial: copy finished audio out of the ring. No synthesis, no
-    // MIDI, no allocation, nothing that can block. This callback cannot be late.
-    auto* out = static_cast<int16_t*>(audioData);
-
+    // Copy finished audio out of the ring and convert it to whatever the device
+    // asked for. No synthesis, no MIDI, no allocation, nothing that can block.
+    //
+    // The conversion lives here rather than in the render thread because this is
+    // the only place that knows the granted format, and because doing it at the
+    // last moment keeps the ring at the engine's own precision. It costs one
+    // pass over a burst -- 96 frames on the CP-88 -- which is arithmetic on data
+    // already in cache.
     const uint32_t read = mRingRead.load(std::memory_order_relaxed);
     const uint32_t write = mRingWrite.load(std::memory_order_acquire);
     const uint32_t availableFrames = write - read;          // unsigned wrap is fine
     const auto want = static_cast<uint32_t>(numFrames);
-    const uint32_t take = std::min(availableFrames, want);
+    // Clamped to the scratch as well as to what the ring holds. A callback
+    // larger than the scratch would otherwise run off the end of it; clamping
+    // instead reports an underrun and emits silence for the remainder, which is
+    // a bounded fault rather than a buffer overrun.
+    const uint32_t take = std::min({availableFrames, want,
+                                    static_cast<uint32_t>(mScratchFrames)});
 
+    // Straighten the ring out first: it wraps, and the dither wants a run.
+    float* src = mCbScratch.data();
     for (uint32_t i = 0; i < take; ++i) {
         const uint32_t idx = ((read + i) & (kRingFrames - 1)) * 2;
-        out[i * 2] = mRing[idx];
-        out[i * 2 + 1] = mRing[idx + 1];
+        src[i * 2] = mRing[idx];
+        src[i * 2 + 1] = mRing[idx + 1];
     }
     mRingRead.store(read + take, std::memory_order_release);
+
+    const uint32_t samples = take * 2;
+    switch (mStreamFormat) {
+        case oboe::AudioFormat::I16: {
+            // Dither ONLY here. Going from 24 bits of headroom down to 16 is
+            // where truncation would be audible as a noise floor that modulates
+            // with the signal; the wider formats below have no such problem, so
+            // they get a straight scale and no added noise.
+            mDither.process(src, static_cast<int16_t*>(audioData), static_cast<int>(samples));
+            break;
+        }
+        case oboe::AudioFormat::Float: {
+            std::memcpy(audioData, src, samples * sizeof(float));
+            break;
+        }
+        case oboe::AudioFormat::I24:
+            // The CP-88's format. Implemented in engine/, where it is tested
+            // against known bytes -- see SampleFormat.h for why that matters.
+            bagosynths::packI24(src, static_cast<uint8_t*>(audioData),
+                                static_cast<int>(samples));
+            break;
+
+        case oboe::AudioFormat::I32:
+            bagosynths::packI32(src, static_cast<int32_t*>(audioData),
+                                static_cast<int>(samples));
+            break;
+        default:
+            std::memset(audioData, 0, static_cast<size_t>(take) * mBytesPerFrame);
+            break;
+    }
 
     // Peak of what is ACTUALLY handed to AAudio, measured on the int16 frames
     // in the callback rather than on the float graph output.
@@ -373,20 +436,20 @@ oboe::DataCallbackResult AudioEngine::onAudioReady(oboe::AudioStream* stream,
     // while the graph meter does not, the samples die inside this process.
     // If both read the same, we are handing real audio to the HAL and the
     // fault is below us -- which is how the dock was found on 2026-09-20.
-    int16_t cbPeak = 0;
-    for (uint32_t i = 0; i < take * 2; ++i) {
-        const int16_t v = out[i] < 0 ? static_cast<int16_t>(-out[i]) : out[i];
-        if (v > cbPeak) cbPeak = v;
+    float cbNow = 0.0f;
+    for (uint32_t i = 0; i < samples; ++i) {
+        const float v = std::fabs(src[i]);
+        if (v > cbNow) cbNow = v;
     }
-    const float cbNow = static_cast<float>(cbPeak) / 32768.0f;
     const float cbHeld = mCallbackPeak.load(std::memory_order_relaxed) * 0.90f;
     mCallbackPeak.store(std::max(cbNow, cbHeld), std::memory_order_relaxed);
 
     if (take < want) {
         // The render thread did not keep up. Emit silence for the remainder --
         // audible, but bounded, and the counter says it happened.
-        std::memset(out + take * 2, 0,
-                    static_cast<size_t>(want - take) * 2 * sizeof(int16_t));
+        std::memset(static_cast<uint8_t*>(audioData) +
+                        static_cast<size_t>(take) * mBytesPerFrame,
+                    0, static_cast<size_t>(want - take) * mBytesPerFrame);
         mRingUnderruns.fetch_add(1, std::memory_order_relaxed);
     }
 
@@ -465,14 +528,17 @@ void AudioEngine::renderBlockIntoRing(int frames) {
         std::fill_n(mScratch.data(), static_cast<size_t>(chunk) * 2, 0.0f);
     }
 
-    mDither.process(mScratch.data(), mDitherOut.data(), chunk * 2);
-    runLatencyProbe(mDitherOut.data(), chunk);
+    // NO DITHER HERE ANY MORE. The ring carries the engine's own float, and the
+    // conversion to the device's format happens in the callback -- the only
+    // place that knows what that format is, and where the dither belongs now
+    // that it applies only to 16-bit targets.
+    runLatencyProbe(mScratch.data(), chunk);
 
     const uint32_t write = mRingWrite.load(std::memory_order_relaxed);
     for (int i = 0; i < chunk; ++i) {
         const uint32_t idx = ((write + i) & (kRingFrames - 1)) * 2;
-        mRing[idx] = mDitherOut[i * 2];
-        mRing[idx + 1] = mDitherOut[i * 2 + 1];
+        mRing[idx] = mScratch[i * 2];
+        mRing[idx + 1] = mScratch[i * 2 + 1];
     }
     mRingWrite.store(write + static_cast<uint32_t>(chunk), std::memory_order_release);
 }
@@ -526,7 +592,7 @@ void AudioEngine::renderLoop() {
     }
 }
 
-void AudioEngine::runLatencyProbe(int16_t* out, int32_t numFrames) {
+void AudioEngine::runLatencyProbe(float* out, int32_t numFrames) {
     if (!mInputStream) return;
 
     ProbeState state = mProbeState.load(std::memory_order_acquire);
@@ -632,7 +698,7 @@ void AudioEngine::runLatencyProbe(int16_t* out, int32_t numFrames) {
             // is easy to detect and too brief to be unpleasant.
             const int32_t n = std::min(numFrames, kClickFrames);
             for (int32_t i = 0; i < n; ++i) {
-                const int16_t v = (i % 4 < 2) ? 30000 : -30000;
+                const float v = (i % 4 < 2) ? 0.9155f : -0.9155f;
                 out[i * 2] = v;
                 out[i * 2 + 1] = v;
             }
@@ -648,7 +714,7 @@ void AudioEngine::runLatencyProbe(int16_t* out, int32_t numFrames) {
             if (mClickRemaining > 0) {
                 const int32_t n = std::min(numFrames, mClickRemaining);
                 for (int32_t i = 0; i < n; ++i) {
-                    const int16_t v = (i % 4 < 2) ? 30000 : -30000;
+                    const float v = (i % 4 < 2) ? 0.9155f : -0.9155f;
                     out[i * 2] = v;
                     out[i * 2 + 1] = v;
                 }

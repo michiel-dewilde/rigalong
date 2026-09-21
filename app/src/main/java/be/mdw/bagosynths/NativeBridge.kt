@@ -37,6 +37,9 @@ object NativeBridge {
     /** The rate the chosen device declares, from AudioDeviceInfo. 0 = let AAudio pick. */
     external fun nativeSetPreferredRate(rate: Int)
 
+    /** Oboe AudioFormat: 1 = I16, 2 = Float, 3 = I24, 4 = I32. 0 = let Oboe pick. */
+    external fun nativeSetPreferredFormat(format: Int)
+
     /** Opens an input stream on the CP-88 for the loopback probe. Needs RECORD_AUDIO. */
     external fun nativeEnableInput(deviceId: Int): Boolean
     external fun nativeStartLatencyProbe()
