@@ -65,31 +65,73 @@ bool AudioEngine::start(int32_t deviceId, int bufferBursts) {
 bool AudioEngine::openStream(int32_t deviceId, int bufferBursts) {
     oboe::AudioStreamBuilder builder;
 
-    builder.setDirection(oboe::Direction::Output)
-            ->setPerformanceMode(oboe::PerformanceMode::LowLatency)
-            ->setSharingMode(mWantExclusive.load(std::memory_order_relaxed)
-                                     ? oboe::SharingMode::Exclusive
-                                     : oboe::SharingMode::Shared)
-            ->setFormat(oboe::AudioFormat::I16)
-            ->setChannelCount(oboe::ChannelCount::Stereo)
-            ->setSampleRate(44100)
-            // The CP-88 is 44.1 kHz only. Refuse any hidden conversion rather
-            // than silently accepting a resampler in the live path.
-            ->setSampleRateConversionQuality(oboe::SampleRateConversionQuality::None)
-            ->setFormatConversionAllowed(false)
-            // Game, not Media: this is interactive audio, not a media session.
-            // Verified to keep MMAP/EXCLUSIVE on this device.
-            ->setUsage(oboe::Usage::Game)
-            ->setContentType(oboe::ContentType::Music)
-            ->setSpatializationBehavior(oboe::SpatializationBehavior::Never)
-            ->setDeviceId(deviceId)
-            ->setDataCallback(this)
-            ->setErrorCallback(this);
+    // TWO ATTEMPTS, and the second one matters for anything that is not a CP-88.
+    //
+    // Every constraint below was chosen for the piano: it is 44,1 kHz only, and
+    // its endpoint is 16-bit whatever we ask for, so asking for I16 at 44100 and
+    // refusing conversion is exactly right THERE -- it guarantees no resampler
+    // is hiding in the live path.
+    //
+    // It is wrong everywhere else. A Scarlett 2i2 is a 24-bit device that is
+    // equally happy at 48 kHz, and `setFormatConversionAllowed(false)` turns a
+    // perfectly good interface into a failed open. So: ask strictly first, and
+    // if that is refused, ask again and let Oboe negotiate. The strict attempt
+    // always wins on the CP-88, so its measurements are untouched; a relaxed
+    // open is only ever reached by a device that would otherwise not open at all.
+    //
+    // This is interim. Once the graph editor exists the output is a property of
+    // the patch and none of it is hardcoded.
+    oboe::Result result = oboe::Result::ErrorInternal;
+    bool relaxed = false;
 
-    const oboe::Result result = builder.openStream(mStream);
+    for (int attempt = 0; attempt < 2; ++attempt) {
+        relaxed = (attempt == 1);
+        oboe::AudioStreamBuilder b;
+        b.setDirection(oboe::Direction::Output)
+                ->setPerformanceMode(oboe::PerformanceMode::LowLatency)
+                ->setSharingMode(mWantExclusive.load(std::memory_order_relaxed)
+                                         ? oboe::SharingMode::Exclusive
+                                         : oboe::SharingMode::Shared)
+                ->setChannelCount(oboe::ChannelCount::Stereo)
+                // Game, not Media: this is interactive audio, not a media
+                // session. Verified to keep MMAP/EXCLUSIVE on this device.
+                ->setUsage(oboe::Usage::Game)
+                ->setContentType(oboe::ContentType::Music)
+                ->setSpatializationBehavior(oboe::SpatializationBehavior::Never)
+                ->setDeviceId(deviceId)
+                ->setDataCallback(this)
+                ->setErrorCallback(this);
+
+        if (!relaxed) {
+            b.setFormat(oboe::AudioFormat::I16)
+                    ->setSampleRate(44100)
+                    ->setSampleRateConversionQuality(oboe::SampleRateConversionQuality::None)
+                    ->setFormatConversionAllowed(false);
+        } else {
+            // Let the device say what it wants. Medium-quality resampling only
+            // applies if a rate conversion is actually needed.
+            b.setSampleRateConversionQuality(oboe::SampleRateConversionQuality::Medium)
+                    ->setFormatConversionAllowed(true);
+        }
+
+        result = b.openStream(mStream);
+        if (result == oboe::Result::OK && mStream) break;
+
+        if (!relaxed) {
+            LOGI("strict open refused (%s) -- retrying and letting the device choose "
+                 "its own rate and format", oboe::convertToText(result));
+        }
+    }
+
     if (result != oboe::Result::OK || !mStream) {
         LOGE("openStream failed: %s", oboe::convertToText(result));
         return false;
+    }
+
+    if (relaxed) {
+        LOGI("opened on the device's own terms: rate=%d format=%d channels=%d",
+             mStream->getSampleRate(), static_cast<int>(mStream->getFormat()),
+             mStream->getChannelCount());
     }
 
     // CHECK WHAT WE GOT. Asking for a device id that no longer exists does NOT

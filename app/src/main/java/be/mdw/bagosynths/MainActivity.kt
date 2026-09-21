@@ -75,7 +75,7 @@ class MainActivity : Activity() {
      * asking AudioManager a second time every frame — and because a replug
      * changes the id, so a value read once at startup would be a lie.
      */
-    private var lastKnownPianoId = NativeBridge.DEVICE_UNSPECIFIED
+    private var lastChosenOutputId = NativeBridge.DEVICE_UNSPECIFIED
 
     private var midiDevice: MidiDevice? = null
     // 3 bursts -- AAudio's floor. Once the render thread exists the callback is a
@@ -640,13 +640,13 @@ class MainActivity : Activity() {
         if (recycling) return
 
         val stats = NativeBridge.stats()
-        val piano = findCp88OutputDeviceId()
-        lastKnownPianoId = piano
-        val havePiano = piano != NativeBridge.DEVICE_UNSPECIFIED
+        val output = findOutputDeviceId()
+        lastChosenOutputId = output
+        val haveOutput = output != NativeBridge.DEVICE_UNSPECIFIED
 
         tickRecycle()
 
-        val healthy = stats.running && havePiano && stats.deviceId == piano
+        val healthy = stats.running && haveOutput && stats.deviceId == output
         if (healthy) {
             deviceLostSince = 0L
             // MIDI dies with the same cable and does NOT come back by itself.
@@ -682,7 +682,7 @@ class MainActivity : Activity() {
         // already labels it "built-in (NO USB DEVICE ...)" and the status line
         // shows that label. The piano is still preferred and is taken back the
         // moment it reappears, which is the branch above.
-        if (!havePiano) {
+        if (!haveOutput) {
             if (now - deviceLostSince < SPEAKER_FALLBACK_AFTER_MS) return
             if (stats.running && stats.deviceId != NativeBridge.DEVICE_UNSPECIFIED &&
                 stats.deviceId != 0) {
@@ -703,8 +703,8 @@ class MainActivity : Activity() {
         // thinks it is already running, so a stream sitting on the wrong device
         // would otherwise never be replaced.
         NativeBridge.nativeStop()
-        if (NativeBridge.nativeStart(piano, bufferBursts)) {
-            android.util.Log.i("bos-ui", "audio restarted on the CP-88 (device $piano)")
+        if (NativeBridge.nativeStart(output, bufferBursts)) {
+            android.util.Log.i("bos-ui", "audio restarted on $audioDeviceLabel (device $output)")
             deviceLostSince = 0L
             reopenMidi()
         }
@@ -776,9 +776,11 @@ class MainActivity : Activity() {
 
     /** True when the stream is really on the piano, which is the only case that needs this. */
     private fun outputIsCp88(): Boolean {
-        val piano = lastKnownPianoId
-        return piano != NativeBridge.DEVICE_UNSPECIFIED &&
-            NativeBridge.stats().deviceId == piano
+        // Deliberately cp88DeviceId and not the chosen output: with a Scarlett
+        // attached the piano is still present and still has an id, but we are
+        // not playing through it and it has no fault to work around.
+        return cp88DeviceId != NativeBridge.DEVICE_UNSPECIFIED &&
+            NativeBridge.stats().deviceId == cp88DeviceId
     }
 
     /**
@@ -815,7 +817,7 @@ class MainActivity : Activity() {
         // convenient moment genuinely buys a full interval rather than leaving
         // an automatic one to land thirty seconds into the next number.
         nextRecycleAt = android.os.SystemClock.uptimeMillis() + recycleIntervalMs
-        val device = findCp88OutputDeviceId()
+        val device = findOutputDeviceId()
         val bursts = bufferBursts
         android.util.Log.i("bos-ui", "recycle: closing, holding ${holdMs} ms, device $device")
         Thread {
@@ -890,7 +892,7 @@ class MainActivity : Activity() {
     }
 
     private fun startEngine() {
-        val deviceId = findCp88OutputDeviceId()
+        val deviceId = findOutputDeviceId()
         val ok = NativeBridge.nativeStart(deviceId, bufferBursts)
         if (!ok) {
             statusView.text = "Failed to open audio stream.\n" +
@@ -903,7 +905,24 @@ class MainActivity : Activity() {
      * select can land on the built-in speaker, which reports excellent latency
      * and tells you nothing about the rig you actually play through.
      */
-    private fun findCp88OutputDeviceId(): Int {
+    /**
+     * The CP-88's own device id, whether or not it is the one being played
+     * through. Kept separate from the chosen output because the recycle
+     * workaround must arm for the piano and for nothing else.
+     */
+    private var cp88DeviceId = NativeBridge.DEVICE_UNSPECIFIED
+
+    /**
+     * Picks the output. Interim ordering, hardcoded on purpose until the graph
+     * editor makes the output a property of the patch:
+     *
+     *   1. an audio interface (Scarlett), because where one is present it is
+     *      the monitoring path and the piano is just a controller;
+     *   2. the CP-88;
+     *   3. any other USB audio device;
+     *   4. nothing, and the caller decides about the built-in speaker.
+     */
+    private fun findOutputDeviceId(): Int {
         val am = getSystemService(Context.AUDIO_SERVICE) as AudioManager
         val outputs = am.getDevices(AudioManager.GET_DEVICES_OUTPUTS)
 
@@ -913,16 +932,22 @@ class MainActivity : Activity() {
                 it.type == AudioDeviceInfo.TYPE_USB_ACCESSORY
         }
 
-        // Prefer a device that names itself as the piano.
-        val named = usb.firstOrNull { d ->
+        fun named(vararg keys: String) = usb.firstOrNull { d ->
             val name = d.productName?.toString()?.uppercase().orEmpty()
-            name.contains("CP88") || name.contains("CP73") || name.contains("YAMAHA")
+            keys.any { name.contains(it) }
         }
 
-        val chosen = named ?: usb.firstOrNull()
+        val interfaceDev = named("SCARLETT", "FOCUSRITE")
+        val piano = named("CP88", "CP73", "YAMAHA")
+        cp88DeviceId = piano?.id ?: NativeBridge.DEVICE_UNSPECIFIED
+
+        val chosen = interfaceDev ?: piano ?: usb.firstOrNull()
         audioDeviceLabel = when {
-            named != null -> "${named.productName}  [CP-88]"
-            chosen != null -> "${chosen.productName}  [USB, NOT the piano]"
+            interfaceDev != null && piano != null ->
+                "${interfaceDev.productName}  [interface, preferred over the CP-88]"
+            interfaceDev != null -> "${interfaceDev.productName}  [interface]"
+            piano != null -> "${piano.productName}  [CP-88]"
+            chosen != null -> "${chosen.productName}  [USB, unrecognised]"
             else -> "built-in (NO USB DEVICE — piano not connected?)"
         }
 
@@ -1167,7 +1192,7 @@ class MainActivity : Activity() {
             bufferBursts = if (bufferBursts >= 4) 1 else bufferBursts + 1
             button.text = "Buffer: $bufferBursts"
             NativeBridge.nativeStop()
-            NativeBridge.nativeStart(findCp88OutputDeviceId(), bufferBursts)
+            NativeBridge.nativeStart(findOutputDeviceId(), bufferBursts)
             NativeBridge.nativeResetPeaks()
         }.apply {
             // LONG-PRESS: EXCLUSIVE <-> SHARED.
@@ -1184,7 +1209,7 @@ class MainActivity : Activity() {
                 wantExclusive = !wantExclusive
                 NativeBridge.nativeSetExclusive(wantExclusive)
                 NativeBridge.nativeStop()
-                NativeBridge.nativeStart(findCp88OutputDeviceId(), bufferBursts)
+                NativeBridge.nativeStart(findOutputDeviceId(), bufferBursts)
                 NativeBridge.nativeResetPeaks()
                 android.widget.Toast.makeText(
                     this@MainActivity,
@@ -1450,13 +1475,13 @@ class MainActivity : Activity() {
         // AAudio falls back to the built-in speaker without saying so, and that
         // failure is otherwise invisible: the meters move and it sounds fine in
         // a quiet room, while a stage hears nothing at all.
-        val piano = lastKnownPianoId
-        val onPiano = piano != NativeBridge.DEVICE_UNSPECIFIED && s.deviceId == piano
+        val output = lastChosenOutputId
+        val onChosen = output != NativeBridge.DEVICE_UNSPECIFIED && s.deviceId == output
 
         val warn = when {
             !s.running -> "STREAM DOWN"
-            piano == NativeBridge.DEVICE_UNSPECIFIED -> "NO PIANO — waiting"
-            !onPiano -> "WRONG DEVICE (${s.deviceId}) — recovering"
+            output == NativeBridge.DEVICE_UNSPECIFIED -> "NO USB OUTPUT — built-in speaker"
+            !onChosen -> "WRONG DEVICE (${s.deviceId}) — recovering"
             // Above xruns deliberately: this one means NO SOUND AT ALL while
             // everything else on screen still looks alive, which is precisely
             // why it went undiagnosed for a whole session.
