@@ -20,7 +20,7 @@ Read out of the running app, release build, 2026-09-19.
 | Sample rate | 44100 Hz | certain |
 | HAL format | I16 | certain |
 | Output burst | **89 frames = 2.02 ms** | certain |
-| Output buffer | **178 frames = 4.04 ms** (2 bursts, the default since 2026-09-22) | measured at 3 bursts = 267 fr; the 2-burst default was swept on the speaker, not re-verified here |
+| Output buffer | **267 frames = 6.05 ms** | certain — and it does NOT follow the burst setting. Asked for 2 bursts = 178 fr on 2026-09-23 and AAudio granted 267 anyway, so the EXCLUSIVE stream floors at 3 bursts. The 2-burst default changes the speaker only. An earlier note here claiming 178 fr was wrong |
 | Reported output latency | **9.0 - 10.4 ms** | AAudio's own report, unverified externally |
 | xRuns while playing | **0** | certain |
 | CPU, this synth, a few voices | 4 - 17 % | certain |
@@ -615,4 +615,4 @@ from 2,7 ms to the full callback.
 | Does `xRun#` miss stalls in MMAP mode? | untested |
 | Behaviour after an hour warm | untested; thermal throttling is what bites live |
 | Survives screen-off, re-plug, notifications | untested |
-| **THE LATCH** — direct USB mode goes silent while still acknowledging URBs, and only an ALSA round trip clears it | **open.** Reproduced in ~25 s at a 4 ms buffer at the instant of a part switch; a 37-minute run at 8 ms never latched, but was SILENT, so the comparison is not controlled. MIDI is exonerated — per-stage counters ran clean across a whole latch (`on=157 off=159` in and out). Two suspects: the level step discontinuity, now fixed by `SmoothedGain`; and the 4 ms buffer, which is the default as of 2026-09-23 precisely so the first one gets tested. No detector exists yet: nothing distinguishes "presenting" from "acknowledging and discarding" |
+| **THE LATCH** — direct USB mode goes silent while still acknowledging URBs, and only an ALSA round trip clears it | **open.** Reproduced in ~25 s at a 4 ms buffer at the instant of a part switch; a 37-minute run at 8 ms never latched, but was SILENT, so the comparison is not controlled. MIDI is exonerated — per-stage counters ran clean across a whole latch (`on=157 off=159` in and out). Two suspects: the level step discontinuity, now fixed by `SmoothedGain`; and the 4 ms buffer, which is the default as of 2026-09-23 precisely so the first one gets tested. No detector exists yet: nothing distinguishes "presenting" from "acknowledging and discarding". **A RESET USB button now exists**, escalating 1) disown and re-own, 2) plus a real ALSA stream on the card, 3) plus a USB reset — so the next latch also answers how much of the round trip is load-bearing. All three verified end to end on a HEALTHY session (level 1 in 170 ms, levels 2-3 in ~2,7 s, audio flowing after each); none has yet met an actual latch |
