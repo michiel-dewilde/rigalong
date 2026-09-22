@@ -20,7 +20,7 @@ Read out of the running app, release build, 2026-09-19.
 | Sample rate | 44100 Hz | certain |
 | HAL format | I16 | certain |
 | Output burst | **89 frames = 2.02 ms** | certain |
-| Output buffer | **267 frames = 6.05 ms** (3 bursts; AAudio's floor) | certain |
+| Output buffer | **178 frames = 4.04 ms** (2 bursts, the default since 2026-09-22) | measured at 3 bursts = 267 fr; the 2-burst default was swept on the speaker, not re-verified here |
 | Reported output latency | **9.0 - 10.4 ms** | AAudio's own report, unverified externally |
 | xRuns while playing | **0** | certain |
 | CPU, this synth, a few voices | 4 - 17 % | certain |
@@ -545,6 +545,66 @@ The app was **started, stressed and profiled, not played**. Every number here
 comes from synthetic chords driven over adb. The idle figure, the stream
 configuration and the underrun count are solid; how it *feels* under hands is
 not measured here and is not measurable this way.
+
+## 5h. The tablet's own speaker: how deep the buffer has to be (2026-09-22)
+
+The CP-88 is the instrument; the built-in speaker is what you get when the cable
+is not plugged in, and Michiel's verdict on it was "still late". Measured
+`latency 34,2 ms` against the CP-88's 11-15 ms.
+
+**Swept under load, not at idle.** An empty graph survives any buffer, so a sweep
+of a silent engine measures nothing at all. A note a second plus a chord every
+fourth, 30 s per setting, on the tablet's own speaker at 48 kHz / 192-frame
+burst:
+
+| Bursts | Stream buffer | xruns |
+|---|---|---|
+| 3 | 576 fr = 12 ms | 0 |
+| **2** | **384 fr = 8 ms** | **0** |
+| 1 | 192 fr = 4 ms | 1 |
+
+So 2 is the last setting that holds, and it is now the app's default. Confirmed
+at boot with no broadcast: `stream open: rate=48000 burst=192 buffer=384
+sharing=1 perf=12 aaudio=1`, then 20 notes with chords over 30 s at `xruns=0
+ringUnder=0`. The adaptive ring reserve settles at **5,3 ms either way**, so the
+saving is the full 4 ms rather than being handed back by a deeper reserve.
+
+**Why the other 20 ms cannot be had.** EXCLUSIVE is not available on the built-in
+speaker and no permission or setting unlocks it: MMAP cannot mix, and a built-in
+speaker's excursion limiting and EQ have to live in the mixer path. Tested
+directly -- I16 format, explicit exclusive request, full kill and a 4 s wait --
+every attempt came back `sharing=1`, while the identical request to the CP-88
+gets `sharing=0` and an 89-frame burst.
+
+The tablet does declare `android.hardware.audio.pro` and
+`android.hardware.audio.low_latency`, which looks like a contradiction until the
+CDD wording is read: the latency requirement is over "at least one supported
+audio output device". The USB path satisfies it. The speaker being shared is
+compliant, not broken.
+
+And there is nothing to switch off: `dumpsys media.audio_flinger` reports **0
+Effect Chains** on every output thread, so Dolby Atmos and the equalizer are not
+in our path and disabling them -- the standard forum advice -- buys exactly
+nothing.
+
+**What remains, and its one real argument.** The ring's reserve is additive
+latency, so rendering straight in the Oboe callback would recover the 5,3 ms.
+Measured on the device, that also buys scheduling we are otherwise refused:
+
+```
+AudioTrack    prio=-3  nice=-16  rtprio=2  policy=1   <- Oboe callback: SCHED_FIFO
+usb-routing   prio= 1  nice=-19  rtprio=0  policy=0   <- our render thread
+bos-sched: render thread: nice -19 (SCHED_FIFO refused: Operation not permitted)
+```
+
+AudioFlinger hands its own callback thread the real-time policy the kernel
+refuses the app. Against that: the ring exists because a 2,5 ms cold-sample disk
+read inside sfizz's `noteOn` once landed on a 2,018 ms callback deadline. That
+measurement came from the CP-88, where the deadline is 2 ms; on the speaker the
+callback is 8 ms and the work is ~3,7 ms, so the objection is weakest exactly on
+the path in question. Not taken: it needs the cold-load worst case measured
+first, and 128-frame sub-blocks inside the callback, or MIDI timing coarsens
+from 2,7 ms to the full callback.
 
 ## 6. Still open
 

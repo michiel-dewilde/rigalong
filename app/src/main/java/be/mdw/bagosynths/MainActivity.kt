@@ -92,15 +92,30 @@ class MainActivity : Activity() {
     private var lastChosenOutputId = NativeBridge.DEVICE_UNSPECIFIED
 
     private var midiDevice: MidiDevice? = null
-    // 3 bursts -- AAudio's floor. Once the render thread exists the callback is a
-    // memcpy that cannot overrun, so this buffer no longer has to cover synthesis
-    // time at all, only the OS waking the callback late. The earlier 6 was sized
-    // for a deadline that no longer applies.
-    // The callback still runs every 2 ms with the same 89-frame
-    // block, so this does NOT relax the per-callback deadline -- it buys slack
-    // before a late callback becomes an audible dropout. Costs a few ms of
-    // latency and removes clicks under a dense cluster, which is the right trade.
-    private var bufferBursts = 3
+    // 2 bursts. Once the render thread exists the callback is a memcpy that
+    // cannot overrun, so this buffer no longer has to cover synthesis time at
+    // all, only the OS waking the callback late. The earlier 6 was sized for a
+    // deadline that no longer applies, and 3 was AAudio's nominal floor rather
+    // than anything measured.
+    //
+    // MEASURED, on the tablet's own speaker, under load rather than idle -- an
+    // empty graph survives any buffer, so a sweep of a silent engine measures
+    // nothing. A note a second plus a chord every fourth, 30 s per setting:
+    //
+    //     3 bursts -> 12 ms, 0 xruns
+    //     2 bursts ->  8 ms, 0 xruns     <- here
+    //     1 burst  ->  4 ms, 1 xrun
+    //
+    // So 2 is the last setting that holds. This does NOT relax the per-callback
+    // deadline -- the callback still runs on the same block -- it buys slack
+    // before a late callback becomes an audible dropout, and one burst of slack
+    // turned out to be one too few.
+    //
+    // Deliberately NOT restored from prefs. The Buffer button and the `bursts`
+    // extra on ROUTE both write the pref, which is useful for sweeping, but a
+    // sweep that ended at 1 should not quietly become the setting the app boots
+    // into tomorrow night. Every launch starts from the value that was measured.
+    private var bufferBursts = 2
 
     /**
      * Which audio device we actually opened. Worth displaying prominently: the
@@ -183,6 +198,7 @@ class MainActivity : Activity() {
         filter.addAction("be.mdw.bagosynths.RESETPEAKS")
         filter.addAction("be.mdw.bagosynths.PROFILE")
         filter.addAction("be.mdw.bagosynths.INSTRUMENT")
+        filter.addAction("be.mdw.bagosynths.OUTPUT")
         filter.addAction("be.mdw.bagosynths.ROUTE")
         if (Build.VERSION.SDK_INT >= 33) {
             registerReceiver(debugReceiver, filter, Context.RECEIVER_EXPORTED)
@@ -1464,6 +1480,25 @@ class MainActivity : Activity() {
                 // thing to do by hand.
                 //   adb shell am broadcast -a be.mdw.bagosynths.PROFILE
                 "be.mdw.bagosynths.PROFILE" -> NativeBridge.nativeLogProfile()
+                // Pick the output device by name, for the same reason the rest
+                // of these exist: a tap coordinate read from a screenshot goes
+                // stale silently. Empty name means "automatic".
+                //   adb shell am broadcast -a be.mdw.bagosynths.OUTPUT --es name Speaker
+                "be.mdw.bagosynths.OUTPUT" -> {
+                    val want = intent.getStringExtra("name").orEmpty()
+                    val hit = outputChoices().firstOrNull { it.name.contains(want, true) }
+                    if (want.isEmpty()) {
+                        chosenOutputName = null
+                    } else if (hit == null) {
+                        android.util.Log.i("bos-ui",
+                            "outputs: " + outputChoices().joinToString { it.name })
+                        return
+                    } else {
+                        chosenOutputName = hit.name
+                    }
+                    prefs().edit().putString("chosenOutputName", chosenOutputName).apply()
+                    applyRouting("output broadcast")
+                }
                 // Pick a sampled instrument by name, so gain staging can be
                 // compared across SFZ packs without tapping INSTRUMENT.
                 //   adb shell am broadcast -a be.mdw.bagosynths.INSTRUMENT --es name tight
@@ -1512,6 +1547,14 @@ class MainActivity : Activity() {
                     if (intent.hasExtra("buffer")) {
                         val ms = intent.getIntExtra("buffer", UsbBuffers.DEFAULT_MS)
                         if (ms in UsbBuffers.choicesMs) usbBufferMs = ms
+                    }
+                    // AAudio bursts, which is what the ALSA path's latency is
+                    // made of. Scriptable so the trade against xruns can be
+                    // SWEPT rather than judged by tapping a button.
+                    //   ... --ei bursts 2
+                    if (intent.hasExtra("bursts")) {
+                        bufferBursts = intent.getIntExtra("bursts", 2).coerceIn(1, 4)
+                        prefs().edit().putInt("bufferBursts", bufferBursts).apply()
                     }
                     deniedDevices.clear()
                     saveModePrefs()
@@ -1631,6 +1674,15 @@ class MainActivity : Activity() {
      * the granted format is logged on every open.
      */
     private fun nativeFormatOf(d: AudioDeviceInfo?): Int {
+        // TRIED AND REJECTED, 2026-09-22: asking the built-in speaker for I16
+        // in the hope that a narrower format would unlock MMAP/EXCLUSIVE. It
+        // does not. I16 is granted and the stream is still SHARED, with the
+        // same 192-frame burst, even when EXCLUSIVE is asked for explicitly.
+        // The same code gets EXCLUSIVE on the CP-88 (sharing=0, burst 89), so
+        // the request is right and this tablet's speaker simply has no
+        // exclusive path. There is no permission for it either: AAudio gates
+        // EXCLUSIVE on the HAL, and aaudio.mmap_exclusive_policy here is
+        // already 2 (AUTO). Do not spend another evening on it.
         val enc = d?.encodings ?: return 0
         val has24 = enc.contains(android.media.AudioFormat.ENCODING_PCM_24BIT_PACKED)
         val has32 = enc.contains(android.media.AudioFormat.ENCODING_PCM_32BIT)

@@ -97,8 +97,16 @@ dropped.** Growing means the render thread runs further ahead; shrinking means i
 idles briefly while the callback drains the ring.
 
 **Once a render thread exists, the output buffer only has to cover scheduling
-jitter**, not synthesis — so it can go back to AAudio's 3-burst floor. Layers
-should do *different* jobs rather than all hedging against the same worst case.
+jitter**, not synthesis — so it can shrink to **2 bursts**, which is one below
+AAudio's nominal floor and the last setting that holds. Swept under load on the
+tablet's own speaker: 3 → 12 ms and 2 → 8 ms both at zero xruns, 1 → 4 ms at one.
+The adaptive reserve settles at 5,3 ms either way, so the 4 ms is really saved
+rather than handed back. Layers should do *different* jobs rather than all
+hedging against the same worst case.
+
+**Sweep under load or do not sweep at all.** An empty graph survives any buffer,
+so a buffer sweep of a silent engine measures nothing. Every figure above comes
+from a note a second plus a chord every fourth, 30 s per setting.
 
 **Note-ons are budgeted by time, not by count** (0.35 ms per block, excess
 queued). Starting a note costs ~50 µs on a cold sample and ~1 µs on a warm one, a
