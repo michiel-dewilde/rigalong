@@ -615,3 +615,4 @@ from 2,7 ms to the full callback.
 | Does `xRun#` miss stalls in MMAP mode? | untested |
 | Behaviour after an hour warm | untested; thermal throttling is what bites live |
 | Survives screen-off, re-plug, notifications | untested |
+| **THE LATCH** — direct USB mode goes silent while still acknowledging URBs, and only an ALSA round trip clears it | **open.** Reproduced in ~25 s at a 4 ms buffer at the instant of a part switch; a 37-minute run at 8 ms never latched, but was SILENT, so the comparison is not controlled. MIDI is exonerated — per-stage counters ran clean across a whole latch (`on=157 off=159` in and out). Two suspects: the level step discontinuity, now fixed by `SmoothedGain`; and the 4 ms buffer, which is the default as of 2026-09-23 precisely so the first one gets tested. No detector exists yet: nothing distinguishes "presenting" from "acknowledging and discarding" |

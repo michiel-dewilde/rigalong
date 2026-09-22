@@ -86,10 +86,30 @@ object ModeRule {
     }
 }
 
-/** The direct-mode buffer choices. 8 ms is the default and measured cleanest. */
+/**
+ * The direct-mode buffer choices, in milliseconds of transport slack.
+ *
+ * 4 ms since 2026-09-23, down from 8. This is the latency the direct-USB path
+ * is actually made of -- unlike the AAudio buffer it is ours end to end, so it
+ * is the one knob here worth the smallest value that survives.
+ *
+ * SAY THE UNCOMFORTABLE PART: 4 ms is also one of the two standing suspects for
+ * THE LATCH -- the fault where the CP-88 keeps acknowledging URBs while going
+ * silent, and only an ALSA round trip brings it back. The run that latched in
+ * ~25 s was at 4 ms; the clean 37-minute run the same day was at 8 ms. That was
+ * never a controlled comparison (the latched run was being PLAYED, the clean one
+ * was silent), and the other suspect -- the bare multiply that made muting a
+ * sounding instrument a step discontinuity -- has since been fixed by
+ * SmoothedGain's 15 ms ramp.
+ *
+ * So this default is deliberately the experiment: if part switches at 4 ms stop
+ * latching, the click was the cause and the buffer was innocent. If they latch
+ * again, the buffer is implicated and 8 is one tap away. Do not quietly restore
+ * 8 to make the symptom go away without writing down which of the two it was.
+ */
 object UsbBuffers {
     val choicesMs = intArrayOf(4, 8, 16)
-    const val DEFAULT_MS = 8
+    const val DEFAULT_MS = 4
 }
 
 /**
