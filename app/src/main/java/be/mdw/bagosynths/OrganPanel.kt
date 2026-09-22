@@ -178,8 +178,14 @@ class DrawbarView(
  * `All` rather than `Both` since the synth arrived: three parts that are mixed
  * rather than switched means "everything at once" is a real, useful position,
  * and it is where layering starts.
+ *
+ * `None` is the other end of the same idea and is leftmost on purpose: every
+ * engine at zero, so nothing here makes a sound. That is what you want while
+ * playing the CP-88's OWN voices -- the tablet stops competing for the ears
+ * and, because the gate parks a silenced engine, stops competing for the CPU
+ * as well. It is a position on the same axis, not a bypass switch.
  */
-enum class Part { Piano, Organ, Synth, FM, Texture, SoundFont, All }
+enum class Part { None, Piano, Organ, Synth, FM, Texture, SoundFont, All }
 
 /** Builds the whole organ panel, wired straight to the native node. */
 class OrganPanelBuilder(private val context: Context) {
@@ -195,6 +201,12 @@ class OrganPanelBuilder(private val context: Context) {
     private var vibratoButton: Button? = null
     private var organFader: SeekBar? = null
     private var pianoFader: SeekBar? = null
+
+    // The rows those two faders sit in, kept so they can be hidden: see
+    // setMixVisible. This panel carries TWO, because it is really the
+    // keyboards panel -- organ and piano share it.
+    private var organRow: View? = null
+    private var pianoRow: View? = null
     private var driveFader: SeekBar? = null
     private var reverbFader: SeekBar? = null
 
@@ -225,6 +237,26 @@ class OrganPanelBuilder(private val context: Context) {
     private val refreshers = ArrayList<() -> Unit>()
 
     fun refresh() = refreshers.forEach { it() }
+
+    /**
+     * Shows or hides the two mix faders this panel carries.
+     *
+     * A per-instrument level only means something when several instruments
+     * sound at once. In a solo part the level is not a choice -- the part is
+     * either the one playing, at its own level, or it is silent -- so a fader
+     * there is a control that either does nothing or quietly breaks the solo
+     * it sits in. ALL is the only place these are a mixer, so it is the only
+     * place they appear.
+     *
+     * Two of them here, and that is exactly where the old behaviour looked
+     * arbitrary: this panel is shared by PIANO and ORGAN, so soloing either
+     * one left both faders on screen and no other part showed any.
+     */
+    fun setMixVisible(on: Boolean) {
+        val how = if (on) View.VISIBLE else View.GONE
+        organRow?.visibility = how
+        pianoRow?.visibility = how
+    }
 
     private fun set(index: Int, value: Float) = NativeBridge.nativeSetOrganParam(index, value)
 
@@ -344,12 +376,14 @@ class OrganPanelBuilder(private val context: Context) {
 
         // --- levels. The organ starts at zero: the app opens on the piano and the
         // organ is brought in deliberately, which is also what the node does.
-        root.addView(slider("Organ", 0f, keep = { organFader = it }) {
+        organRow = slider("Organ", 0f, keep = { organFader = it }) {
             set(Organ.LEVEL, it * kOrganFaderTop)
-        })
-        root.addView(slider("Piano", 1f, keep = { pianoFader = it }) {
+        }
+        pianoRow = slider("Piano", 1f, keep = { pianoFader = it }) {
             NativeBridge.nativeSetSamplerLevel(it)
-        })
+        }
+        root.addView(organRow)
+        root.addView(pianoRow)
         val drive = slider("Drive", 0.5f, keep = { driveFader = it }) {
             set(Organ.OVERDRIVE_GAIN, it)
         }

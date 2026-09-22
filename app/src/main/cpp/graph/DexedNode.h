@@ -7,6 +7,7 @@
 #include <string>
 #include <vector>
 
+#include <bagosynths/Gain.h>
 #include <bagosynths/Graph.h>
 #include <bagosynths/ParamQueue.h>
 
@@ -138,6 +139,13 @@ private:
     void noteOff(int midiNote);
     void releaseSustained();
     void panic();
+
+    // Stop sounding NOW, not "release and fade": a node that is about to be
+    // gated out of the schedule never gets the blocks its release phase needs,
+    // so the tail would freeze and resume, mid-decay, whenever the part was
+    // selected again. Michiel heard exactly that.
+    void allNotesOff() override;
+    float lastRenderPeak() const override { return mLastPeak; }
     int chooseVoice(int midiNote);
     void applyParam(int index, float value);
     void pushParam(int index, float value);
@@ -184,6 +192,13 @@ private:
     ParamQueue<256> mQueue;
 
     float mMaxRenderMs = 0.0f;
+
+    // Peak of the last rendered block, taken before this node applies its own
+    // level: see Node::lastRenderPeak. Render thread only.
+    float mLastPeak = 0.0f;
+
+    // The output level, ramped rather than stepped: see SmoothedGain.
+    SmoothedGain mGain;
 };
 
 }  // namespace bagosynths

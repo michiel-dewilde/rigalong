@@ -108,6 +108,10 @@ const char* DexedNode::engineName(int index) {
 }
 
 void DexedNode::prepare(double sampleRate, int maxFrames) {
+    // Start AT the current level, so a graph recompile does not fade the
+    // instrument in from silence.
+    mGain.prepare(sampleRate, mParams[kLevel]);
+
     // msfa's tables are STATIC and shared by every instance. One output device
     // means one rate, so this is survivable -- but a second Dexed node at a
     // different rate would silently detune both. Same shape of constraint as
@@ -536,6 +540,19 @@ void DexedNode::panic() {
     mSustain = false;
 }
 
+void DexedNode::allNotesOff() {
+    // keyup() first so the engine's own bookkeeping is consistent, then take
+    // the voices out of the render entirely.
+    for (auto& v : mVoices) {
+        v.keyDown = false;
+        v.sustained = false;
+        if (v.live) v.note->keyup();
+        v.live = false;
+        v.midiNote = -1;
+    }
+    mSustain = false;
+}
+
 void DexedNode::takePendingVoice() {
     if (!mPendingValid.load(std::memory_order_acquire)) return;
     std::memcpy(mPatch, mPendingPatch, sizeof(mPatch));
@@ -659,10 +676,10 @@ void DexedNode::process(const ProcessArgs& args) {
     }
     renderTo(args.numFrames);
 
-    const float level = mParams[kLevel];
-    if (level != 1.0f) {
-        for (int i = 0; i < args.numFrames; ++i) outL[i] *= level;
-    }
+    // Before the level. Mono, so one channel is the whole picture.
+    mLastPeak = blockPeak(outL, args.numFrames);
+
+    mGain.apply(outL, nullptr, args.numFrames, mParams[kLevel]);
     // The DX7 is mono. Copying rather than pretending otherwise keeps the node
     // honest; width belongs to an effect, not to the instrument.
     if (out.width > 1) {

@@ -5,6 +5,7 @@
 #include <string>
 #include <vector>
 
+#include <bagosynths/Gain.h>
 #include <bagosynths/Graph.h>
 
 namespace sfz { class Sfizz; }
@@ -50,6 +51,10 @@ public:
 
     void prepare(double sampleRate, int maxFrames) override;
     void process(const ProcessArgs& args) override;
+
+    // Released when the part is switched away from: see Node::allNotesOff.
+    void allNotesOff() override;
+    float lastRenderPeak() const override { return mLastPeak; }
 
     // Off the audio thread. `id` is the library id a patch refers to; `path` is
     // where it happens to live on this device. The node remembers both, and only
@@ -99,6 +104,13 @@ private:
     std::atomic<float> mLevel{1.0f};
     float mMaxNoteMs = 0.0f;
     float mMaxRenderMs = 0.0f;
+
+    // Peak of the last rendered block, taken before this node applies its own
+    // level: see Node::lastRenderPeak. Render thread only.
+    float mLastPeak = 0.0f;
+
+    // The output level, ramped rather than stepped: see SmoothedGain.
+    SmoothedGain mGain;
     int mLastNoteOns = 0;
 
     // Note-ons are budgeted by TIME, not by count.
@@ -116,6 +128,36 @@ private:
     //
     // Note-offs, CCs and pitch bend are NEVER delayed: they are cheap, and
     // holding them back would sound worse than the problem being solved.
+    // Calibration trim, so that "level 1" means roughly the same loudness here
+    // as it does on the other five engines.
+    //
+    // MEASURED, 2026-09-22, one A4 per engine, peak of each engine's own output
+    // before its level (PROFILE ... pre-level):
+    //
+    //   Plaits  +0,2 dBFS (x0,25 headroom inside its own level: -11,8 net)
+    //   Fluid   -7,1      Hammond -8,2      Surge  -10,7
+    //   Dexed  -18,1      sfizz   -20,5
+    //
+    // and the piano across velocity, which is the part that decides it:
+    //
+    //   vel  40   60   80  100  110  127
+    //   dBFS -36 -29  -25 -20,5 -17,8 -13,0
+    //
+    // At FULL velocity the piano reached only -13 dBFS, while A4v16.wav peaks
+    // at -1,5 dBFS in the file. So eleven decibels of headroom sat unused even
+    // at fortissimo -- this is not "a dynamic instrument is quieter at mezzo",
+    // which would be correct and would be left alone; it is the whole range
+    // sitting low. Michiel's instruction was to adjust only if the staging is
+    // really off, and twelve decibels below the organ at every velocity is off.
+    //
+    // 2,7 (+8,6 dB) puts full velocity at about -4,4 dBFS -- in the same band
+    // as the other engines, with real headroom left, and it CANNOT clip on its
+    // own: the measured maximum times 2,7 is 0,60.
+    //
+    // Applied here rather than by editing the SFZ, so third-party content is
+    // untouched and the fader keeps meaning 0..1.
+    static constexpr float kCalibration = 2.7f;
+
     static constexpr double kNoteOnBudgetMs = 0.35;
     static constexpr int kMaxNoteOnsPerBlock = 24;   // hard ceiling as well
     static constexpr int kPendingCapacity = 256;

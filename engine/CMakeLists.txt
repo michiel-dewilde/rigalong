@@ -20,7 +20,8 @@ cmake_minimum_required(VERSION 3.22)
 project(bagosynths-engine LANGUAGES CXX)
 
 add_library(bagosynths-engine STATIC
-        src/Graph.cpp)
+        src/Graph.cpp
+        src/UsbDescriptors.cpp)
 
 target_include_directories(bagosynths-engine PUBLIC
         ${CMAKE_CURRENT_SOURCE_DIR}/include)

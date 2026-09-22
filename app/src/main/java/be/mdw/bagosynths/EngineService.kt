@@ -45,7 +45,29 @@ import android.os.IBinder
  */
 class EngineService : Service() {
 
+    /**
+     * Held for as long as the instrument runs.
+     *
+     * The AAudio path never needed it: AudioFlinger holds a wake lock on behalf
+     * of any app with an active AudioTrack. The direct-USB modes have no
+     * AudioTrack -- that is their point -- so nothing holds one for them, and a
+     * foreground service alone keeps the process uncached without keeping the
+     * SoC awake. Measured with the usbhost prototype on 2026-09-22. Harmless on
+     * the AAudio path, where the same lock is already held by the framework.
+     */
+    private var wakeLock: android.os.PowerManager.WakeLock? = null
+
     override fun onBind(intent: Intent?): IBinder? = null
+
+    override fun onDestroy() {
+        releaseWakeLock()
+        super.onDestroy()
+    }
+
+    private fun releaseWakeLock() {
+        runCatching { if (wakeLock?.isHeld == true) wakeLock?.release() }
+        wakeLock = null
+    }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (intent?.action == ACTION_STOP) {
@@ -53,12 +75,18 @@ class EngineService : Service() {
             // release the stream, then take the notification down with us.
             NativeBridge.nativeCloseMidi()
             NativeBridge.nativeStop()
+            releaseWakeLock()
             stopForeground(STOP_FOREGROUND_REMOVE)
             stopSelf()
             return START_NOT_STICKY
         }
 
         startForeground(NOTIFICATION_ID, buildNotification())
+        if (wakeLock == null) {
+            val pm = getSystemService(Context.POWER_SERVICE) as android.os.PowerManager
+            wakeLock = pm.newWakeLock(android.os.PowerManager.PARTIAL_WAKE_LOCK, "bagosynths:engine")
+                .apply { setReferenceCounted(false); acquire() }
+        }
 
         // NOT sticky. If the system kills this process, the audio stream and
         // every engine's state went with it, and a service quietly restarting

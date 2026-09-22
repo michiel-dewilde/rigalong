@@ -82,10 +82,14 @@ public:
     int numInputs() const override { return 1; }
     PinSpec inputPin(int) const override { return {DataType::Midi, 1, "in"}; }
     void process(const ProcessArgs& a) override {
+        ++blocks;
         notes.clear();
         for (int i = 0; i < a.midiIn[0]->size(); ++i) notes.push_back((*a.midiIn[0])[i].data1);
+        received += static_cast<int>(notes.size());
     }
     std::vector<uint8_t> notes;
+    int blocks = 0;     // how often it RAN, whether or not it heard anything
+    int received = 0;   // how many events reached it in total
 };
 
 // Audio in, audio out. Used to build chains whose order can be checked.
@@ -344,6 +348,90 @@ TEST(a_chain_carries_its_signal) {
     if (!probe->seen.empty()) CHECK_NEAR(probe->seen[0], 0.6f, 1e-6);
 }
 
+// ------------------------------------------------------- disabled nodes
+//
+// "Only the selected instrument runs" has to mean it does not RUN, not merely
+// that it cannot be heard: an engine rendering at level zero costs exactly what
+// an audible one costs.
+
+TEST(a_disabled_node_does_not_run) {
+    Graph g;
+    auto srcOwned = std::make_unique<ConstAudio>(0.5f);
+    ConstAudio* src = srcOwned.get();
+    NodeId idSrc = g.addNode(std::move(srcOwned));
+    auto probeOwned = std::make_unique<AudioProbe>();
+    AudioProbe* probe = probeOwned.get();
+    NodeId idSink = g.addNode(std::move(probeOwned));
+    std::string err;
+    CHECK(g.connect(idSrc, 0, idSink, 0, &err));
+    g.setAudioExit(idSink);
+    auto sched = g.compile(44100.0, kFrames, &err);
+    CHECK(sched != nullptr);
+    if (!sched) return;
+
+    sched->run(kFrames, 44100.0);
+    CHECK_NEAR(probe->seen[0], 0.5f, 1e-6);
+
+    // Disabled: the consumer still runs, and sees silence rather than the last
+    // block the source produced.
+    src->setEnabled(false);
+    sched->run(kFrames, 44100.0);
+    CHECK_NEAR(probe->seen[0], 0.0f, 1e-6);
+
+    src->setEnabled(true);
+    sched->run(kFrames, 44100.0);
+    CHECK_NEAR(probe->seen[0], 0.5f, 1e-6);
+}
+
+TEST(a_disabled_node_is_not_processed_at_all) {
+    Graph g;
+    NodeId idSrc = g.addNode(std::make_unique<ConstAudio>(0.5f));
+    auto probeOwned = std::make_unique<AudioProbe>();
+    AudioProbe* probe = probeOwned.get();
+    NodeId idSink = g.addNode(std::move(probeOwned));
+    std::string err;
+    CHECK(g.connect(idSrc, 0, idSink, 0, &err));
+    g.setAudioExit(idSink);
+    auto sched = g.compile(44100.0, kFrames, &err);
+    CHECK(sched != nullptr);
+    if (!sched) return;
+
+    sched->run(kFrames, 44100.0);
+    const int after = probe->calls;
+    probe->setEnabled(false);
+    sched->run(kFrames, 44100.0);
+    sched->run(kFrames, 44100.0);
+    // process() was never entered: the whole point is the CPU it does not cost.
+    CHECK_EQ(probe->calls, after);
+}
+
+TEST(disabling_one_branch_leaves_the_other_audible) {
+    // The case the UI asks for: one instrument selected, the rest silent AND
+    // not running, mixed into the same output.
+    Graph g;
+    auto aOwned = std::make_unique<ConstAudio>(0.25f);
+    ConstAudio* a = aOwned.get();
+    NodeId idA = g.addNode(std::move(aOwned));
+    NodeId idB = g.addNode(std::make_unique<ConstAudio>(0.5f));
+    auto probeOwned = std::make_unique<AudioProbe>();
+    AudioProbe* probe = probeOwned.get();
+    NodeId idSink = g.addNode(std::move(probeOwned));
+    std::string err;
+    CHECK(g.connect(idA, 0, idSink, 0, &err));
+    CHECK(g.connect(idB, 0, idSink, 0, &err));
+    g.setAudioExit(idSink);
+    auto sched = g.compile(44100.0, kFrames, &err);
+    CHECK(sched != nullptr);
+    if (!sched) return;
+
+    sched->run(kFrames, 44100.0);
+    CHECK_NEAR(probe->seen[0], 0.75f, 1e-6);   // both branches summed
+
+    a->setEnabled(false);
+    sched->run(kFrames, 44100.0);
+    CHECK_NEAR(probe->seen[0], 0.5f, 1e-6);    // only the enabled one remains
+}
+
 // ----------------------------------------------------------- graph editing
 
 TEST(remove_node_drops_its_edges) {
@@ -495,4 +583,42 @@ TEST(latency_alignment_is_NOT_implemented) {
     // Every node in the project reports zero, which is why the gap is harmless
     // so far. If this ever fails, alignment has become load-bearing.
     for (const auto& s : sched->steps) CHECK_EQ(s.node->latencyFrames(), 0);
+}
+
+// --- deaf while flushing ---------------------------------------------------
+//
+// A node whose level has been taken to zero keeps RUNNING so its tails drain,
+// but it must not accept new notes while it does. Otherwise holding a key and
+// switching parts makes the newly selected engine sound a note that was
+// pressed before it was selected -- reported exactly that way.
+TEST(a_midi_muted_node_still_runs_but_receives_nothing) {
+    Graph g;
+    NodeId src = g.addNode(std::make_unique<MidiSource>(60));
+    auto probeOwned = std::make_unique<MidiProbe>();
+    MidiProbe* probe = probeOwned.get();
+    NodeId sink = g.addNode(std::move(probeOwned));
+
+    std::string err;
+    CHECK(g.connect(src, 0, sink, 0, &err));
+    auto sched = g.compile(44100.0, 128, &err);
+    CHECK(sched != nullptr);
+    if (!sched) return;
+
+    // Hearing: the source's note reaches it.
+    sched->run(128, 44100.0);
+    CHECK_EQ(probe->received, 1);
+    CHECK_EQ(probe->blocks, 1);
+
+    // Deaf: still processed -- the tails have to drain -- but nothing arrives.
+    probe->setMidiMuted(true);
+    sched->run(128, 44100.0);
+    CHECK_EQ(probe->received, 1);       // unchanged
+    CHECK_EQ(probe->blocks, 2);         // but it DID run
+    CHECK_EQ(static_cast<int>(probe->notes.size()), 0);
+
+    // Hearing again once the part is selected.
+    probe->setMidiMuted(false);
+    sched->run(128, 44100.0);
+    CHECK_EQ(probe->received, 2);
+    CHECK_EQ(probe->blocks, 3);
 }

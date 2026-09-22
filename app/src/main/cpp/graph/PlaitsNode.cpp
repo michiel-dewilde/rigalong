@@ -188,6 +188,9 @@ const char* PlaitsNode::paramName(int index) const {
 
 void PlaitsNode::prepare(double sampleRate, int maxFrames) {
     mRate = sampleRate > 0 ? sampleRate : 44100.0;
+    // Start AT the current level, so a graph recompile does not fade the
+    // instrument in from silence.
+    mGain.prepare(mRate, mParams[kLevel] * kVoiceHeadroom);
 
     // prepare() allocates; process() never does.
     for (auto& v : mImpl->voices) {
@@ -528,8 +531,10 @@ void PlaitsNode::process(const ProcessArgs& args) {
 
     mImpl->resampler->renormalizePhases();
 
-    const float level = mParams[kLevel] * kVoiceHeadroom;
-    for (int i = 0; i < args.numFrames; ++i) outL[i] *= level;
+    // Before the level. Mono, so one channel is the whole picture.
+    mLastPeak = blockPeak(outL, args.numFrames);
+
+    mGain.apply(outL, nullptr, args.numFrames, mParams[kLevel] * kVoiceHeadroom);
     // Plaits is mono, and saying so is better than faking width here: that
     // belongs to an effect, not to the instrument.
     if (out.width > 1) {

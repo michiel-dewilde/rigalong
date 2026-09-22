@@ -26,8 +26,10 @@ public:
 
             float scaled = in[i] * 32767.0f + tpdf;
 
-            // Hard clip. The limiter upstream should make this unreachable; if it
-            // is being hit, that is a gain-staging bug worth hearing about.
+            // Saturate. There is no limiter in the default chain any more, so
+            // this is the deliberate end of the range rather than a backstop:
+            // the master volume is the last thing before the conversion, and an
+            // over is meant to be audible as an over rather than wrapping.
             if (scaled > 32767.0f) scaled = 32767.0f;
             if (scaled < -32768.0f) scaled = -32768.0f;
 

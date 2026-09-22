@@ -58,6 +58,26 @@ void SfizzNode::prepare(double sampleRate, int maxFrames) {
     // sound would be a poor trade.
     //
     // Revisit only with a test that actually holds 64+ voices at once.
+    //
+    // REVISITED, 2026-09-22, with exactly that test: Michiel watched the voice
+    // count while playing and reported it "accumulating quickly to 64" when
+    // hammering the keyboard. At 64 sfizz steals, and a stolen voice is a note
+    // cut short or never heard.
+    //
+    // The reasoning above missed a multiplier that is specific to this
+    // instrument rather than to polyphony in general. Salamander does not use
+    // one voice per key: `ampeg_release=1` (5 for the top groups) keeps a voice
+    // alive for a second after the key is up, and EIGHT `trigger=release`
+    // groups fire damper and action samples on every note-off, with overlapping
+    // key ranges. One note played and released is therefore several voices for
+    // several seconds. Thirty notes is nowhere near thirty voices.
+    //
+    // LEFT AT 64 all the same, because Michiel, told the arithmetic, said the
+    // ceiling is not what bothers him. It is reached by design, not by fault,
+    // and the headroom above it is still wanted for effects. 96 is the raise
+    // this rig has evidence for -- the earlier sweep measured it at the SAME
+    // render peak as 56, 1,04 ms against 1,03 ms -- so it is one number to
+    // change if hammered chords ever start audibly losing notes to stealing.
     mSynth->setNumVoices(64);
 
     // Preload far more of each sample than the default 8192 frames. sfizz keeps
@@ -67,6 +87,7 @@ void SfizzNode::prepare(double sampleRate, int maxFrames) {
     // 80 MB for Salamander's 641 samples, which on a 12 GB tablet is nothing
     // next to a dropout.
     mSynth->setPreloadSize(65536);
+    mGain.prepare(sampleRate, mLevel.load(std::memory_order_relaxed) * kCalibration);
     mLeft.assign(maxFrames, 0.0f);
     mRight.assign(maxFrames, 0.0f);
 }
@@ -138,11 +159,20 @@ int SfizzNode::activeVoices() const {
     return mSynth ? mSynth->getNumActiveVoices() : 0;
 }
 
+// sfizz's own panic, plus the queue of note-ons waiting to be started: a note
+// that has not sounded yet must not sound after the part has been switched
+// away from.
+void SfizzNode::allNotesOff() {
+    mPendingHead = mPendingTail = 0;
+    if (mSynth) mSynth->allSoundOff();
+}
+
 void SfizzNode::process(const ProcessArgs& args) {
     // Park while a load is in progress. Emitting silence for a second is a far
     // better outcome than racing sfizz's parser.
     if (mLoadRequested.load(std::memory_order_acquire)) {
         mRenderParked.store(true, std::memory_order_release);
+        mLastPeak = 0.0f;
         if (args.numAudioOut > 0) {
             const AudioPort& out = args.audioOut[0];
             for (int ch = 0; ch < out.width; ++ch) {
@@ -166,7 +196,21 @@ void SfizzNode::process(const ProcessArgs& args) {
             const int delay = static_cast<int>(e.frame);
             const uint8_t type = e.status & 0xF0u;
 
-            if (type == 0x90 && e.data2 > 0) {
+            // BOTH note-ons and note-offs go through the queue, and that is the
+            // point of it being a queue.
+            //
+            // Applying note-offs immediately while note-ons waited was a bug
+            // with a nasty signature: if a key's on and off landed in the same
+            // block -- or the on was still queued when the off arrived -- the
+            // off was applied to a note that had not started, so it did
+            // nothing, and then the on started a note that NOTHING WOULD EVER
+            // STOP. A hung voice, holding CPU and polyphony until a panic.
+            //
+            // Ordering is not a refinement here; it is the difference between a
+            // late note and a stuck one. CCs and pitch bend still go straight
+            // through: they are cheap, they are not paired, and delaying them
+            // would be audible.
+            if (type == 0x90 || type == 0x80) {
                 const int next = (mPendingTail + 1) % kPendingCapacity;
                 if (next != mPendingHead) {
                     mPending[mPendingTail] = e;
@@ -178,8 +222,6 @@ void SfizzNode::process(const ProcessArgs& args) {
             }
 
             switch (type) {
-                case 0x90: mSynth->noteOff(delay, e.data1, 0); break;
-                case 0x80: mSynth->noteOff(delay, e.data1, e.data2); break;
                 case 0xB0: mSynth->cc(delay, e.data1, e.data2); break;
                 case 0xE0: {
                     const int raw = (static_cast<int>(e.data2) << 7) | e.data1;
@@ -194,13 +236,29 @@ void SfizzNode::process(const ProcessArgs& args) {
     // 2. Start queued notes until this block's time allowance is spent. Always
     //    start at least one, so progress is guaranteed no matter how slow a
     //    single note turns out to be.
+    // Only note-ONS are rationed. A note-off costs nothing to apply and
+    // delaying one holds a voice that should be releasing, so the loop walks
+    // past them freely and stops only when the next thing to do is a note-on it
+    // cannot afford. At least one note-on always starts, so progress is
+    // guaranteed however slow a single note turns out to be.
     const double tStart = nowSec();
-    for (int n = 0; n < kMaxNoteOnsPerBlock && mPendingHead != mPendingTail; ++n) {
+    while (mPendingHead != mPendingTail) {
         const MidiEvent& e = mPending[mPendingHead];
+        const bool isOn = (e.status & 0xF0u) == 0x90 && e.data2 > 0;
+        if (isOn && noteOns > 0 &&
+            (noteOns >= kMaxNoteOnsPerBlock ||
+             (nowSec() - tStart) * 1000.0 > kNoteOnBudgetMs)) {
+            break;
+        }
         mPendingHead = (mPendingHead + 1) % kPendingCapacity;
-        mSynth->noteOn(0, e.data1, e.data2);
-        ++noteOns;
-        if ((nowSec() - tStart) * 1000.0 > kNoteOnBudgetMs) break;
+        if (isOn) {
+            mSynth->noteOn(0, e.data1, e.data2);
+            ++noteOns;
+        } else {
+            // Frame offset is not carried: MidiInput timestamps everything at
+            // frame 0 today, so there is none to lose.
+            mSynth->noteOff(0, e.data1, (e.status & 0xF0u) == 0x80 ? e.data2 : 0);
+        }
     }
 
     const auto noteMs = static_cast<float>((nowSec() - tNote0) * 1000.0);
@@ -215,15 +273,23 @@ void SfizzNode::process(const ProcessArgs& args) {
     float* buffers[2] = {mLeft.data(), mRight.data()};
     mSynth->renderBlock(buffers, static_cast<size_t>(args.numFrames), 1);
 
+    // Before the level: the gate watches this to know when the release tails of
+    // the last notes have actually died away.
+    mLastPeak = blockPeak(mRight.data(), args.numFrames,
+                          blockPeak(mLeft.data(), args.numFrames));
+
     if (args.numAudioOut > 0) {
         const AudioPort& out = args.audioOut[0];
-        const float level = mLevel.load(std::memory_order_relaxed);
+        const float level = mLevel.load(std::memory_order_relaxed) * kCalibration;
         float* l = out.channel(0);
         float* r = out.width > 1 ? out.channel(1) : nullptr;
-        for (int i = 0; i < args.numFrames; ++i) l[i] = mLeft[i] * level;
+        // Copy, then apply the level as a RAMP. Fusing the two was cheaper and
+        // put a step into the waveform every time the level moved.
+        for (int i = 0; i < args.numFrames; ++i) l[i] = mLeft[i];
         if (r) {
-            for (int i = 0; i < args.numFrames; ++i) r[i] = mRight[i] * level;
+            for (int i = 0; i < args.numFrames; ++i) r[i] = mRight[i];
         }
+        mGain.apply(l, r, args.numFrames, level);
     }
 
     const auto renderMs = static_cast<float>((nowSec() - tRender0) * 1000.0);

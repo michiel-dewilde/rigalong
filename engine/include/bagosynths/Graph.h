@@ -1,6 +1,8 @@
 #pragma once
 
 #include <atomic>
+
+#include <atomic>
 #include <cstdint>
 #include <memory>
 #include <string>
@@ -77,6 +79,17 @@ struct AudioPort {
     int mStride = 0;           // frames per channel
 };
 
+// Peak magnitude of one block, folded into a running value so a stereo pair
+// takes two calls. Branch on sign rather than std::fabs: this runs per block
+// per instrument and there is no reason to pull in <cmath> for it.
+inline float blockPeak(const float* p, int n, float sofar = 0.0f) {
+    for (int i = 0; i < n; ++i) {
+        const float a = p[i] < 0.0f ? -p[i] : p[i];
+        if (a > sofar) sofar = a;
+    }
+    return sofar;
+}
+
 struct ProcessArgs {
     int numFrames = 0;
     double sampleRate = 44100.0;
@@ -125,6 +138,64 @@ public:
     virtual void setParam(int index, float value) {}
     virtual float getParam(int index) const { return 0.0f; }
     virtual const char* paramName(int index) const { return ""; }
+
+    // --- running or not ----------------------------------------------------
+    //
+    // A DISABLED node is not processed at all, and its outputs are zeroed so a
+    // consumer sees silence rather than the last block it produced.
+    //
+    // This is what makes "only the selected instrument runs" true rather than
+    // merely inaudible. The pedalboard model -- every instrument always
+    // rendering, mixed by level -- costs the CPU of every engine whether or not
+    // it can be heard: measured, the idle render peak went 0,81 ms at three
+    // instruments to 1,30 ms at four, against a 2,902 ms block. An engine at
+    // level zero is PROVABLY silent, so rendering it buys nothing.
+    //
+    // Set off the audio thread, read on it: a relaxed atomic, because a block
+    // either side of the change is equally correct.
+    void setEnabled(bool on) { mEnabled.store(on, std::memory_order_relaxed); }
+    bool enabled() const { return mEnabled.load(std::memory_order_relaxed); }
+
+    // --- deaf, but still running -------------------------------------------
+    //
+    // A node that is being FLUSHED -- its level taken to zero, its tails still
+    // draining -- must not accept new notes. It is still enabled and still
+    // scheduled, so without this it goes on hearing everything played while it
+    // is inaudible, and starts notes nobody asked it to start.
+    //
+    // Michiel found it the way these things are always found: hold a key down,
+    // switch the part, and the newly selected engine sounds the note you
+    // pressed BEFORE you switched, "as if it consumed that key down". It had:
+    // it was still flushing, so it took the note-on silently, and selecting it
+    // merely faded that already-running note up.
+    //
+    // Set off the audio thread, read on it; relaxed, because a block either
+    // side of the change is equally correct.
+    void setMidiMuted(bool on) { mMidiMuted.store(on, std::memory_order_relaxed); }
+    bool midiMuted() const { return mMidiMuted.load(std::memory_order_relaxed); }
+
+    // Release every sounding voice. Called on the render thread, between
+    // blocks, when a node is about to be disabled: a node that is not
+    // processed cannot finish the notes it is holding, and would resurrect
+    // them the moment it is enabled again. Default does nothing, which is
+    // right for anything that holds no state.
+    virtual void allNotesOff() {}
+
+    // Peak magnitude of the last block this node rendered, measured BEFORE its
+    // own output level is applied.
+    //
+    // This exists for one question: "has this engine actually gone quiet?".
+    // Reading the node's output PORT cannot answer it, because every
+    // instrument applies its Level on the way out, so a muted engine writes
+    // exact zeros while its reverb and rotary speaker are still ringing
+    // internally. Freezing it there and resuming later replays that tail.
+    //
+    // -1 means the node does not report; callers then fall back to a timeout.
+    virtual float lastRenderPeak() const { return -1.0f; }
+
+private:
+    std::atomic<bool> mEnabled{true};
+    std::atomic<bool> mMidiMuted{false};
 };
 
 // ------------------------------------------------------------- graph and edge
@@ -199,6 +270,12 @@ public:
     std::vector<AudioPort> audioInPorts, audioOutPorts;
     std::vector<const MidiBuffer*> midiInPorts;
     std::vector<MidiBuffer*> midiOutPorts;
+
+    // Handed to a node that is MIDI-muted, in place of its real inputs. Sized
+    // at compile time and permanently empty, so the swap costs nothing and
+    // allocates nothing on the audio thread. See Node::setMidiMuted.
+    MidiBuffer emptyMidi;
+    std::vector<const MidiBuffer*> mutedMidiIn;
 
     // Which buffers the entry and exit nodes use, so the engine can feed MIDI in
     // and take audio out without knowing anything about the graph.

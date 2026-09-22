@@ -27,6 +27,25 @@ void Schedule::run(int numFrames, double sampleRate) {
         const Step& s = steps[stepIndex];
         const double t0 = nowSec();
 
+        // A disabled node does not run at all: no input mixing, no process().
+        // Its outputs are ZEROED rather than left alone, because a consumer's
+        // fan-in copies the first source and adds the rest -- stale audio would
+        // otherwise be mixed in forever, and the node would go on being heard
+        // after it stopped running.
+        if (!s.node->enabled()) {
+            for (int i = 0; i < s.numAudioOut; ++i) {
+                const AudioPort& p = audioOutPorts[s.firstAudioOut + i];
+                for (int c = 0; c < p.width; ++c) {
+                    std::fill_n(p.channel(c), numFrames, 0.0f);
+                }
+            }
+            for (int i = 0; i < s.numMidiOut; ++i) {
+                if (MidiBuffer* m = midiOutPorts[s.firstMidiOut + i]) m->clear();
+            }
+            if (stepIndex < stepMaxMs.size()) stepLastMs[stepIndex] = 0.0f;
+            continue;
+        }
+
         // Mix the fan-in for this step's inputs. The first source copies and the
         // rest add, so nothing has to be cleared first.
         for (int i = 0; i < s.numAudioSum; ++i) {
@@ -57,7 +76,19 @@ void Schedule::run(int numFrames, double sampleRate) {
         args.numAudioIn = s.numAudioIn;
         args.audioOut = s.numAudioOut ? &audioOutPorts[s.firstAudioOut] : nullptr;
         args.numAudioOut = s.numAudioOut;
-        args.midiIn = s.numMidiIn ? &midiInPorts[s.firstMidiIn] : nullptr;
+        // A flushing node is DEAF: it is handed empty MIDI so it drains its
+        // tails without taking new notes. See Node::setMidiMuted.
+        //
+        // Swapped HERE rather than skipped in the fan-in above, and the
+        // difference is not cosmetic: a single edge is wired straight through,
+        // with the consumer's input port pointing AT the producer's output
+        // buffer and no sum step at all. Clearing it there would have emptied
+        // the producer's own buffer and silenced everyone else too -- which is
+        // what the test caught.
+        args.midiIn = s.numMidiIn
+                          ? (s.node->midiMuted() ? mutedMidiIn.data()
+                                                 : &midiInPorts[s.firstMidiIn])
+                          : nullptr;
         args.numMidiIn = s.numMidiIn;
         args.midiOut = s.numMidiOut ? &midiOutPorts[s.firstMidiOut] : nullptr;
         args.numMidiOut = s.numMidiOut;
@@ -395,6 +426,16 @@ std::unique_ptr<Schedule> Graph::compile(double sampleRate, int maxFrames,
 
     // Prepare every node now, off the audio thread.
     for (const Slot& s : mNodes) s.node->prepare(sampleRate, maxFrames);
+
+    // Enough empty-MIDI pointers for the hungriest step, so a muted node can be
+    // handed them without allocating on the audio thread.
+    {
+        size_t widest = 0;
+        for (const Schedule::Step& st : sched->steps) {
+            widest = std::max(widest, static_cast<size_t>(st.numMidiIn));
+        }
+        sched->mutedMidiIn.assign(widest, &sched->emptyMidi);
+    }
 
     return sched;
 }

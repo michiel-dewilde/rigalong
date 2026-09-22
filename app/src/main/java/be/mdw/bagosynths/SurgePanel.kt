@@ -48,6 +48,11 @@ class SurgePanelBuilder(private val context: Context) {
     private var patchLabel: TextView? = null
     private var statusLabel: TextView? = null
     private var levelFader: SeekBar? = null
+
+    // The row the level fader sits in, kept so it can be hidden: the mix
+    // faders only exist for balancing a layer, so they are shown only in ALL.
+    // See setMixVisible.
+    private var levelRow: View? = null
     private val macroBars = ArrayList<SeekBar>(Surge.MACROS)
     private val macroLabels = ArrayList<TextView>(Surge.MACROS)
 
@@ -55,6 +60,20 @@ class SurgePanelBuilder(private val context: Context) {
     private var names: List<String> = emptyList()
 
     fun refresh() = refreshers.forEach { it() }
+
+    /**
+     * Shows or hides the mix fader.
+     *
+     * A per-instrument level only means something when several instruments
+     * sound at once. In a solo part the level is not a choice -- the part is
+     * either the one playing, at its own level, or it is silent -- so a fader
+     * there is a control that either does nothing or quietly breaks the solo
+     * it sits in. ALL is the only place these are a mixer, so it is the only
+     * place they appear.
+     */
+    fun setMixVisible(on: Boolean) {
+        levelRow?.visibility = if (on) View.VISIBLE else View.GONE
+    }
 
     fun build(): View {
         val root = LinearLayout(context).apply {
@@ -147,9 +166,10 @@ class SurgePanelBuilder(private val context: Context) {
         // --- level ------------------------------------------------------------
         // Starts at zero, like the organ: the app opens on the piano and each
         // other part is brought in deliberately. This mirrors what the node does.
-        root.addView(slider("Synth", 0f, keep = { levelFader = it }) {
+        levelRow = slider("Synth", 0f, keep = { levelFader = it }) {
             NativeBridge.nativeSetSurgeParam(Surge.LEVEL, it * Surge.FADER_TOP)
-        })
+        }
+        root.addView(levelRow)
 
         // Everything reads back from the node, so a restored patch shows what is
         // actually set rather than where the controls were left.

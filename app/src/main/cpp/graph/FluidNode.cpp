@@ -87,6 +87,9 @@ const char* FluidNode::paramName(int index) const {
 
 void FluidNode::prepare(double sampleRate, int maxFrames) {
     const double rate = sampleRate > 0 ? sampleRate : 44100.0;
+    // Start AT the current level, so a graph recompile does not fade the
+    // instrument in from silence.
+    mGain.prepare(rate, mParams[kLevel]);
 
     // The rate reaches FluidSynth at init() and, before this, never again --
     // so a synth built at 44100 kept rendering as if it were at 44100 after the
@@ -473,10 +476,21 @@ void FluidNode::panic() {
     }
 }
 
+void FluidNode::allNotesOff() {
+    fluid_synth_t* s = mSynth.load(std::memory_order_acquire);
+    if (s == nullptr) return;
+    for (int ch = 0; ch < 16; ++ch) {
+        // SOUNDS off, not NOTES off: the latter releases and leaves a tail
+        // this node will not be running to finish.
+        fluid_synth_all_sounds_off(s, ch);
+    }
+}
+
 void FluidNode::silence(const ProcessArgs& args) {
     const AudioPort& out = args.audioOut[0];
     std::fill_n(out.channel(0), args.numFrames, 0.0f);
     if (out.width > 1) std::fill_n(out.channel(1), args.numFrames, 0.0f);
+    mLastPeak = 0.0f;
 }
 
 void FluidNode::process(const ProcessArgs& args) {
@@ -578,13 +592,11 @@ void FluidNode::process(const ProcessArgs& args) {
 
     fluid_synth_write_float(s, args.numFrames, outL, 0, 1, outR, 0, 1);
 
-    const float level = mParams[kLevel];
-    if (level != 1.0f) {
-        for (int i = 0; i < args.numFrames; ++i) outL[i] *= level;
-        if (out.width > 1) {
-            for (int i = 0; i < args.numFrames; ++i) outR[i] *= level;
-        }
-    }
+    // Before the level, so the gate can see FluidSynth's reverb and chorus
+    // decay rather than the zeros the level would write.
+    mLastPeak = blockPeak(outR, args.numFrames, blockPeak(outL, args.numFrames));
+
+    mGain.apply(outL, out.width > 1 ? outR : nullptr, args.numFrames, mParams[kLevel]);
 
     const auto ms = static_cast<float>((nowSec() - t0) * 1000.0);
     if (ms > mMaxRenderMs) mMaxRenderMs = ms;

@@ -9,6 +9,8 @@ import android.media.AudioManager
 import android.media.midi.MidiDevice
 import android.media.midi.MidiDeviceInfo
 import android.media.midi.MidiManager
+import android.hardware.usb.UsbDevice
+import android.hardware.usb.UsbManager
 import android.os.Build
 import android.os.Bundle
 import android.os.Handler
@@ -32,6 +34,11 @@ import android.widget.TextView
  * frame the UI renders is a frame competing with it.
  */
 class MainActivity : Activity() {
+
+    private companion object {
+        /** The USB permission answer. Explicit to this package; see requestUsbPermission. */
+        const val ACTION_USB_PERMISSION = "be.mdw.bagosynths.USB_PERMISSION"
+    }
 
     private lateinit var statusView: TextView
     private lateinit var midiView: TextView
@@ -66,6 +73,13 @@ class MainActivity : Activity() {
      */
     private val SPEAKER_FALLBACK_AFTER_MS = 6000L
     private var lastRestartAttempt = 0L
+
+    // Consecutive failed attempts to bring a DIRECT USB sink up, and whether we
+    // have given up and fallen back to ALSA so the instrument still sounds.
+    // Both are cleared by any routing the player asks for. See watchAudioDevice.
+    private var directRetries = 0
+    private var alsaFallbackOn = false
+    private val kDirectRetries = 3
     private var lastMidiAttempt = 0L
 
     /**
@@ -151,20 +165,55 @@ class MainActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-        // Before buildUi, so the button is built with the right face on it.
-        loadRecyclePrefs()
+        // Before buildUi, so the buttons are built with the right faces on them.
+        loadPrefs()
         setContentView(buildUi())
 
-        val filter = android.content.IntentFilter("be.mdw.bagosynths.RECYCLE")
-        filter.addAction("be.mdw.bagosynths.NOTE")
+        usbThread.start()
+        usbHandler = Handler(usbThread.looper)
+
+        val filter = android.content.IntentFilter("be.mdw.bagosynths.NOTE")
+        filter.addAction("be.mdw.bagosynths.LEVEL")
+        filter.addAction("be.mdw.bagosynths.DUMP")
+        filter.addAction("be.mdw.bagosynths.MASTER")
+        filter.addAction("be.mdw.bagosynths.SHARING")
+        filter.addAction("be.mdw.bagosynths.PARAM")
         filter.addAction("be.mdw.bagosynths.PANIC")
         filter.addAction("be.mdw.bagosynths.STRESS")
         filter.addAction("be.mdw.bagosynths.RESETPEAKS")
+        filter.addAction("be.mdw.bagosynths.PROFILE")
+        filter.addAction("be.mdw.bagosynths.INSTRUMENT")
+        filter.addAction("be.mdw.bagosynths.ROUTE")
         if (Build.VERSION.SDK_INT >= 33) {
-            registerReceiver(recycleReceiver, filter, Context.RECEIVER_EXPORTED)
+            registerReceiver(debugReceiver, filter, Context.RECEIVER_EXPORTED)
         } else {
             @Suppress("UnspecifiedRegisterReceiverFlag")
-            registerReceiver(recycleReceiver, filter)
+            registerReceiver(debugReceiver, filter)
+        }
+
+        // USB permission answers, and devices coming and going. Not exported:
+        // the permission broadcast is aimed at this package explicitly.
+        val usbFilter = android.content.IntentFilter(ACTION_USB_PERMISSION)
+        usbFilter.addAction(UsbManager.ACTION_USB_DEVICE_DETACHED)
+        usbFilter.addAction(UsbManager.ACTION_USB_DEVICE_ATTACHED)
+        if (Build.VERSION.SDK_INT >= 33) {
+            registerReceiver(usbReceiver, usbFilter, Context.RECEIVER_NOT_EXPORTED)
+        } else {
+            @Suppress("UnspecifiedRegisterReceiverFlag")
+            registerReceiver(usbReceiver, usbFilter)
+        }
+    }
+
+    /**
+     * Launched again by USB_DEVICE_ATTACHED (the manifest's filter, which is
+     * what lets "always open with Bag-O-Synths" make a replug permission-free).
+     * The instrument is singleTask, so this is the running one: re-route, never
+     * restart.
+     */
+    override fun onNewIntent(intent: android.content.Intent) {
+        super.onNewIntent(intent)
+        if (intent.action == UsbManager.ACTION_USB_DEVICE_ATTACHED && engineBroughtUp) {
+            applyRouting("device attached")
         }
     }
 
@@ -196,8 +245,20 @@ class MainActivity : Activity() {
             // audio HAL. Whichever direction opens first wins, and the other fails
             // with ErrorDisconnected. Opening capture first silently costs you the
             // instrument, which is the worst possible failure.
-            startEngine()
-            openMidi()
+            //
+            // The ALSA path starts synchronously, as it always has. A direct-USB
+            // start is asynchronous -- it may have to wait for the kernel to let
+            // go of the interface -- so the graph is built up front for the
+            // instrument loaders below, and routing finishes on its own thread.
+            NativeBridge.nativeSetMasterDb(masterDb)
+            if (effectiveMode(Use.AUDIO) == IoMode.ALSA &&
+                effectiveMode(Use.MIDI) == IoMode.ALSA) {
+                startEngine()
+                openMidi()
+            } else {
+                NativeBridge.nativePrepareGraph()
+                applyRouting("start")
+            }
             // NOT enableInputIfPermitted() here any more -- see that function.
             loadFirstInstrument()
             startSurge()
@@ -207,11 +268,12 @@ class MainActivity : Activity() {
             // that names an instrument should win over the default, not race it.
             restorePatch()
             engineBroughtUp = true
-        } else if (!NativeBridge.nativeMidiOpen()) {
+        } else if (!NativeBridge.nativeMidiOpen() && !routingBusy) {
             // It kept playing while we were away. The one thing worth checking is
             // MIDI, because the port can be lost to a cable event without the
             // audio stream noticing.
-            openMidi()
+            if (effectiveMode(Use.MIDI).direct) applyRouting("midi lost")
+            else openMidi()
         }
 
         // The nodes hold the live values either way, so the panels can show what
@@ -340,7 +402,8 @@ class MainActivity : Activity() {
     }
 
     override fun onDestroy() {
-        runCatching { unregisterReceiver(recycleReceiver) }
+        runCatching { unregisterReceiver(debugReceiver) }
+        runCatching { unregisterReceiver(usbReceiver) }
         super.onDestroy()
         // Unconditionally, and BEFORE the isFinishing guard: both runnables hold
         // a reference to this activity, and one that outlived it would keep the
@@ -358,6 +421,10 @@ class MainActivity : Activity() {
         midiDevice?.close()
         midiDevice = null
         NativeBridge.nativeStop()
+        // Give every direct-USB interface back to the kernel on the way out, or
+        // the device would stay invisible to Android until it was replugged.
+        closeAllSessions()
+        usbThread.quitSafely()
         EngineService.stop(this)
         engineBroughtUp = false
     }
@@ -440,6 +507,7 @@ class MainActivity : Activity() {
         val soundfont = NativeBridge.nativeGetFluidParam(Fluid.LEVEL) > 0.01f
         val on = listOf(piano, organ, synth, fm, texture, soundfont)
         part = when {
+            on.none { it } -> Part.None
             on.count { it } != 1 -> Part.All
             piano -> Part.Piano
             organ -> Part.Organ
@@ -453,6 +521,9 @@ class MainActivity : Activity() {
             Part.Piano to piano, Part.Organ to organ, Part.Synth to synth,
             Part.FM to fm, Part.Texture to texture, Part.SoundFont to soundfont,
             Part.All to (on.count { it } > 1),
+            // NONE lights when nothing is sounding, which is the one case where
+            // a lit tab means the absence of sound rather than its presence.
+            Part.None to on.none { it },
         )
         partTabs.forEach { (p, button) ->
             val lit = audible[p] == true
@@ -501,6 +572,15 @@ class MainActivity : Activity() {
                     plaitsPanel.setPart(Part.All)
                     fluidPanel.setPart(Part.All)
                 }
+                // "Add NONE to the mix" is not a thing, so a long-press does
+                // what a tap does rather than quietly nothing.
+                Part.None -> {
+                    organPanel.setPart(Part.None)
+                    surgePanel.setPart(Part.None)
+                    dexedPanel.setPart(Part.None)
+                    plaitsPanel.setPart(Part.None)
+                    fluidPanel.setPart(Part.None)
+                }
             }
         }
 
@@ -529,6 +609,22 @@ class MainActivity : Activity() {
         partPanels.forEach { (p, view) ->
             if (target == Part.All || p == target) view.visibility = View.VISIBLE
         }
+
+        // The mix faders belong to ALL and to nothing else. Soloed, a part's
+        // level is not a setting: it is 1 because it is the part that is
+        // playing. Leaving the fader there let a drag put the soloed part at
+        // half, or at zero, with the tab still saying it was the one sounding.
+        //
+        // And it was worse than merely redundant: the piano and organ faders
+        // live on a SHARED panel, so PIANO and ORGAN showed two mix faders
+        // while every other solo showed one, which is the arbitrariness
+        // Michiel reported rather than any deliberate rule.
+        val mixing = target == Part.All
+        organPanel.setMixVisible(mixing)
+        surgePanel.setMixVisible(mixing)
+        dexedPanel.setMixVisible(mixing)
+        plaitsPanel.setMixVisible(mixing)
+        fluidPanel.setMixVisible(mixing)
     }
 
     /** One tab. Tap to show and solo; long-press to add to the mix. */
@@ -633,18 +729,79 @@ class MainActivity : Activity() {
      * move, and the sound is coming out of a speaker nobody on a stage can hear.
      */
     private fun watchAudioDevice() {
-        // A recycle deliberately leaves the device closed for several seconds.
-        // Without this guard the watchdog sees "not running", decides the piano
-        // has been lost, and reopens after two -- cutting the hold short and
-        // quietly defeating the one thing that prevents the dropout.
-        if (recycling) return
+        // A routing change deliberately leaves the output closed for seconds --
+        // it waits for the kernel to release the interface. Without this guard
+        // the watchdog would see "not running" and reopen the ALSA stream
+        // underneath it, which is precisely the thing the wait exists to avoid.
+        if (routingBusy) return
 
         val stats = NativeBridge.stats()
+
+        // --- direct USB -----------------------------------------------------
+        if (effectiveMode(Use.AUDIO).direct) {
+            lastChosenOutputId = NativeBridge.DEVICE_USB_DIRECT
+            val now = android.os.SystemClock.uptimeMillis()
+            val midiOk = !effectiveMode(Use.MIDI).direct || NativeBridge.nativeMidiOpen()
+            if (stats.running && stats.usbActive && midiOk) {
+                deviceLostSince = 0L
+                directRetries = 0
+                alsaFallbackOn = false
+                return
+            }
+            // The sink stopped on its own -- the device went away, or something
+            // reconfigured the interface under it. Rebuild it, rate-limited like
+            // the ALSA path, so a device that is really gone is not hammered.
+            if (deviceLostSince == 0L) { deviceLostSince = now; return }
+            if (now - deviceLostSince < 2000L || now - lastRestartAttempt < 2000L) return
+
+            // A retry is for something TRANSIENT -- a jogged cable, an
+            // interface the kernel has not let go of yet. It is not a way to
+            // keep asking a question that has already been answered.
+            //
+            // Michiel's report of a "connect/disconnect loop" was exactly this:
+            // the clock request failed with EBUSY, which it was always going to
+            // do, and the watchdog re-routed every two seconds for as long as
+            // the app was open. Each pass tore the MIDI down and built it back,
+            // which is why notes went missing while it spun.
+            //
+            // So the retries are counted. After kDirectRetries the mode is left
+            // exactly as the player chose it -- their setting is not ours to
+            // change behind their back -- but the ALSA engine is started, so
+            // the instrument MAKES SOUND while the reason sits on the screen.
+            // Silence with a correct setting is worse than sound with a
+            // complaint, on a stage most of all.
+            if (directRetries >= kDirectRetries) {
+                if (!alsaFallbackOn) {
+                    alsaFallbackOn = true
+                    android.util.Log.e("bos-ui",
+                        "direct USB failed $directRetries times -- falling back to ALSA. " +
+                        "Last reason: $routingStatus")
+                    status("direct USB failed: $routingStatus -- playing through ALSA")
+                    usbHandler.post { runCatching { startEngine() } }
+                }
+                return
+            }
+            lastRestartAttempt = now
+            directRetries += 1
+            android.util.Log.i("bos-ui",
+                "direct USB not running -- re-routing (attempt $directRetries)")
+            applyRouting("usb sink stopped", fresh = false)
+            return
+        }
+        // Audio is ALSA but MIDI is direct: the MIDI reader can stop on its own
+        // (the device went away), and only re-routing brings it back.
+        if (effectiveMode(Use.MIDI).direct && !NativeBridge.nativeMidiOpen()) {
+            val now = android.os.SystemClock.uptimeMillis()
+            if (now - lastMidiAttempt >= 2000L) {
+                lastMidiAttempt = now
+                applyRouting("usb midi lost", fresh = false)
+            }
+            return
+        }
+
         val output = findOutputDeviceId()
         lastChosenOutputId = output
         val haveOutput = output != NativeBridge.DEVICE_UNSPECIFIED
-
-        tickRecycle()
 
         val healthy = stats.running && haveOutput && stats.deviceId == output
         if (healthy) {
@@ -734,236 +891,687 @@ class MainActivity : Activity() {
 
     // ------------------------------------------------------------------ audio
 
-    // ---------------------------------------------------------------- recycle
+    // ---------------------------------------------------------------- routing
     //
-    // The USB output halts after 34-42 M frames (see USB-AUDIO-HALT.md). The
-    // only thing that brings it back short of a replug is closing the stream and
-    // leaving the device ALONE for long enough that it reaches standby, then
-    // reopening. A close followed immediately by an open does not do it, because
-    // AudioFlinger keeps the HAL stream open through its standby delay and the
-    // USB substream is therefore never torn down.
+    // THE RECYCLE STRATEGY IS GONE (2026-09-22). It closed the stream every ten
+    // minutes and held four seconds of silence, because that was the only thing
+    // that kept the CP-88's USB audio from halting on Android's path. The
+    // direct-USB modes below reach the device without Android's audio stack,
+    // and Michiel's call was to remove the workaround rather than keep two
+    // answers to one problem. The history is in HANDOFF and LOG.md.
     //
-    // `holdMs` is the silence between close and open. Proven at 4000 ms on the
-    // AudioTrack path; this is the hook that establishes the minimum on the path
-    // the instrument actually uses (Oboe, EXCLUSIVE, MMAP).
+    // For audio out and for MIDI in, separately, one of three modes (IoMode):
+    // ALSA, USB interface, USB device. The mode is a property of the use; the
+    // consistency rule (ModeRule) is applied across the uses of one physical
+    // device, so the two can never disagree about who owns it.
     //
-    // Triggered for testing with:
-    //     adb shell am broadcast -a be.mdw.bagosynths.RECYCLE --el hold 1500
-    @Volatile private var recycling = false
+    // Every name shown is the ALSA name -- the card name and "card MIDI n" --
+    // whatever the mode, computed by the rule snd-usb-audio uses (engine/,
+    // tested against the CP-88's real names).
+
+    private var audioMode = IoMode.ALSA
+    private var midiMode = IoMode.ALSA
+    private var usbBufferMs = UsbBuffers.DEFAULT_MS
+
+    /** Master volume in dB, 0 = unity. Half-decibel steps on the fader. */
+    private var masterDb = 0f
+    private lateinit var masterLabel: TextView
+    private lateinit var masterBar: android.widget.SeekBar
+    private val MASTER_STEPS =
+        ((NativeBridge.MASTER_MAX_DB - NativeBridge.MASTER_MIN_DB) * 2).toInt()
+    private fun dbToProgress(db: Float) = ((db - NativeBridge.MASTER_MIN_DB) * 2).toInt()
+    private fun progressToDb(p: Int) = NativeBridge.MASTER_MIN_DB + p / 2f
 
     /**
-     * The feature as a whole. On by default, but it only ARMS when the output is
-     * actually the CP-88 — a Scarlett or the tablet's own speaker has no such
-     * fault and must not be interrupted every ten minutes for nothing.
+     * Routing runs here, never on the main thread: entering a direct mode can
+     * mean waiting seconds for the kernel -- and the DSP behind it -- to let go
+     * of an interface, and that wait must not freeze the UI.
      */
-    private var recycleEnabled = true
-    private var recycleIntervalMs = 10 * 60_000L
-    private var recycleHoldMs = 4_000L
+    private val usbThread = android.os.HandlerThread("usb-routing")
+    private lateinit var usbHandler: Handler
+    @Volatile private var routingBusy = false
+    @Volatile private var routingPending = false
+    @Volatile private var routingStatus = ""
 
-    /** uptimeMillis of the next automatic recycle, or 0 when disarmed. */
-    private var nextRecycleAt = 0L
+    /** Open USB sessions by device path. Touched on the usb thread only. */
+    private val sessions = HashMap<String, UsbSession>()
+    /** Port names of open sessions, for the main thread's MIDI list. */
+    @Volatile private var sessionPortNames: Map<String, List<String>> = emptyMap()
+    /** The device a direct audio stream is running on, if any. */
+    @Volatile private var directAudioOn: String? = null
+    /**
+     * The USB device an ALSA stream was last opened on. If a direct mode is
+     * entered on that device, the DSP session there may still be winding down,
+     * and the release has to be waited for rather than assumed.
+     */
+    @Volatile private var alsaAudioOn: String? = null
+    /** Devices whose USB permission was refused: ALSA until the user chooses again. */
+    private val deniedDevices = java.util.Collections.synchronizedSet(HashSet<String>())
+    @Volatile private var permissionPendingFor: String? = null
 
-    private fun loadRecyclePrefs() {
+    private fun usbManager() = getSystemService(Context.USB_SERVICE) as UsbManager
+
+    private fun loadPrefs() {
         val p = prefs()
         chosenOutputName = p.getString("chosenOutputName", null)
         chosenMidiName = p.getString("chosenMidiName", null)
-        recycleEnabled = p.getBoolean("recycleEnabled", true)
-        recycleIntervalMs = p.getLong("recycleIntervalMs", 10 * 60_000L)
-        recycleHoldMs = p.getLong("recycleHoldMs", 4_000L)
+        audioMode = IoMode.parse(p.getString("audioMode", null))
+        midiMode = IoMode.parse(p.getString("midiMode", null))
+        usbBufferMs = p.getInt("usbBufferMs", UsbBuffers.DEFAULT_MS)
+            .takeIf { it in UsbBuffers.choicesMs } ?: UsbBuffers.DEFAULT_MS
+        masterDb = p.getFloat("masterDb", 0f)
+            .coerceIn(NativeBridge.MASTER_MIN_DB, NativeBridge.MASTER_MAX_DB)
     }
 
-    private fun saveRecyclePrefs() {
+    private fun saveModePrefs() {
         prefs().edit()
-            .putBoolean("recycleEnabled", recycleEnabled)
-            .putLong("recycleIntervalMs", recycleIntervalMs)
-            .putLong("recycleHoldMs", recycleHoldMs)
+            .putString("audioMode", audioMode.name)
+            .putString("midiMode", midiMode.name)
+            .putInt("usbBufferMs", usbBufferMs)
             .apply()
     }
 
-    /** True when the stream is really on the piano, which is the only case that needs this. */
-    private fun outputIsCp88(): Boolean {
-        // Deliberately cp88DeviceId and not the chosen output: with a Scarlett
-        // attached the piano is still present and still has an id, but we are
-        // not playing through it and it has no fault to work around.
-        return cp88DeviceId != NativeBridge.DEVICE_UNSPECIFIED &&
-            NativeBridge.stats().deviceId == cp88DeviceId
+    // --------------------------------------------------------------- choices
+
+    /** An audio output, by its ALSA card name. `usb` set when it is a USB device. */
+    class OutputChoice(val name: String, val alsa: AudioDeviceInfo?, val usb: UsbDevice?)
+
+    /** A MIDI input port, by its ALSA port name ("CP88/CP73 MIDI 1"). */
+    class MidiChoice(val name: String, val card: String, val port: Int,
+                     val info: MidiDeviceInfo?, val usb: UsbDevice?)
+
+    private fun isUsbType(d: AudioDeviceInfo) =
+        d.type == AudioDeviceInfo.TYPE_USB_DEVICE ||
+            d.type == AudioDeviceInfo.TYPE_USB_HEADSET ||
+            d.type == AudioDeviceInfo.TYPE_USB_ACCESSORY
+
+    /** The UsbDevice behind an AAudio device, matched by product name. */
+    private fun usbFor(d: AudioDeviceInfo, usbDevices: Collection<UsbDevice>): UsbDevice? {
+        val pn = d.productName?.toString().orEmpty()
+        return usbDevices.firstOrNull { u ->
+            UsbSession.hasAudioOut(u) && u.productName?.trim()?.let { it.isNotEmpty() && pn.contains(it) } == true
+        }
     }
 
     /**
-     * Drives the countdown. Called from the watchdog, so it runs both while the
-     * activity is in front and while it is away — a set does not stop because
-     * the screen did.
+     * Every output, in the order the button cycles: what AudioManager lists
+     * (USB devices and the tablet's own speaker), plus USB devices this process
+     * owns whole -- they have no ALSA card while it does, so AudioManager no
+     * longer lists them, but they are still the instrument's output.
      */
-    private fun tickRecycle() {
-        if (!recycleEnabled || !outputIsCp88()) {
-            nextRecycleAt = 0L
-            return
+    private fun outputChoices(): List<OutputChoice> {
+        val am = getSystemService(Context.AUDIO_SERVICE) as AudioManager
+        val usbDevices = usbManager().deviceList.values
+        val out = LinkedHashMap<String, OutputChoice>()
+        for (d in am.getDevices(AudioManager.GET_DEVICES_OUTPUTS)) {
+            val usbType = isUsbType(d)
+            if (!usbType && d.type != AudioDeviceInfo.TYPE_BUILTIN_SPEAKER) continue
+            val usb = if (usbType) usbFor(d, usbDevices) else null
+            val name = usb?.let { UsbSession.alsaCardName(it) } ?: d.productName?.toString().orEmpty()
+            if (name !in out) out[name] = OutputChoice(name, d, usb)
         }
-        val now = android.os.SystemClock.uptimeMillis()
-        if (nextRecycleAt == 0L) {
-            nextRecycleAt = now + recycleIntervalMs
-            return
+        for (u in usbDevices) {
+            if (!UsbSession.hasAudioOut(u)) continue
+            val name = UsbSession.alsaCardName(u)
+            if (name !in out) out[name] = OutputChoice(name, null, u)
         }
-        if (now >= nextRecycleAt) recycleAudio(recycleHoldMs)
-    }
-
-    private fun recycleSecondsLeft(): Long {
-        if (nextRecycleAt == 0L) return -1
-        val left = nextRecycleAt - android.os.SystemClock.uptimeMillis()
-        return if (left < 0) 0 else left / 1000
-    }
-
-    private fun recycleAudio(holdMs: Long) {
-        if (recycling) {
-            android.util.Log.i("bos-ui", "recycle: already in flight, ignoring")
-            return
-        }
-        recycling = true
-        // Push the countdown out immediately, so a manual recycle at a
-        // convenient moment genuinely buys a full interval rather than leaving
-        // an automatic one to land thirty seconds into the next number.
-        nextRecycleAt = android.os.SystemClock.uptimeMillis() + recycleIntervalMs
-        val device = findOutputDeviceId()
-        val bursts = bufferBursts
-        android.util.Log.i("bos-ui", "recycle: closing, holding ${holdMs} ms, device $device")
-        Thread {
-            NativeBridge.nativeStop()
-            if (holdMs > 0) {
-                try { Thread.sleep(holdMs) } catch (_: InterruptedException) {}
-            }
-            val ok = NativeBridge.nativeStart(device, bursts)
-            android.util.Log.i("bos-ui", "recycle: reopened after ${holdMs} ms -> $ok")
-            handler.post {
-                recycling = false
-                nextRecycleAt = android.os.SystemClock.uptimeMillis() + recycleIntervalMs
-                NativeBridge.nativeResetPeaks()
-            }
-        }.start()
+        return out.values.toList()
     }
 
     /**
-     * Debug trigger for [recycleAudio], so the hold can be bracketed from a
-     * script rather than by tapping a button and guessing at the timing. It is
-     * registered for the life of the process, not just while resumed, because
-     * the engine outlives the activity.
+     * Every MIDI input port, by ALSA name. MidiManager's USB devices are named
+     * from their UsbDevice by the snd-usb-audio rule; ports of devices this
+     * process owns come from the open session, which read the jack strings.
      */
-    private val recycleReceiver = object : android.content.BroadcastReceiver() {
-        override fun onReceive(context: Context?, intent: android.content.Intent?) {
-            when (intent?.action) {
-                // A note, so that an unattended soak can make the rig do WORK
-                // rather than push silence. The first silent soak ran 83 M
-                // frames without the fault, against a worst case of 42 M with
-                // signal, which makes "does the fault need a working engine?"
-                // the question to answer before anything else is measured.
-                "be.mdw.bagosynths.NOTE" -> NativeBridge.nativeTestNote(
-                    intent.getIntExtra("note", 48),
-                    intent.getIntExtra("vel", 90))
-                // Driven by name rather than by tapping a coordinate. The soak
-                // and stress scripts used to tap fixed screen positions, which
-                // went stale silently three times -- the script still runs, the
-                // tap lands on nothing, and the run is quietly worthless. There
-                // is no repairing that by correcting the numbers again, and
-                // uiautomator cannot help either: this screen never reaches the
-                // idle state its dump requires, because the meters refresh four
-                // times a second.
-                "be.mdw.bagosynths.PANIC" -> NativeBridge.nativePanic()
-                "be.mdw.bagosynths.STRESS" -> NativeBridge.nativeStressChord(
-                    intent.getIntExtra("count", 30))
-                "be.mdw.bagosynths.RESETPEAKS" -> NativeBridge.nativeResetPeaks()
-                else -> {
-                    // Settings are scriptable as well as reachable by long-press,
-                    // so an unattended soak can set them without anyone tapping:
-                    //   adb shell am broadcast -a be.mdw.bagosynths.RECYCLE \
-                    //       --ez enabled true --el minutes 10 --el hold 4000 --ez fire false
-                    intent?.let { i ->
-                        if (i.hasExtra("enabled")) recycleEnabled = i.getBooleanExtra("enabled", true)
-                        if (i.hasExtra("minutes")) recycleIntervalMs = i.getLongExtra("minutes", 10) * 60_000L
-                        if (i.hasExtra("hold")) recycleHoldMs = i.getLongExtra("hold", 4000L)
-                        if (i.hasExtra("enabled") || i.hasExtra("minutes") || i.hasExtra("hold")) {
-                            nextRecycleAt = 0L
-                            saveRecyclePrefs()
-                            android.util.Log.i("bos-ui",
-                                "recycle settings: enabled=$recycleEnabled " +
-                                    "interval=${recycleIntervalMs}ms hold=${recycleHoldMs}ms")
-                        }
-                    }
-                    // `fire false` sets the parameters without recycling, which
-                    // is what a script wants before a soak starts.
-                    if (intent?.getBooleanExtra("fire", true) != false) {
-                        recycleAudio(recycleHoldMs)
-                    }
+    private fun midiChoices(): List<MidiChoice> {
+        val out = LinkedHashMap<String, MidiChoice>()
+        val manager = getSystemService(Context.MIDI_SERVICE) as? MidiManager
+        val devices: Array<MidiDeviceInfo> = when {
+            manager == null -> emptyArray()
+            Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU ->
+                manager.getDevicesForTransport(MidiManager.TRANSPORT_MIDI_BYTE_STREAM).toTypedArray()
+            else -> @Suppress("DEPRECATION") manager.devices
+        }
+        for (info in devices) {
+            if (info.outputPortCount <= 0) continue
+            @Suppress("DEPRECATION")
+            val usb = info.properties.getParcelable<UsbDevice>(MidiDeviceInfo.PROPERTY_USB_DEVICE)
+            val card = usb?.let { UsbSession.alsaCardName(it) } ?: info.midiName()
+            for (p in 0 until info.outputPortCount) {
+                val name = if (usb != null) {
+                    NativeBridge.nativeAlsaMidiPortName(card, JackNames.lookup(usb, p), p)
+                } else {
+                    info.ports.firstOrNull {
+                        it.type == MidiDeviceInfo.PortInfo.TYPE_OUTPUT && it.portNumber == p
+                    }?.name?.takeIf { it.isNotBlank() } ?: "$card ${p + 1}"
+                }
+                if (name !in out) out[name] = MidiChoice(name, card, p, info, usb)
+            }
+        }
+        for (u in usbManager().deviceList.values) {
+            if (!UsbSession.hasMidi(u)) continue
+            val card = UsbSession.alsaCardName(u)
+            val names = sessionPortNames[u.deviceName]
+                ?: listOf(NativeBridge.nativeAlsaMidiPortName(card, JackNames.lookup(u, 0), 0))
+            names.forEachIndexed { p, n -> if (n !in out) out[n] = MidiChoice(n, card, p, null, u) }
+        }
+        return out.values.toList()
+    }
+
+    /**
+     * The output in use. The user's choice wins; otherwise the interim order,
+     * hardcoded until the graph editor makes the output a property of the
+     * patch: an audio interface (Scarlett) -- where one is present it is the
+     * monitoring path and the piano is just a controller -- then the CP-88,
+     * then any other USB device. Null: the caller decides about the speaker.
+     */
+    private fun resolveAudio(): OutputChoice? {
+        val c = outputChoices()
+        chosenOutputName?.let { want -> c.firstOrNull { it.name == want }?.let { return it } }
+        fun named(vararg keys: String) = c.firstOrNull { ch ->
+            ch.usb != null && keys.any { ch.name.uppercase().contains(it) }
+        }
+        return named("SCARLETT", "FOCUSRITE") ?: named("CP88", "CP73", "YAMAHA")
+            ?: c.firstOrNull { it.usb != null }
+    }
+
+    private fun resolveMidi(): MidiChoice? {
+        val c = midiChoices()
+        chosenMidiName?.let { want -> c.firstOrNull { it.name == want }?.let { return it } }
+        return c.firstOrNull { ch ->
+            ch.port == 0 && listOf("CP88", "CP73", "YAMAHA").any { ch.card.uppercase().contains(it) }
+        } ?: c.firstOrNull()
+    }
+
+    private fun sameDevice(a: OutputChoice?, m: MidiChoice?): Boolean =
+        a?.usb != null && m?.usb != null && a.usb.deviceName == m.usb.deviceName
+
+    /**
+     * The modes in force: a use on something that is not a USB device is ALSA
+     * whatever is stored, a refused permission falls back to ALSA, and the rule
+     * is applied across uses of one device.
+     */
+    private fun effectiveModes(a: OutputChoice?, m: MidiChoice?): Pair<IoMode, IoMode> {
+        val am = if (a?.usb != null && a.usb.deviceName !in deniedDevices) audioMode else IoMode.ALSA
+        val mm = if (m?.usb != null && m.usb.deviceName !in deniedDevices) midiMode else IoMode.ALSA
+        return ModeRule.normalize(am, mm, sameDevice(a, m))
+    }
+
+    private fun effectiveMode(use: Use): IoMode {
+        val modes = effectiveModes(resolveAudio(), resolveMidi())
+        return if (use == Use.AUDIO) modes.first else modes.second
+    }
+
+    // --------------------------------------------------------------- routing
+
+    /**
+     * Re-routes both uses to what the settings now say. Serialised; never on main.
+     *
+     * `fresh` says this is a routing the PLAYER asked for -- a mode change, a
+     * device change, a replug -- rather than the watchdog retrying. A fresh
+     * routing clears the give-up state, so a setting that failed three times is
+     * tried again as soon as the player touches it.
+     */
+    private fun applyRouting(reason: String, fresh: Boolean = true) {
+        if (!::usbHandler.isInitialized) return
+        if (fresh) { directRetries = 0; alsaFallbackOn = false }
+        if (routingBusy) { routingPending = true; return }
+        routingBusy = true
+        usbHandler.post {
+            try {
+                route(reason)
+            } catch (e: Exception) {
+                android.util.Log.e("bos-ui", "routing failed", e)
+                status("routing failed: ${e.message}")
+            } finally {
+                routingBusy = false
+                if (routingPending) {
+                    routingPending = false
+                    // Not fresh: this is the tail of a routing already asked
+                    // for, and whoever asked has already cleared the state.
+                    handler.post { applyRouting("pending change", fresh = false) }
                 }
             }
         }
     }
 
+    private fun status(s: String) {
+        routingStatus = s
+        if (s.isNotEmpty()) android.util.Log.i("bos-ui", "routing: $s")
+    }
+
+    /**
+     * The switch itself. On the usb thread.
+     *
+     * The ORDER is the point, and the step that costs time is deliberate:
+     *
+     *   1. permission first, so nothing is torn down for a mode that cannot be
+     *      entered;
+     *   2. stop both sinks;
+     *   3. give back interfaces no longer wanted -- to the kernel, explicitly --
+     *      and wait until Android can see the device again;
+     *   4. before claiming a streaming interface, WAIT until the kernel and the
+     *      DSP behind it have really let go of it. Closing the AAudio stream
+     *      does not do that: AudioFlinger holds the HAL stream through its
+     *      standby delay, and the offloaded session owns the transfer ring
+     *      until it is torn down. Claiming earlier would be tearing the
+     *      interface out from under a live DSP session;
+     *   5. start audio, then MIDI.
+     */
+    private fun route(reason: String) {
+        val um = usbManager()
+        val audio = resolveAudio()
+        val midi = resolveMidi()
+        val (aMode, mMode) = effectiveModes(audio, midi)
+        android.util.Log.i("bos-ui", "route ($reason): audio=${audio?.name ?: "speaker"} " +
+            "${aMode.label}, midi=${midi?.name ?: "none"} ${mMode.label}, buffer=$usbBufferMs ms")
+
+        // 1. Permission.
+        val direct = listOfNotNull(
+            audio?.usb?.takeIf { aMode.direct }, midi?.usb?.takeIf { mMode.direct }
+        ).distinctBy { it.deviceName }
+        for (d in direct) {
+            if (!um.hasPermission(d)) {
+                requestUsbPermission(d)
+                status("waiting for USB permission for ${UsbSession.alsaCardName(d)}")
+                return
+            }
+        }
+
+        // 2. Stop both sinks.
+        val alsaWasOn = alsaAudioOn
+        stopAudioSinks()
+        NativeBridge.nativeCloseMidi()
+        runOnUiThread { midiDevice?.close(); midiDevice = null }
+
+        // Sessions for what will be direct, and the interfaces each needs.
+        for (d in direct) {
+            val s = sessions.getOrPut(d.deviceName) { UsbSession(um, d) }
+            s.open()?.let { status("USB: $it"); return }
+        }
+        val want = HashMap<String, MutableSet<Int>>()
+        fun need(d: UsbDevice, mode: IoMode, own: (NativeBridge.UsbPlan) -> List<Int>) {
+            val p = sessions[d.deviceName]?.plan ?: return
+            want.getOrPut(d.deviceName) { mutableSetOf() } +=
+                if (mode == IoMode.USB_DEVICE) p.allInterfaces else own(p)
+        }
+        if (aMode.direct) audio?.usb?.let { need(it, aMode) { p -> p.audioInterfaces } }
+        if (mMode.direct) midi?.usb?.let { need(it, mMode) { p -> p.midiInterfaces } }
+
+        // 3. Give back what is no longer wanted.
+        for (key in sessions.keys.toList()) {
+            val s = sessions.getValue(key)
+            val keep = want[key].orEmpty()
+            val drop = s.claimedInterfaces() - keep
+            if (drop.isNotEmpty()) s.release(drop)
+            if (keep.isEmpty()) {
+                handBackToAndroid(s)
+                s.close()
+                sessions.remove(key)
+            }
+        }
+
+        // 4. Claim -- after the release has really happened.
+        for ((key, ids) in want) {
+            val s = sessions[key] ?: continue
+            val plan = s.plan ?: continue
+            // Only the interfaces that CARRY SAMPLES are waited on. AudioControl
+            // is claimed too on UAC2 (the clock lives there), but it never
+            // streams, so waiting for it to go idle would wait for nothing.
+            val streaming = (ids - s.claimedInterfaces()).intersect(plan.streamingInterfaces.toSet())
+            if (streaming.isNotEmpty()) {
+                InterfaceRelease.awaitIdle(s.device, plan.configValue, streaming,
+                    assumeBusy = alsaWasOn == s.device.deviceName) { secs, what ->
+                    status("%s (%.1f s)".format(what, secs))
+                }
+            }
+            s.claim(ids)?.let { status("USB: $it"); return }
+            for (i in streaming) {
+                android.util.Log.i("bos-ui", "claimed; device reports interface $i at alt ${s.altSetting(i)}")
+            }
+        }
+        sessionPortNames = sessions.mapValues { it.value.midiPortNames }
+
+        // 5. Audio, then MIDI.
+        if (aMode.direct && audio?.usb != null) {
+            val s = sessions.getValue(audio.usb.deviceName)
+            val err = NativeBridge.nativeStartUsbAudio(s.fd, s.raw, usbBufferMs, 0)
+            if (err == null) {
+                directAudioOn = audio.usb.deviceName
+                alsaAudioOn = null
+                audioDeviceLabel = "${audio.name}  [${aMode.label}, $usbBufferMs ms]"
+            } else {
+                status("direct audio failed: $err")
+            }
+        } else {
+            startEngine()
+        }
+
+        if (mMode.direct && midi?.usb != null) {
+            val s = sessions.getValue(midi.usb.deviceName)
+            val err = NativeBridge.nativeStartUsbMidi(s.fd, s.raw, true, midi.port)
+            runOnUiThread {
+                midiView.text = if (err == null) "MIDI: ${midi.name}  [${mMode.label}]"
+                                else "MIDI: $err"
+            }
+        } else {
+            runOnUiThread { lastMidiAttempt = 0L; openMidi() }
+        }
+        if (routingStatus.startsWith("waiting") || routingStatus.startsWith("routing")) status("")
+    }
+
+    /** Stops whichever audio sink is running, returning streaming interfaces to alt 0. */
+    private fun stopAudioSinks() {
+        val on = directAudioOn
+        val s = on?.let { sessions[it] }
+        if (s != null && s.isOpen) NativeBridge.nativeStopUsbAudio(s.fd, s.raw)
+        else NativeBridge.nativeStop()
+        directAudioOn = null
+    }
+
+    /**
+     * After every interface has been given back: wait for Android to see the
+     * device again, and reset it if it does not. Reconnecting interface by
+     * interface normally suffices; a USB reset is the fallback, because it
+     * unbinds and rebinds every driver on the device.
+     */
+    private fun handBackToAndroid(s: UsbSession) {
+        fun seen(): Boolean {
+            val d = s.device
+            val am = getSystemService(Context.AUDIO_SERVICE) as AudioManager
+            val audio = !UsbSession.hasAudioOut(d) || am.getDevices(AudioManager.GET_DEVICES_OUTPUTS)
+                .any { isUsbType(it) && usbFor(it, listOf(d)) != null }
+            val midi = !UsbSession.hasMidi(d) || midiChoices().any { it.info != null && it.usb?.deviceName == d.deviceName }
+            return audio && midi
+        }
+        for (attempt in 0 until 2) {
+            val t0 = android.os.SystemClock.uptimeMillis()
+            while (android.os.SystemClock.uptimeMillis() - t0 < 4000L) {
+                if (seen()) {
+                    android.util.Log.i("bos-ui", "\"${s.cardName}\" is back with Android")
+                    return
+                }
+                status("handing \"${s.cardName}\" back to Android")
+                android.os.SystemClock.sleep(200)
+            }
+            if (attempt == 0) {
+                android.util.Log.i("bos-ui", "\"${s.cardName}\" did not reappear -- USB reset")
+                s.reset()
+            }
+        }
+        android.util.Log.e("bos-ui", "\"${s.cardName}\" still not visible to Android after a reset")
+    }
+
+    private fun requestUsbPermission(d: UsbDevice) {
+        if (permissionPendingFor == d.deviceName) return
+        permissionPendingFor = d.deviceName
+        // FLAG_MUTABLE is required: the system writes EXTRA_DEVICE and
+        // EXTRA_PERMISSION_GRANTED into this intent before broadcasting it, and
+        // an immutable PendingIntent silently never arrives.
+        val flags = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S)
+            android.app.PendingIntent.FLAG_MUTABLE else 0
+        val pi = android.app.PendingIntent.getBroadcast(
+            this, 0, android.content.Intent(ACTION_USB_PERMISSION).setPackage(packageName), flags)
+        usbManager().requestPermission(d, pi)
+    }
+
+    private val usbReceiver = object : android.content.BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: android.content.Intent?) {
+            @Suppress("DEPRECATION")
+            val d = intent?.getParcelableExtra<UsbDevice>(UsbManager.EXTRA_DEVICE)
+            when (intent?.action) {
+                ACTION_USB_PERMISSION -> {
+                    permissionPendingFor = null
+                    if (intent.getBooleanExtra(UsbManager.EXTRA_PERMISSION_GRANTED, false)) {
+                        applyRouting("permission granted")
+                    } else {
+                        // Refused: that device plays through ALSA until the user
+                        // chooses a mode again, rather than asking in a loop.
+                        d?.let { deniedDevices += it.deviceName }
+                        status("USB permission refused -- ALSA in use")
+                        applyRouting("permission refused")
+                    }
+                }
+                UsbManager.ACTION_USB_DEVICE_DETACHED -> {
+                    // The connection is dead with the device. Drop the session;
+                    // the watchdog sees the sink stop and re-routes.
+                    if (d != null && ::usbHandler.isInitialized) {
+                        usbHandler.post {
+                            sessions.remove(d.deviceName)?.let { runCatching { it.close() } }
+                            if (directAudioOn == d.deviceName) directAudioOn = null
+                            sessionPortNames = sessions.mapValues { it.value.midiPortNames }
+                        }
+                    }
+                }
+                UsbManager.ACTION_USB_DEVICE_ATTACHED -> if (engineBroughtUp) applyRouting("device attached")
+            }
+        }
+    }
+
+    /** Every direct interface back to the kernel. On the way out of the app. */
+    private fun closeAllSessions() {
+        for (s in sessions.values) runCatching { s.close() }
+        sessions.clear()
+    }
+
+    /**
+     * Mode and buffer, for one use. Long-press on the Audio or MIDI button.
+     * A list of choices rather than a form: it has to be usable in a hurry.
+     */
+    private fun showModeDialog(use: Use) {
+        val audio = resolveAudio()
+        val midi = resolveMidi()
+        val isUsb = if (use == Use.AUDIO) audio?.usb != null else midi?.usb != null
+        val current = if (use == Use.AUDIO) audioMode else midiMode
+        val target = if (use == Use.AUDIO) audio?.name ?: "speaker" else midi?.name ?: "none"
+        val same = sameDevice(audio, midi)
+
+        val items = ArrayList<String>()
+        val actions = ArrayList<() -> Unit>()
+        for (m in IoMode.values()) {
+            val note = when {
+                m == IoMode.USB_INTERFACE && use == Use.AUDIO ->
+                    "  -- fragile: Android can still route system sounds here"
+                m == IoMode.USB_DEVICE && same -> "  -- owns the whole device: MIDI too"
+                m == IoMode.USB_DEVICE -> "  -- owns the whole device"
+                else -> ""
+            }
+            items += (if (m == current) "(o)  " else "( )  ") + m.label + note
+            actions += { setMode(use, m) }
+        }
+        if (use == Use.AUDIO) {
+            for (ms in UsbBuffers.choicesMs) {
+                items += (if (ms == usbBufferMs) "(o)  " else "( )  ") + "Direct USB buffer $ms ms" +
+                    if (ms == UsbBuffers.DEFAULT_MS) "  (default)" else ""
+                actions += {
+                    usbBufferMs = ms
+                    saveModePrefs()
+                    if (effectiveMode(Use.AUDIO).direct) applyRouting("buffer change")
+                }
+            }
+        }
+        android.app.AlertDialog.Builder(this)
+            .setTitle(if (isUsb) "${if (use == Use.AUDIO) "Audio" else "MIDI"}: $target"
+                      else "$target is not a USB device -- always ALSA")
+            .setItems(items.toTypedArray()) { _, which ->
+                actions[which]()
+                refreshDeviceButtons()
+            }
+            .setNegativeButton("Close", null)
+            .show()
+    }
+
+    private fun setMode(use: Use, to: IoMode) {
+        val same = sameDevice(resolveAudio(), resolveMidi())
+        val (a, m) = ModeRule.change(audioMode, midiMode, use, to, same)
+        audioMode = a
+        midiMode = m
+        deniedDevices.clear()
+        saveModePrefs()
+        android.util.Log.i("bos-ui", "mode: audio=${a.label} midi=${m.label} (same device: $same)")
+        applyRouting("mode change")
+    }
+
+    /**
+     * Debug triggers, scriptable so an unattended run needs no taps:
+     *   adb shell am broadcast -a be.mdw.bagosynths.NOTE --ei note 48 --ei vel 90
+     *   adb shell am broadcast -a be.mdw.bagosynths.ROUTE \
+     *       --es audio USB_DEVICE --es midi USB_DEVICE --ei buffer 8
+     * Registered for the life of the process, because the engine outlives the
+     * activity.
+     */
+    private val debugReceiver = object : android.content.BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: android.content.Intent?) {
+            when (intent?.action) {
+                // A note, so that an unattended soak can make the rig do WORK
+                // rather than push silence.
+                "be.mdw.bagosynths.NOTE" -> NativeBridge.nativeTestNote(
+                    intent.getIntExtra("note", 48),
+                    intent.getIntExtra("vel", 90))
+                // Driven by name rather than by tapping a coordinate: fixed
+                // screen positions went stale silently three times.
+                "be.mdw.bagosynths.PANIC" -> NativeBridge.nativePanic()
+                "be.mdw.bagosynths.STRESS" -> NativeBridge.nativeStressChord(
+                    intent.getIntExtra("count", 30))
+                "be.mdw.bagosynths.RESETPEAKS" -> NativeBridge.nativeResetPeaks()
+                // The sampler's level, so a test can make a measurable sound
+                // without tapping a fader: a restored patch may have left the
+                // piano quiet, and a microphone in a room with a PC fan needs
+                // signal it can actually hear.
+                //   adb shell am broadcast -a be.mdw.bagosynths.LEVEL --ef value 0.8
+                "be.mdw.bagosynths.LEVEL" ->
+                    NativeBridge.nativeSetSamplerLevel(intent.getFloatExtra("value", 0.8f))
+                // The whole graph, to the log: which node holds a level down is
+                // otherwise a question only a human with the screen can answer.
+                // EXCLUSIVE/MMAP or SHARED, scriptable. The long-press on the
+                // Buffer button does the same, but a tap coordinate read from a
+                // screenshot goes stale silently, and this has to be testable.
+                //   adb shell am broadcast -a be.mdw.bagosynths.SHARING --ez exclusive false
+                "be.mdw.bagosynths.SHARING" -> {
+                    wantExclusive = intent.getBooleanExtra("exclusive", true)
+                    NativeBridge.nativeSetExclusive(wantExclusive)
+                    if (!effectiveMode(Use.AUDIO).direct) {
+                        NativeBridge.nativeStop()
+                        NativeBridge.nativeStart(findOutputDeviceId(), bufferBursts)
+                        NativeBridge.nativeResetPeaks()
+                    }
+                    android.util.Log.i("bos-ui", "sharing: ${if (wantExclusive) "EXCLUSIVE" else "SHARED"}")
+                }
+                //   adb shell am broadcast -a be.mdw.bagosynths.MASTER --ef db -12
+                // The profile, including the per-engine held peaks. Scriptable
+                // because gain staging is measured by playing the SAME note on
+                // each engine in turn and comparing -- which is a loop, not a
+                // thing to do by hand.
+                //   adb shell am broadcast -a be.mdw.bagosynths.PROFILE
+                "be.mdw.bagosynths.PROFILE" -> NativeBridge.nativeLogProfile()
+                // Pick a sampled instrument by name, so gain staging can be
+                // compared across SFZ packs without tapping INSTRUMENT.
+                //   adb shell am broadcast -a be.mdw.bagosynths.INSTRUMENT --es name tight
+                "be.mdw.bagosynths.INSTRUMENT" -> {
+                    val want = intent.getStringExtra("name").orEmpty()
+                    val hit = library.firstOrNull {
+                        it.id.contains(want, true) || it.name.contains(want, true)
+                    }
+                    if (hit == null) {
+                        android.util.Log.i("bos-ui", "instruments: " +
+                            library.joinToString { "${it.id} (${it.name})" })
+                    } else {
+                        runOnUiThread { selectInstrument(hit) }
+                    }
+                }
+                "be.mdw.bagosynths.MASTER" ->
+                    runOnUiThread { setMasterDb(intent.getFloatExtra("db", 0f)) }
+                "be.mdw.bagosynths.DUMP" -> {
+                    for (n in 0 until NativeBridge.nativeNodeCount()) {
+                        val params = (0 until NativeBridge.nativeNodeParamCount(n)).joinToString(" ") { pi ->
+                            "${NativeBridge.nativeNodeParamName(n, pi)}=" +
+                                "%.3f".format(NativeBridge.nativeGetNodeParam(n, pi))
+                        }
+                        android.util.Log.i("bos-ui", "node $n ${NativeBridge.nativeNodeType(n)}: $params")
+                    }
+                }
+                // One parameter by name, for the same reason.
+                //   adb shell am broadcast -a be.mdw.bagosynths.PARAM                 //       --es node SfizzNode --es param level --ef value 0.9
+                "be.mdw.bagosynths.PARAM" -> {
+                    val wantNode = intent.getStringExtra("node").orEmpty()
+                    val wantParam = intent.getStringExtra("param").orEmpty()
+                    val value = intent.getFloatExtra("value", 1.0f)
+                    for (n in 0 until NativeBridge.nativeNodeCount()) {
+                        if (!NativeBridge.nativeNodeType(n).contains(wantNode, ignoreCase = true)) continue
+                        for (pi in 0 until NativeBridge.nativeNodeParamCount(n)) {
+                            if (!NativeBridge.nativeNodeParamName(n, pi).contains(wantParam, ignoreCase = true)) continue
+                            NativeBridge.nativeSetNodeParam(n, pi, value)
+                            android.util.Log.i("bos-ui",
+                                "set ${NativeBridge.nativeNodeType(n)}.${NativeBridge.nativeNodeParamName(n, pi)} = $value")
+                        }
+                    }
+                }
+                "be.mdw.bagosynths.ROUTE" -> {
+                    intent.getStringExtra("audio")?.let { setModeQuiet(Use.AUDIO, IoMode.parse(it)) }
+                    intent.getStringExtra("midi")?.let { setModeQuiet(Use.MIDI, IoMode.parse(it)) }
+                    if (intent.hasExtra("buffer")) {
+                        val ms = intent.getIntExtra("buffer", UsbBuffers.DEFAULT_MS)
+                        if (ms in UsbBuffers.choicesMs) usbBufferMs = ms
+                    }
+                    deniedDevices.clear()
+                    saveModePrefs()
+                    applyRouting("broadcast")
+                }
+            }
+        }
+    }
+
+    private fun setModeQuiet(use: Use, to: IoMode) {
+        val (a, m) = ModeRule.change(audioMode, midiMode, use, to, sameDevice(resolveAudio(), resolveMidi()))
+        audioMode = a
+        midiMode = m
+    }
+
+    /** The ALSA path. Records which USB device it is on, for the release wait. */
     private fun startEngine() {
         val deviceId = findOutputDeviceId()
         val ok = NativeBridge.nativeStart(deviceId, bufferBursts)
+        alsaAudioOn = if (ok) resolveAudio()?.usb?.deviceName else null
         if (!ok) {
-            statusView.text = "Failed to open audio stream.\n" +
-                "Is the CP-88 connected and powered on?"
+            runOnUiThread {
+                statusView.text = "Failed to open audio stream.\n" +
+                    "Is the CP-88 connected and powered on?"
+            }
         }
     }
 
     /**
-     * Find the CP-88 explicitly rather than letting AAudio auto-select. Auto
-     * select can land on the built-in speaker, which reports excellent latency
-     * and tells you nothing about the rig you actually play through.
-     */
-    /**
-     * The CP-88's own device id, whether or not it is the one being played
-     * through. Kept separate from the chosen output because the recycle
-     * workaround must arm for the piano and for nothing else.
-     */
-    private var cp88DeviceId = NativeBridge.DEVICE_UNSPECIFIED
-
-    /**
-     * The output the user picked with the Audio button, by PRODUCT NAME rather
+     * The output the user picked with the Audio button, by its ALSA NAME rather
      * than by id: ids are handed out per connection, so anything remembered by
      * id is wrong the moment a cable is pulled. Null means automatic.
      */
     private var chosenOutputName: String? = null
 
-    /** Same, for MIDI in. Deliberately independent of the audio choice. */
+    /** Same, for MIDI in: an ALSA port name. Deliberately independent of the audio choice. */
     private var chosenMidiName: String? = null
 
-    /** Everything that could be an output, in the order the button cycles. */
-    private fun outputCandidates(): List<AudioDeviceInfo> {
-        val am = getSystemService(Context.AUDIO_SERVICE) as AudioManager
-        return am.getDevices(AudioManager.GET_DEVICES_OUTPUTS).filter {
-            it.type == AudioDeviceInfo.TYPE_USB_DEVICE ||
-                it.type == AudioDeviceInfo.TYPE_USB_HEADSET ||
-                it.type == AudioDeviceInfo.TYPE_USB_ACCESSORY ||
-                it.type == AudioDeviceInfo.TYPE_BUILTIN_SPEAKER
-        }.distinctBy { it.productName?.toString().orEmpty() }
-    }
-
     /**
-     * Cycles: automatic, then each device present, then back to automatic. The
+     * Cycles: automatic, then each output present, then back to automatic. The
      * new device is opened at ITS OWN native rate, and since the graph is
-     * compiled against whatever rate the stream reports, the whole instrument
+     * compiled against whatever rate the sink reports, the whole instrument
      * reconfigures itself.
      */
     private fun cycleOutput() {
-        val names = listOf<String?>(null) + outputCandidates().map { it.productName.toString() }
+        val names = listOf<String?>(null) + outputChoices().map { it.name }
         val i = names.indexOf(chosenOutputName)
         chosenOutputName = names[(if (i < 0) 0 else i + 1) % names.size]
         prefs().edit().putString("chosenOutputName", chosenOutputName).apply()
         // Reopen right away rather than waiting for the watchdog, so the button
         // does something audible when it is pressed.
-        NativeBridge.nativeStop()
-        NativeBridge.nativeStart(findOutputDeviceId(), bufferBursts)
-        // The arming of the recycle depends on where we landed.
-        nextRecycleAt = 0L
-        refreshRecycleButton()
+        applyRouting("output change")
     }
 
     private fun shortName(n: String?): String {
         val s = n.orEmpty()
         return when {
             s.isEmpty() -> "auto"
-            s.contains("CP88") || s.contains("CP73") -> "CP-88"
+            s.contains("CP88") || s.contains("CP73") ->
+                if (s.contains("MIDI")) "CP-88 " + s.substringAfterLast(' ') else "CP-88"
             s.uppercase().contains("SCARLETT") -> "Scarlett"
             s.length > 14 -> s.takeLast(14)
             else -> s
@@ -971,60 +1579,25 @@ class MainActivity : Activity() {
     }
 
     /**
-     * Picks the output. The user's choice wins; otherwise an interim ordering,
-     * hardcoded on purpose until the graph editor makes the output a property
-     * of the patch:
-     *
-     *   1. an audio interface (Scarlett), because where one is present it is
-     *      the monitoring path and the piano is just a controller;
-     *   2. the CP-88;
-     *   3. any other USB audio device;
-     *   4. nothing, and the caller decides about the built-in speaker.
+     * The AAudio device id for the output in use, or DEVICE_UNSPECIFIED. Also
+     * sets the label and asks the engine for the device's own rate and format.
      */
     private fun findOutputDeviceId(): Int {
-        val am = getSystemService(Context.AUDIO_SERVICE) as AudioManager
-        val outputs = am.getDevices(AudioManager.GET_DEVICES_OUTPUTS)
-
-        val usb = outputs.filter {
-            it.type == AudioDeviceInfo.TYPE_USB_DEVICE ||
-                it.type == AudioDeviceInfo.TYPE_USB_HEADSET ||
-                it.type == AudioDeviceInfo.TYPE_USB_ACCESSORY
-        }
-
-        fun named(vararg keys: String) = usb.firstOrNull { d ->
-            val name = d.productName?.toString()?.uppercase().orEmpty()
-            keys.any { name.contains(it) }
-        }
-
-        val interfaceDev = named("SCARLETT", "FOCUSRITE")
-        val piano = named("CP88", "CP73", "YAMAHA")
-        cp88DeviceId = piano?.id ?: NativeBridge.DEVICE_UNSPECIFIED
-
-        // An explicit choice wins, resolved by name because the id changes with
-        // every reconnection. If the chosen device is not here, fall through to
-        // the automatic order rather than going silent.
-        chosenOutputName?.let { want ->
-            outputCandidates().firstOrNull { it.productName?.toString() == want }?.let { d ->
-                audioDeviceLabel = "${d.productName}  [chosen]"
-                NativeBridge.nativeSetPreferredRate(nativeRateOf(d))
-                NativeBridge.nativeSetPreferredFormat(nativeFormatOf(d))
-                return d.id
-            }
-        }
-
-        val chosen = interfaceDev ?: piano ?: usb.firstOrNull()
+        val choice = resolveAudio()
+        val d = choice?.alsa
         audioDeviceLabel = when {
-            interfaceDev != null && piano != null ->
-                "${interfaceDev.productName}  [interface, preferred over the CP-88]"
-            interfaceDev != null -> "${interfaceDev.productName}  [interface]"
-            piano != null -> "${piano.productName}  [CP-88]"
-            chosen != null -> "${chosen.productName}  [USB, unrecognised]"
-            else -> "built-in (NO USB DEVICE — piano not connected?)"
+            choice == null -> "built-in (NO USB DEVICE — piano not connected?)"
+            d == null -> "${choice.name}  [owned by this app -- no ALSA device]"
+            chosenOutputName != null -> "${choice.name}  [chosen, ALSA]"
+            choice.name.uppercase().let { it.contains("SCARLETT") || it.contains("FOCUSRITE") } ->
+                "${choice.name}  [interface, ALSA]"
+            choice.name.uppercase().let { it.contains("CP88") || it.contains("CP73") } ->
+                "${choice.name}  [CP-88, ALSA]"
+            else -> "${choice.name}  [USB, ALSA]"
         }
-
-        NativeBridge.nativeSetPreferredRate(nativeRateOf(chosen))
-        NativeBridge.nativeSetPreferredFormat(nativeFormatOf(chosen))
-        return chosen?.id ?: NativeBridge.DEVICE_UNSPECIFIED
+        NativeBridge.nativeSetPreferredRate(nativeRateOf(d))
+        NativeBridge.nativeSetPreferredFormat(nativeFormatOf(d))
+        return d?.id ?: NativeBridge.DEVICE_UNSPECIFIED
     }
 
     /**
@@ -1209,34 +1782,31 @@ class MainActivity : Activity() {
 
     // ------------------------------------------------------------------- MIDI
 
+    /**
+     * The ALSA path for MIDI in: MidiManager and AMidi, on the port resolveMidi()
+     * picked. The direct modes never come here -- route() opens those itself.
+     *
+     * MIDI IN IS CHOSEN INDEPENDENTLY OF THE AUDIO OUT. With a Scarlett carrying
+     * the sound and the CP-88 carrying the notes, the two are different devices
+     * on different cables, and tying them together -- as this did when both were
+     * the piano -- means changing one silently changes the other.
+     */
     private fun openMidi() {
         val manager = getSystemService(Context.MIDI_SERVICE) as? MidiManager
         if (manager == null) {
             midiView.text = "MIDI: no MidiManager"
             return
         }
-
-        val devices: Array<MidiDeviceInfo> =
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                manager.getDevicesForTransport(MidiManager.TRANSPORT_MIDI_BYTE_STREAM)
-                    .toTypedArray()
-            } else {
-                @Suppress("DEPRECATION")
-                manager.devices
-            }
-
-        // MIDI IN IS CHOSEN INDEPENDENTLY OF THE AUDIO OUT. With a Scarlett
-        // carrying the sound and the CP-88 carrying the notes, the two are
-        // different devices on different cables, and tying them together -- as
-        // this did when both were the piano -- means changing one silently
-        // changes the other.
-        val ports = devices.filter { it.outputPortCount > 0 }
-        val info = chosenMidiName?.let { want ->
-            ports.firstOrNull { it.midiName() == want }
-        } ?: ports.firstOrNull { it.isLikelyCp88() } ?: ports.firstOrNull()
-
-        if (info == null) {
+        val choice = resolveMidi()
+        val info = choice?.info
+        if (choice == null) {
             midiView.text = "MIDI: no input device found"
+            return
+        }
+        if (info == null) {
+            // Visible over USB but not to Android: this process owns the
+            // device, so there is no ALSA MIDI port to open.
+            midiView.text = "MIDI: ${choice.name} -- not an ALSA device right now"
             return
         }
 
@@ -1246,10 +1816,9 @@ class MainActivity : Activity() {
                 return@openDevice
             }
             midiDevice = device
-            val opened = NativeBridge.nativeOpenMidi(device, 0)
+            val opened = NativeBridge.nativeOpenMidi(device, choice.port)
             runOnUiThread {
-                val name = info.properties.getString(MidiDeviceInfo.PROPERTY_NAME) ?: "device"
-                midiView.text = if (opened) "MIDI: $name (port 0)" else "MIDI: failed to open port"
+                midiView.text = if (opened) "MIDI: ${choice.name}  [ALSA]" else "MIDI: failed to open port"
             }
         }, handler)
     }
@@ -1259,33 +1828,17 @@ class MainActivity : Activity() {
             ?: properties.getString(MidiDeviceInfo.PROPERTY_PRODUCT)
             ?: "device"
 
-    private fun midiCandidates(): List<MidiDeviceInfo> {
-        val manager = getSystemService(Context.MIDI_SERVICE) as? MidiManager ?: return emptyList()
-        val devices = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            manager.getDevicesForTransport(MidiManager.TRANSPORT_MIDI_BYTE_STREAM).toTypedArray()
-        } else {
-            @Suppress("DEPRECATION") manager.devices
-        }
-        return devices.filter { it.outputPortCount > 0 }
-    }
-
     /** Cycles MIDI in: automatic, then each port present, then back. */
     private fun cycleMidi() {
-        val names = listOf<String?>(null) + midiCandidates().map { it.midiName() }
+        val names = listOf<String?>(null) + midiChoices().map { it.name }
         val i = names.indexOf(chosenMidiName)
         chosenMidiName = names[(if (i < 0) 0 else i + 1) % names.size]
         prefs().edit().putString("chosenMidiName", chosenMidiName).apply()
-        // Force it, rather than waiting for the rate limiter in reopenMidi().
+        // Through routing whatever the mode: the new port may be on a device
+        // whose mode differs, or share a device with the audio, and only the
+        // router knows how to hand interfaces over between the two.
         lastMidiAttempt = 0L
-        reopenMidi()
-    }
-
-    private fun MidiDeviceInfo.isLikelyCp88(): Boolean {
-        val name = properties.getString(MidiDeviceInfo.PROPERTY_NAME).orEmpty()
-        val product = properties.getString(MidiDeviceInfo.PROPERTY_PRODUCT).orEmpty()
-        val haystack = "$name $product".uppercase()
-        return haystack.contains("CP88") || haystack.contains("CP73") ||
-            haystack.contains("YAMAHA")
+        applyRouting("midi change")
     }
 
     // --------------------------------------------------------------------- UI
@@ -1320,33 +1873,35 @@ class MainActivity : Activity() {
             setLineSpacing(0f, 1.25f)
         }
         root.addView(statusView)
+        root.addView(buildMasterVolume())
 
         val buttonRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             setPadding(0, 32, 0, 0)
         }
 
-        // THE RECYCLE. See USB-AUDIO-HALT.md: the CP-88's USB output halts after
-        // 34-42 M frames, and closing the stream, staying silent about four
-        // seconds and reopening PREVENTS that. It does not cure it -- measured
-        // 2026-09-21, a recycle against an already-dead device fails at every
-        // hold up to six seconds -- so the countdown has to fire before the
-        // fault, not after it.
-        //
-        // Tap to take the hit NOW, between numbers, where four seconds of
-        // silence costs nothing. Long-press for the settings.
-        recycleButton = makeButton("Recycle") { recycleAudio(recycleHoldMs) }
-        recycleButton.setOnLongClickListener { showRecycleSettings(); true }
-        buttonRow.addView(recycleButton)
-
         // Audio out and MIDI in, cycled independently. Two cables, two choices:
         // a Scarlett can carry the sound while the CP-88 carries the notes.
+        //
+        // TAP cycles the device; LONG-PRESS chooses the mode -- ALSA, USB
+        // interface, USB device -- and, for audio, the direct-USB buffer. Hung
+        // off the existing buttons so nothing in the row moves.
         audioButton = makeButton("Audio: auto") { cycleOutput(); refreshDeviceButtons() }
+        audioButton.setOnLongClickListener { showModeDialog(Use.AUDIO); true }
         buttonRow.addView(audioButton)
         midiButton = makeButton("MIDI: auto") { cycleMidi(); refreshDeviceButtons() }
+        midiButton.setOnLongClickListener { showModeDialog(Use.MIDI); true }
         buttonRow.addView(midiButton)
 
         buttonRow.addView(makeButton("Buffer: $bufferBursts") { button ->
+            // AAudio bursts. The direct-USB buffer is a different thing -- the
+            // URBs in flight -- and lives in the Audio button's long-press.
+            if (effectiveMode(Use.AUDIO).direct) {
+                android.widget.Toast.makeText(this@MainActivity,
+                    "Direct USB: buffer is in the Audio long-press menu",
+                    android.widget.Toast.LENGTH_SHORT).show()
+                return@makeButton
+            }
             bufferBursts = if (bufferBursts >= 4) 1 else bufferBursts + 1
             button.text = "Buffer: $bufferBursts"
             NativeBridge.nativeStop()
@@ -1364,6 +1919,7 @@ class MainActivity : Activity() {
             // The mode already shows on the `path` line, so nothing new has to
             // be displayed either.
             setOnLongClickListener {
+                if (effectiveMode(Use.AUDIO).direct) return@setOnLongClickListener true
                 wantExclusive = !wantExclusive
                 NativeBridge.nativeSetExclusive(wantExclusive)
                 NativeBridge.nativeStop()
@@ -1448,8 +2004,8 @@ class MainActivity : Activity() {
 
         // Scrollable sideways, because the row is now wider than the tablet and
         // a button that has fallen off the edge is a button that does not exist.
-        // Recycle sits FIRST so it is reachable without scrolling: it is the one
-        // control here that gets used mid-set, between numbers.
+        // Audio and MIDI sit FIRST so they are reachable without scrolling: they
+        // are what gets reached for when something goes wrong mid-set.
         root.addView(android.widget.HorizontalScrollView(this).apply {
             isHorizontalScrollBarEnabled = false
             addView(buttonRow)
@@ -1534,6 +2090,68 @@ class MainActivity : Activity() {
         }
     }
 
+    /**
+     * The master volume: a centred fader in dB at the end of the chain.
+     *
+     * Centred, not a 0-to-max slider, because the instrument's own mix is the
+     * reference: the control exists to cut BELOW it and to lift ABOVE it, and
+     * a fader whose useful position is 80 % of the way up tells you nothing at
+     * a glance. The scale is dB and therefore logarithmic in amplitude, which
+     * is the only scale on which "half as loud" is a fixed distance.
+     *
+     * It matters more since the direct-USB modes arrived: those bypass
+     * Android's stream volume entirely -- measured 2026-09-22, about 28 dB
+     * louder than the ALSA path at the same settings -- so the instrument
+     * needs a volume of its own rather than borrowing the system's.
+     *
+     * Tap the label to return to 0 dB.
+     */
+    private fun buildMasterVolume(): View {
+        val row = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            setPadding(0, 16, 0, 0)
+            gravity = Gravity.CENTER_VERTICAL
+        }
+        masterLabel = TextView(this).apply {
+            setTextColor(Color.parseColor("#E6E9EF"))
+            textSize = 18f
+            typeface = Typeface.MONOSPACE
+            setPadding(0, 0, 24, 0)
+            setOnClickListener { setMasterDb(0f) }
+        }
+        row.addView(masterLabel)
+
+        masterBar = android.widget.SeekBar(this).apply {
+            max = MASTER_STEPS
+            progress = dbToProgress(masterDb)
+            layoutParams = LinearLayout.LayoutParams(0,
+                ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+            setOnSeekBarChangeListener(object : android.widget.SeekBar.OnSeekBarChangeListener {
+                override fun onProgressChanged(bar: android.widget.SeekBar, value: Int, fromUser: Boolean) {
+                    if (fromUser) setMasterDb(progressToDb(value), moveBar = false)
+                }
+                override fun onStartTrackingTouch(bar: android.widget.SeekBar) {}
+                override fun onStopTrackingTouch(bar: android.widget.SeekBar) {}
+            })
+        }
+        row.addView(masterBar)
+        refreshMasterLabel()
+        return row
+    }
+
+    private fun refreshMasterLabel() {
+        if (!::masterLabel.isInitialized) return
+        masterLabel.text = "MASTER %+5.1f dB".format(masterDb)
+    }
+
+    private fun setMasterDb(db: Float, moveBar: Boolean = true) {
+        masterDb = db.coerceIn(NativeBridge.MASTER_MIN_DB, NativeBridge.MASTER_MAX_DB)
+        NativeBridge.nativeSetMasterDb(masterDb)
+        prefs().edit().putFloat("masterDb", masterDb).apply()
+        if (moveBar && ::masterBar.isInitialized) masterBar.progress = dbToProgress(masterDb)
+        refreshMasterLabel()
+    }
+
     private fun makeButton(label: String, onClick: (Button) -> Unit): Button {
         return Button(this).apply {
             text = label
@@ -1562,65 +2180,21 @@ class MainActivity : Activity() {
      * leverage at the back. Without it every note is mezzo-forte and a sampled
      * piano with sixteen velocity layers sounds like a toy.
      */
-    private lateinit var recycleButton: Button
     private lateinit var audioButton: Button
     private lateinit var midiButton: Button
 
     private fun refreshDeviceButtons() {
-        if (::audioButton.isInitialized) audioButton.text = "Audio: ${shortName(chosenOutputName)}"
-        if (::midiButton.isInitialized) midiButton.text = "MIDI: ${shortName(chosenMidiName)}"
-    }
-
-
-    /** Keeps the button's face honest: armed and counting, off, or not applicable. */
-    private fun refreshRecycleButton() {
-        if (!::recycleButton.isInitialized) return
-        val left = recycleSecondsLeft()
-        recycleButton.text = when {
-            recycling -> "Recycle: now"
-            !recycleEnabled -> "Recycle: off"
-            // Armed only for the piano. Saying so is better than a dash,
-            // because "why is it not counting" is otherwise a puzzle.
-            left < 0 -> "Recycle: n/a"
-            else -> "Recycle: %d:%02d".format(left / 60, left % 60)
+        // The mode in force, not merely the one stored: a use on a non-USB
+        // device is ALSA whatever the setting, and the device rule applies.
+        val (a, m) = effectiveModes(resolveAudio(), resolveMidi())
+        if (::audioButton.isInitialized) {
+            audioButton.text = "Audio: ${shortName(chosenOutputName)} · ${a.short}"
+        }
+        if (::midiButton.isInitialized) {
+            midiButton.text = "MIDI: ${shortName(chosenMidiName)} · ${m.short}"
         }
     }
 
-    /**
-     * Long-press settings. A list of cycling choices rather than a form: it is
-     * three values, it has to be usable in a hurry, and a custom layout would be
-     * more code than the feature.
-     */
-    private fun showRecycleSettings() {
-        val intervals = longArrayOf(5, 8, 10, 15, 20, 30).map { it * 60_000L }
-        val holds = longArrayOf(2000, 3000, 4000, 6000, 8000)
-        val items = arrayOf(
-            "Automatic recycle: " + if (recycleEnabled) "ON" else "off",
-            "Every: ${recycleIntervalMs / 60_000} min",
-            "Silent hold: %.1f s".format(recycleHoldMs / 1000.0),
-            "Recycle now",
-        )
-        android.app.AlertDialog.Builder(this)
-            .setTitle("Recycle (CP-88 dropout workaround)")
-            .setItems(items) { _, which ->
-                when (which) {
-                    0 -> recycleEnabled = !recycleEnabled
-                    1 -> recycleIntervalMs =
-                        intervals[(intervals.indexOf(recycleIntervalMs) + 1) % intervals.size]
-                    2 -> recycleHoldMs =
-                        holds[(holds.indexOf(recycleHoldMs) + 1) % holds.size]
-                    3 -> recycleAudio(recycleHoldMs)
-                }
-                // Any change restarts the countdown, so a new interval takes
-                // effect from now rather than from whenever the last one began.
-                nextRecycleAt = 0L
-                saveRecyclePrefs()
-                refreshRecycleButton()
-                if (which != 3) showRecycleSettings()
-            }
-            .setNegativeButton("Close", null)
-            .show()
-    }
 
     private fun makeTestKeys(): View {
         return PianoKeyboardView(this) { note, velocity ->
@@ -1632,7 +2206,6 @@ class MainActivity : Activity() {
     }
 
     private fun updateStats() {
-        refreshRecycleButton()
         refreshDeviceButtons()
         val s = NativeBridge.stats()
 
@@ -1646,6 +2219,8 @@ class MainActivity : Activity() {
         val onChosen = output != NativeBridge.DEVICE_UNSPECIFIED && s.deviceId == output
 
         val warn = when {
+            routingBusy -> "SWITCHING — ${routingStatus.ifEmpty { "routing" }}"
+            s.usbActive && !s.usbRunning -> "DIRECT USB DOWN — re-routing"
             !s.running -> "STREAM DOWN"
             output == NativeBridge.DEVICE_UNSPECIFIED -> "NO USB OUTPUT — built-in speaker"
             !onChosen -> "WRONG DEVICE (${s.deviceId}) — recovering"
@@ -1653,6 +2228,8 @@ class MainActivity : Activity() {
             // everything else on screen still looks alive, which is precisely
             // why it went undiagnosed for a whole session.
             s.audioStalled -> "AUDIO STALLED ${"%.0f".format(s.stalledSeconds)}s — replug"
+            // Direct USB has no sharing mode; "not exclusive" would be a lie.
+            s.usbActive -> "direct USB"
             s.sharingMode != 0 -> "not exclusive"
             xrunsNow > 0 -> "$xrunsNow xruns"
             else -> "clean"
@@ -1675,10 +2252,24 @@ class MainActivity : Activity() {
                 s.stalledSeconds > 1.0f -> "FROZEN for ${"%.1f".format(s.stalledSeconds)} s"
                 else -> "advancing  (stream alive — not proof of sound)"
             })
-            appendLine("midi       ${if (NativeBridge.nativeMidiOpen()) "connected" else "NOT CONNECTED"}")
+            val (aMode, mMode) = effectiveModes(resolveAudio(), resolveMidi())
+            appendLine("midi       ${if (NativeBridge.nativeMidiOpen()) "connected" else "NOT CONNECTED"}" +
+                "   [${mMode.label}]")
             appendLine("state      ${if (s.running) "running" else "stopped"}   [$warn]")
-            appendLine("path       ${if (s.usesAAudio) "AAudio" else "OpenSLES"}  " +
-                "${s.sharingModeText}  ${s.performanceModeText}")
+            if (s.usbActive) {
+                appendLine("path       USB direct (${aMode.label})  buffer $usbBufferMs ms  " +
+                    "device clock ${"%.1f".format(s.usbFeedbackRate)} Hz")
+                // The deficit is the one to watch: a constant is healthy, and
+                // GROWTH is audio the device never received -- a hole it heard
+                // as silence, however healthy every other number reads.
+                appendLine("usb        deficit ${"%.1f".format(s.usbDeficitMs)} ms   " +
+                    "late ${s.usbLate}   starved ${s.usbStarved}   errors ${s.usbErrors}   " +
+                    "max gap ${"%.1f".format(s.usbMaxGapMs)} ms")
+            } else {
+                appendLine("path       ${if (s.usesAAudio) "AAudio" else "OpenSLES"}  " +
+                    "${s.sharingModeText}  ${s.performanceModeText}   [${aMode.label}]")
+            }
+            if (routingStatus.isNotEmpty()) appendLine("routing    $routingStatus")
             appendLine("rate       ${s.sampleRate} Hz")
             appendLine("burst      ${s.burstFrames} fr  (" +
                 "${"%.2f".format(s.burstFrames * 1000f / maxOf(1, s.sampleRate))} ms)")

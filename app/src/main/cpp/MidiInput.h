@@ -6,6 +6,7 @@
 #include <jni.h>
 
 #include <bagosynths/Graph.h>
+#include "usb/UsbMidiIn.h"
 
 // Native MIDI input via AMidi (API 29+).
 //
@@ -25,7 +26,17 @@ public:
     bool open(JNIEnv* env, jobject midiDeviceObj, int portIndex);
     void close();
 
-    bool isOpen() const { return mPort.load(std::memory_order_acquire) != nullptr; }
+    // The direct-USB source: the app reads the MIDI streaming endpoint itself
+    // (see usb/UsbMidiIn.h) and this drains it through the same parser the
+    // AMidi bytes go through. Exclusive with the AMidi port -- opening either
+    // closes the other, so a note can never arrive twice.
+    bool openUsb(int fd, int endpoint, int maxPacket, bool ump, int port);
+    bool usbOpen() const { return mUsbOpen.load(std::memory_order_acquire); }
+
+    bool isOpen() const {
+        return mPort.load(std::memory_order_acquire) != nullptr ||
+               (mUsbOpen.load(std::memory_order_acquire) && mUsb.running());
+    }
 
     // Called from the audio thread. Drains pending messages into a MidiBuffer,
     // which the graph then carries to whichever nodes are connected.
@@ -35,6 +46,15 @@ public:
 
     uint64_t messageCount() const { return mMessageCount.load(std::memory_order_relaxed); }
 
+    // Notes that reached the GRAPH, whatever the source. Compared against the
+    // USB reader's own counts, these say which side of the ring lost an event.
+    uint64_t noteOnsOut() const { return mNoteOnOut.load(std::memory_order_relaxed); }
+    uint64_t noteOffsOut() const { return mNoteOffOut.load(std::memory_order_relaxed); }
+    uint64_t sinkFull() const { return mSinkFull.load(std::memory_order_relaxed); }
+
+    /** The direct-USB reader, for its counters. Null-safe to call when closed. */
+    const UsbMidiIn& usb() const { return mUsb; }
+
 private:
     static constexpr int kMaxMessagesPerBlock = 64;
     static constexpr int kBufferBytes = 256;
@@ -43,7 +63,13 @@ private:
 
     AMidiDevice* mDevice = nullptr;
     std::atomic<AMidiOutputPort*> mPort{nullptr};
+
+    UsbMidiIn mUsb;
+    std::atomic<bool> mUsbOpen{false};
     std::atomic<uint64_t> mMessageCount{0};
+    std::atomic<uint64_t> mNoteOnOut{0};
+    std::atomic<uint64_t> mNoteOffOut{0};
+    std::atomic<uint64_t> mSinkFull{0};     // the block's MidiBuffer overflowed
 
     // Running status: a stream may omit the status byte on repeated messages of
     // the same type. Rare over USB but legal, and cheap to support.

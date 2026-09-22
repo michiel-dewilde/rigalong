@@ -4,6 +4,7 @@
 #include <string>
 #include <vector>
 
+#include <bagosynths/Gain.h>
 #include <bagosynths/Graph.h>
 #include <bagosynths/ParamQueue.h>
 
@@ -50,6 +51,10 @@ public:
 
     void prepare(double sampleRate, int maxFrames) override;
     void process(const ProcessArgs& args) override;
+
+    // Released when the part is switched away from: see Node::allNotesOff.
+    void allNotesOff() override;
+    float lastRenderPeak() const override { return mLastPeak; }
 
     // Parameter space. Deliberately a curated subset: Beatrix exposes over a
     // thousand settings and a stage instrument needs the ones a player reaches
@@ -135,6 +140,13 @@ private:
     int mOffset = kFragment;         // forces a fresh fragment on the first call
 
     float mMaxRenderMs = 0.0f;
+
+    // Peak of the last rendered block, taken before this node applies its own
+    // level: see Node::lastRenderPeak. Render thread only.
+    float mLastPeak = 0.0f;
+
+    // The output level, ramped rather than stepped: see SmoothedGain.
+    SmoothedGain mGain;
 };
 
 }  // namespace bagosynths

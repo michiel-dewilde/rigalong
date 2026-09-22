@@ -1,10 +1,18 @@
 #include <jni.h>
+#include <android/log.h>
 
+#include <algorithm>
 #include <memory>
 #include <string>
 #include <vector>
 
 #include "AudioEngine.h"
+#include "usb/UsbControl.h"
+
+#include <linux/usbdevice_fs.h>
+#include <sys/ioctl.h>
+
+#include <bagosynths/UsbDescriptors.h>
 
 namespace {
 // One engine for the process lifetime. Never destroyed while the stream could be
@@ -622,7 +630,7 @@ JNIEXPORT jfloatArray JNICALL
 Java_be_mdw_bagosynths_NativeBridge_nativeGetStats(JNIEnv* env, jobject) {
     const AudioEngine::Stats s = engine().stats();
 
-    constexpr int kCount = 27;
+    constexpr int kCount = 35;
     jfloat values[kCount] = {
             s.latencyMs,                             // 0
             s.cpuLoadPercent,                        // 1
@@ -656,6 +664,17 @@ Java_be_mdw_bagosynths_NativeBridge_nativeGetStats(JNIEnv* env, jobject) {
             s.stalledSeconds,                        // 24
             static_cast<jfloat>(s.timestampOk),      // 25
             static_cast<jfloat>(s.streamState),      // 26
+            // Direct USB. usbDeficitMs is the one to watch: wall time minus
+            // audio actually put on the wire. A constant is healthy; growth is
+            // a hole, however well everything else reads.
+            static_cast<jfloat>(s.usbActive),        // 27
+            static_cast<jfloat>(s.usbRunning),       // 28
+            s.usbDeficitMs,                          // 29
+            static_cast<jfloat>(s.usbLate),          // 30
+            static_cast<jfloat>(s.usbStarved),       // 31
+            static_cast<jfloat>(s.usbErrors),        // 32
+            s.usbFeedbackRate,                       // 33
+            s.usbMaxGapMs,                           // 34
     };
 
     jfloatArray array = env->NewFloatArray(kCount);
@@ -676,3 +695,295 @@ extern "C" JNIEXPORT void JNICALL
 Java_be_mdw_bagosynths_NativeBridge_nativeSetPreferredFormat(JNIEnv*, jobject, jint format) {
     engine().setPreferredFormat(format);
 }
+
+// ------------------------------------------------------------ direct USB ---
+//
+// The Kotlin side owns the UsbDeviceConnection: permission, claiming, and
+// releasing. Everything that needs the descriptors or talks to the endpoints
+// is here, so the parser that plans the claim and the code that opens the
+// endpoints are the same code, tested in engine/.
+
+namespace {
+
+namespace usb = bagosynths::usb;
+
+// The configuration to use: the first that the class planners understand.
+// usbfs returns every configuration, and on the CP-88 the second is Yamaha's
+// vendor one; the kernel picks the class-compliant one, and so does this.
+const usb::Config* pickConfig(const usb::Device& d, bool wantAudio, bool wantMidi) {
+    for (const auto& c : d.configs) {
+        if (wantAudio && planAudioOut(c).ok) return &c;
+        if (wantMidi && planMidiIn(c, false).ok) return &c;
+    }
+    return d.configs.empty() ? nullptr : &d.configs[0];
+}
+
+bool parseRaw(JNIEnv* env, jbyteArray raw, usb::Device& out, std::string* why) {
+    const jsize n = env->GetArrayLength(raw);
+    std::vector<uint8_t> bytes(static_cast<size_t>(n));
+    env->GetByteArrayRegion(raw, 0, n, reinterpret_cast<jbyte*>(bytes.data()));
+    return usb::parse(bytes.data(), bytes.size(), out, why);
+}
+
+bool highSpeed(int fd) {
+    const int speed = ioctl(fd, USBDEVFS_GET_SPEED, nullptr);
+    return speed >= 3;   // USB_SPEED_HIGH and above use 125 us microframes
+}
+
+bool setAlt(int fd, int interfaceNumber, int alt) {
+    usbdevfs_setinterface si{};
+    si.interface = static_cast<unsigned>(interfaceNumber);
+    si.altsetting = static_cast<unsigned>(alt);
+    return ioctl(fd, USBDEVFS_SETINTERFACE, &si) == 0;
+}
+
+jstring errString(JNIEnv* env, const std::string& s) { return env->NewStringUTF(s.c_str()); }
+
+}  // namespace
+
+extern "C" {
+
+// The plan, flattened. Layout (keep NativeBridge.UsbPlan in step):
+//   0  flags: bit 0 audio out ok, bit 1 MIDI in ok, bit 2 MIDI is UMP
+//   1  bConfigurationValue
+//   2  audio interface      3  audio alt       4  feedback kind (0/1/2)
+//   5  feedback interface   6  feedback alt    7  channels
+//   8  subslot bytes        9  bit resolution  10 MIDI interface
+//   11 MIDI alt             12 MIDI port count
+//   then: port string indices (MIDI port count of them)
+//   then: n, the audio "USB interface" interfaces (n of them)
+//   then: n, the MIDI "USB interface" interfaces
+//   then: n, every interface of the configuration ("USB device")
+JNIEXPORT jintArray JNICALL
+Java_be_mdw_bagosynths_NativeBridge_nativeUsbPlan(JNIEnv* env, jobject, jbyteArray raw,
+                                                jboolean preferUmp) {
+    usb::Device d;
+    std::string why;
+    std::vector<jint> v(14, -1);
+    v[0] = 0;
+    v[12] = 0;
+    if (!parseRaw(env, raw, d, &why)) {
+        __android_log_print(ANDROID_LOG_ERROR, "bos-usb", "descriptors: %s", why.c_str());
+        v.push_back(0); v.push_back(0); v.push_back(0);
+    } else if (const usb::Config* c = pickConfig(d, true, true)) {
+        const usb::AudioOutPlan a = usb::planAudioOut(*c);
+        const usb::MidiInPlan m = usb::planMidiIn(*c, preferUmp == JNI_TRUE);
+        v[0] = (a.ok ? 1 : 0) | (m.ok ? 2 : 0) | (m.ok && m.ump ? 4 : 0);
+        v[1] = c->value;
+        if (a.ok) {
+            v[2] = a.interfaceNumber; v[3] = a.alt; v[4] = static_cast<int>(a.feedback);
+            v[5] = a.feedbackInterface; v[6] = a.feedbackAlt; v[7] = a.channels;
+            v[8] = a.subslotBytes; v[9] = a.bitResolution;
+            // Reported separately from the claim list because the two answer
+            // different questions: the claim list says what to take, this says
+            // which of them is NOT a streaming interface and therefore must not
+            // be waited on for the kernel to stop streaming it.
+            v[13] = a.controlInterface;
+        }
+        if (m.ok) {
+            v[10] = m.interfaceNumber; v[11] = m.alt;
+            v[12] = static_cast<int>(m.portStringIndex.size());
+            for (uint8_t s : m.portStringIndex) v.push_back(s);
+        }
+        v.push_back(static_cast<jint>(a.ok ? a.interfaces.size() : 0));
+        if (a.ok) for (int i : a.interfaces) v.push_back(i);
+        v.push_back(static_cast<jint>(m.ok ? m.interfaces.size() : 0));
+        if (m.ok) for (int i : m.interfaces) v.push_back(i);
+        const std::vector<int> all = c->interfaceNumbers();
+        v.push_back(static_cast<jint>(all.size()));
+        for (int i : all) v.push_back(i);
+    } else {
+        v.push_back(0); v.push_back(0); v.push_back(0);
+    }
+    jintArray out = env->NewIntArray(static_cast<jsize>(v.size()));
+    if (out) env->SetIntArrayRegion(out, 0, static_cast<jsize>(v.size()), v.data());
+    return out;
+}
+
+// Starts the direct-USB output. The interfaces in the plan are already
+// claimed on `fd`. Returns null on success, or why not.
+//
+// Order, as snd-usb-audio does it: clock rate first, with the streaming
+// interface still at alt 0, then the streaming altsetting(s), then the URBs.
+JNIEXPORT jstring JNICALL
+Java_be_mdw_bagosynths_NativeBridge_nativeStartUsbAudio(JNIEnv* env, jobject, jint fd,
+                                                      jbyteArray raw, jint bufferMs,
+                                                      jint preferredRate) {
+    usb::Device d;
+    std::string why;
+    if (!parseRaw(env, raw, d, &why)) return errString(env, "descriptors: " + why);
+    const usb::Config* c = pickConfig(d, true, false);
+    if (c == nullptr) return errString(env, "no configuration");
+    const usb::AudioOutPlan p = usb::planAudioOut(*c);
+    if (!p.ok) return errString(env, p.why);
+
+    // --- idle first -----------------------------------------------------------
+    // Whatever streamed here before -- the kernel, or the DSP behind it -- may
+    // have left the device at its streaming altsetting. Now that the interfaces
+    // are ours nobody else can be using them, so put them to alt 0, the
+    // zero-bandwidth setting, before the clock is touched: the order
+    // snd-usb-audio uses, and the one devices are tested against.
+    setAlt(fd, p.interfaceNumber, 0);
+    if (p.feedback == usb::Feedback::Implicit) setAlt(fd, p.feedbackInterface, 0);
+
+    // --- the rate -----------------------------------------------------------
+    std::vector<uint32_t> rates = p.discreteRates;
+    if (p.uac2 && p.controlInterface >= 0 && p.clockSource >= 0) {
+        rates = usbctl::uac2Rates(fd, p.controlInterface, p.clockSource);
+    }
+    uint32_t rate = 0;
+    if (!rates.empty()) {
+        // The preferred rate if offered; otherwise the highest, which is the
+        // AAudio path's policy too (MainActivity.nativeRateOf).
+        rate = rates.back();
+        for (uint32_t r : rates) if (static_cast<jint>(r) == preferredRate) rate = r;
+    }
+    if (p.uac2 && p.clockSource >= 0) {
+        if (rate != 0 && p.clockProgrammable) {
+            usbctl::uac2SetRate(fd, p.controlInterface, p.clockSource, rate);
+        }
+        // Believe the clock over the plan: a fixed clock ignores SET CUR.
+        const uint32_t now = usbctl::uac2GetRate(fd, p.controlInterface, p.clockSource);
+        if (now != 0) rate = now;
+    } else if (!p.uac2 && rate != 0) {
+        usbctl::uac1SetRate(fd, p.out.address, rate);
+    }
+    if (rate == 0) return errString(env, "could not establish the device's sample rate");
+
+    // --- the streaming altsettings -----------------------------------------
+    if (!setAlt(fd, p.interfaceNumber, p.alt)) {
+        return errString(env, "SET_INTERFACE on the playback interface failed");
+    }
+    if (p.feedback == usb::Feedback::Implicit &&
+        !setAlt(fd, p.feedbackInterface, p.feedbackAlt)) {
+        setAlt(fd, p.interfaceNumber, 0);
+        return errString(env, "SET_INTERFACE on the feedback interface failed");
+    }
+
+    // --- the stream -----------------------------------------------------------
+    UsbAudioOut::Config cfg;
+    cfg.fd = fd;
+    cfg.highSpeed = highSpeed(fd);
+    cfg.outEp = p.out.address;
+    cfg.outMaxPacket = p.out.bytesPerService();
+    cfg.outInterval = p.out.interval;
+    cfg.feedback = static_cast<int>(p.feedback);
+    cfg.fbEp = p.feedbackEp.address;
+    cfg.fbMaxPacket = p.feedbackEp.bytesPerService();
+    cfg.fbInterval = p.feedbackEp.interval;
+    if (p.feedback == usb::Feedback::Implicit) {
+        // The capture side's own frame size, which need not match playback's.
+        if (const auto* in = c->find(p.feedbackInterface, p.feedbackAlt)) {
+            cfg.fbFrameBytes = std::max(1, in->channels) * std::max(1, in->subslotBytes);
+        }
+    }
+    cfg.channels = p.channels;
+    cfg.subslotBytes = p.subslotBytes;
+    cfg.rate = static_cast<int>(rate);
+    cfg.bufferMs = bufferMs;
+
+    std::string startErr;
+    if (!engine().startUsb(cfg, &startErr)) {
+        setAlt(fd, p.interfaceNumber, 0);
+        if (p.feedback == usb::Feedback::Implicit) setAlt(fd, p.feedbackInterface, 0);
+        return errString(env, startErr.empty() ? "direct USB start failed" : startErr);
+    }
+    return nullptr;
+}
+
+// Stops the direct-USB output and puts the streaming interfaces back to alt 0,
+// the zero-bandwidth setting, so the bus bandwidth is actually released.
+JNIEXPORT void JNICALL
+Java_be_mdw_bagosynths_NativeBridge_nativeStopUsbAudio(JNIEnv* env, jobject, jint fd,
+                                                     jbyteArray raw) {
+    engine().stop();
+    usb::Device d;
+    if (fd < 0 || !parseRaw(env, raw, d, nullptr)) return;
+    if (const usb::Config* c = pickConfig(d, true, false)) {
+        const usb::AudioOutPlan p = usb::planAudioOut(*c);
+        if (p.ok) {
+            setAlt(fd, p.interfaceNumber, 0);
+            if (p.feedback == usb::Feedback::Implicit) setAlt(fd, p.feedbackInterface, 0);
+        }
+    }
+}
+
+// Opens direct-USB MIDI in on `fd` (the MIDI streaming interface claimed).
+// `port` is the cable (1.0) or group (2.0). Null on success.
+JNIEXPORT jstring JNICALL
+Java_be_mdw_bagosynths_NativeBridge_nativeStartUsbMidi(JNIEnv* env, jobject, jint fd,
+                                                     jbyteArray raw, jboolean preferUmp,
+                                                     jint port) {
+    usb::Device d;
+    std::string why;
+    if (!parseRaw(env, raw, d, &why)) return errString(env, "descriptors: " + why);
+    const usb::Config* c = pickConfig(d, false, true);
+    if (c == nullptr) return errString(env, "no configuration");
+    const usb::MidiInPlan m = usb::planMidiIn(*c, preferUmp == JNI_TRUE);
+    if (!m.ok) return errString(env, m.why);
+    // MIDI 2.0 devices power up at alt 0, MIDI 1.0; UMP must be selected.
+    if (m.alt != 0 && !setAlt(fd, m.interfaceNumber, m.alt)) {
+        return errString(env, "SET_INTERFACE to the UMP alternate setting failed");
+    }
+    if (!engine().midi().openUsb(fd, m.in.address, m.in.maxPacket(), m.ump, port)) {
+        return errString(env, "could not start the MIDI reader");
+    }
+    return nullptr;
+}
+
+JNIEXPORT void JNICALL
+Java_be_mdw_bagosynths_NativeBridge_nativePrepareGraph(JNIEnv*, jobject) {
+    engine().prepareGraph();
+}
+
+JNIEXPORT void JNICALL
+Java_be_mdw_bagosynths_NativeBridge_nativeSetMasterDb(JNIEnv*, jobject, jfloat db) {
+    engine().setMasterDb(db);
+}
+
+JNIEXPORT jfloat JNICALL
+Java_be_mdw_bagosynths_NativeBridge_nativeGetMasterDb(JNIEnv*, jobject) {
+    return engine().masterDb();
+}
+
+// GET_INTERFACE: the altsetting the device reports, -1 if it will not say.
+JNIEXPORT jint JNICALL
+Java_be_mdw_bagosynths_NativeBridge_nativeUsbAltSetting(JNIEnv*, jobject, jint fd, jint iface) {
+    return usbctl::currentAltSetting(fd, iface);
+}
+
+JNIEXPORT jboolean JNICALL
+Java_be_mdw_bagosynths_NativeBridge_nativeUsbReconnectKernel(JNIEnv*, jobject, jint fd,
+                                                           jint iface) {
+    return usbctl::reconnectKernelDriver(fd, iface) ? JNI_TRUE : JNI_FALSE;
+}
+
+JNIEXPORT jboolean JNICALL
+Java_be_mdw_bagosynths_NativeBridge_nativeUsbReset(JNIEnv*, jobject, jint fd) {
+    return usbctl::resetDevice(fd) ? JNI_TRUE : JNI_FALSE;
+}
+
+// The ALSA names, so Kotlin never builds one itself and they cannot drift
+// from the rule that is tested in engine/.
+JNIEXPORT jstring JNICALL
+Java_be_mdw_bagosynths_NativeBridge_nativeAlsaCardName(JNIEnv* env, jobject, jstring product,
+                                                     jint vid, jint pid) {
+    const char* p = product ? env->GetStringUTFChars(product, nullptr) : nullptr;
+    const std::string name = usb::alsaCardName(p ? p : "", static_cast<uint16_t>(vid),
+                                               static_cast<uint16_t>(pid));
+    if (p) env->ReleaseStringUTFChars(product, p);
+    return env->NewStringUTF(name.c_str());
+}
+
+JNIEXPORT jstring JNICALL
+Java_be_mdw_bagosynths_NativeBridge_nativeAlsaMidiPortName(JNIEnv* env, jobject, jstring card,
+                                                         jstring jack, jint index) {
+    const char* c = card ? env->GetStringUTFChars(card, nullptr) : nullptr;
+    const char* j = jack ? env->GetStringUTFChars(jack, nullptr) : nullptr;
+    const std::string name = usb::alsaMidiPortName(c ? c : "", j ? j : "", index);
+    if (c) env->ReleaseStringUTFChars(card, c);
+    if (j) env->ReleaseStringUTFChars(jack, j);
+    return env->NewStringUTF(name.c_str());
+}
+
+}  // extern "C"

@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Any device with a USB Audio class interface: audio streaming or MIDI
+         streaming. Android matches the class against the device's interfaces
+         as well as the device itself, which is what catches the CP-88:
+         its device class is 0xEF (interface association), not audio. -->
+    <usb-device class="1" />
+</resources>

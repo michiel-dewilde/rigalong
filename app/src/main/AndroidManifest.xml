@@ -33,6 +33,14 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
+    <!--
+      WAKE_LOCK, for the direct-USB modes. AudioFlinger holds a wake lock for any
+      app with an active AudioTrack; the direct modes have none, so EngineService
+      holds one itself. Without it a foreground service keeps the process
+      uncached but lets the SoC sleep.
+    -->
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+
     <application
         android:label="Bag-O-Synths"
         android:allowBackup="false"
@@ -43,11 +51,27 @@
             android:name=".MainActivity"
             android:exported="true"
             android:screenOrientation="landscape"
+            android:launchMode="singleTask"
             android:configChanges="orientation|screenSize|keyboardHidden|uiMode">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
+            <!--
+              USB audio and MIDI devices. This is what lets "always open with
+              Bag-O-Synths" grant USB permission once and for all, so that a
+              replugged piano in a direct-USB mode comes back without a dialog
+              in the middle of a set. singleTask above makes the attach land on
+              the running instrument (onNewIntent) instead of starting a second
+              one; the usbhost prototype measured what a second instance does:
+              it fights the first for the interfaces and kills its stream.
+            -->
+            <intent-filter>
+                <action android:name="android.hardware.usb.action.USB_DEVICE_ATTACHED" />
+            </intent-filter>
+            <meta-data
+                android:name="android.hardware.usb.action.USB_DEVICE_ATTACHED"
+                android:resource="@xml/usb_audio_devices" />
         </activity>
 
         <service

@@ -47,6 +47,11 @@ class PlaitsPanelBuilder(private val context: Context) {
     private val refreshers = ArrayList<() -> Unit>()
     private var modelLabel: TextView? = null
     private var levelFader: SeekBar? = null
+
+    // The row the level fader sits in, kept so it can be hidden: the mix
+    // faders only exist for balancing a layer, so they are shown only in ALL.
+    // See setMixVisible.
+    private var levelRow: View? = null
     private val knobs = HashMap<Int, SeekBar>()
     private val knobLabels = HashMap<Int, TextView>()
 
@@ -60,6 +65,20 @@ class PlaitsPanelBuilder(private val context: Context) {
     private var engineNames: Array<String> = arrayOf("VIRTUAL ANALOG")
 
     fun refresh() = refreshers.forEach { it() }
+
+    /**
+     * Shows or hides the mix fader.
+     *
+     * A per-instrument level only means something when several instruments
+     * sound at once. In a solo part the level is not a choice -- the part is
+     * either the one playing, at its own level, or it is silent -- so a fader
+     * there is a control that either does nothing or quietly breaks the solo
+     * it sits in. ALL is the only place these are a mixer, so it is the only
+     * place they appear.
+     */
+    fun setMixVisible(on: Boolean) {
+        levelRow?.visibility = if (on) View.VISIBLE else View.GONE
+    }
 
     fun build(): View {
         runCatching { engineNames = NativeBridge.nativePlaitsEngineNames() }
@@ -123,9 +142,10 @@ class PlaitsPanelBuilder(private val context: Context) {
         root.addView(knob("Aux", Plaits.AUX_MIX))
         root.addView(knob("Mod wheel", Plaits.MOD_DEPTH))
 
-        root.addView(slider("TEXTURE", 0f, keep = { levelFader = it }) {
+        levelRow = slider("TEXTURE", 0f, keep = { levelFader = it }) {
             NativeBridge.nativeSetPlaitsParam(Plaits.LEVEL, it * Plaits.FADER_TOP)
-        })
+        }
+        root.addView(levelRow)
 
         refreshers.add {
             modelLabel?.text = currentName()

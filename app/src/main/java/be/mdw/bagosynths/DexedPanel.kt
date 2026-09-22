@@ -44,12 +44,31 @@ class DexedPanelBuilder(private val context: Context) {
     private var statusLabel: TextView? = null
     private var engineButton: Button? = null
     private var levelFader: SeekBar? = null
+
+    // The row the level fader sits in, kept so it can be hidden: the mix
+    // faders only exist for balancing a layer, so they are shown only in ALL.
+    // See setMixVisible.
+    private var levelRow: View? = null
     private var modFader: SeekBar? = null
 
     private var names: List<String> = emptyList()
     private var engineNames: Array<String> = arrayOf("MODERN", "MARK I", "OPL")
 
     fun refresh() = refreshers.forEach { it() }
+
+    /**
+     * Shows or hides the mix fader.
+     *
+     * A per-instrument level only means something when several instruments
+     * sound at once. In a solo part the level is not a choice -- the part is
+     * either the one playing, at its own level, or it is silent -- so a fader
+     * there is a control that either does nothing or quietly breaks the solo
+     * it sits in. ALL is the only place these are a mixer, so it is the only
+     * place they appear.
+     */
+    fun setMixVisible(on: Boolean) {
+        levelRow?.visibility = if (on) View.VISIBLE else View.GONE
+    }
 
     fun build(): View {
         val root = LinearLayout(context).apply {
@@ -117,9 +136,10 @@ class DexedPanelBuilder(private val context: Context) {
         root.addView(slider("Mod wheel", 0.99f, keep = { modFader = it }) {
             NativeBridge.nativeSetDexedParam(Dexed.MOD_DEPTH, it)
         })
-        root.addView(slider("FM", 0f, keep = { levelFader = it }) {
+        levelRow = slider("FM", 0f, keep = { levelFader = it }) {
             NativeBridge.nativeSetDexedParam(Dexed.LEVEL, it * Dexed.FADER_TOP)
-        })
+        }
+        root.addView(levelRow)
 
         refreshers.add {
             val ready = NativeBridge.nativeDexedReady()

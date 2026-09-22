@@ -55,6 +55,9 @@ SurgeNode::~SurgeNode() {
 
 void SurgeNode::prepare(double sampleRate, int maxFrames) {
     mRate = sampleRate;
+    // Start AT the current level, so a graph recompile does not fade the
+    // instrument in from silence.
+    mGain.prepare(sampleRate, mParams[kLevel]);
 
     // If the engine is already up and the rate genuinely changed, it has to be
     // told -- and setSamplerate rebuilds internal tables, so park first.
@@ -266,6 +269,15 @@ void SurgeNode::applyParam(int index, float value) {
 
 // ------------------------------------------------------------------- process
 
+// Both, as the CC handling does: allNotesOff releases, allSoundOff cuts the
+// tails too -- which is what switching parts away wants.
+void SurgeNode::allNotesOff() {
+    if (SurgeSynthesizer* s = mSynth.load(std::memory_order_acquire)) {
+        s->allNotesOff();
+        s->allSoundOff();
+    }
+}
+
 void SurgeNode::process(const ProcessArgs& args) {
     if (args.numAudioOut < 1) return;
     const AudioPort& out = args.audioOut[0];
@@ -376,13 +388,10 @@ void SurgeNode::process(const ProcessArgs& args) {
     }
     renderTo(args.numFrames);
 
-    const float level = mParams[kLevel];
-    if (level != 1.0f) {
-        for (int i = 0; i < args.numFrames; ++i) {
-            outL[i] *= level;
-            outR[i] *= level;
-        }
-    }
+    // Before the level, so the gate can see Surge's own effects decay.
+    mLastPeak = blockPeak(outR, args.numFrames, blockPeak(outL, args.numFrames));
+
+    mGain.apply(outL, outR, args.numFrames, mParams[kLevel]);
 
     const auto ms = static_cast<float>((nowSec() - t0) * 1000.0);
     if (ms > mMaxRenderMs) mMaxRenderMs = ms;

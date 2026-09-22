@@ -14,6 +14,9 @@ object NativeBridge {
 
     const val DEVICE_UNSPECIFIED = 0
 
+    /** Reported as the device id while the direct-USB sink is live. */
+    const val DEVICE_USB_DIRECT = -2
+
     external fun nativeStart(deviceId: Int, bufferBursts: Int): Boolean
     external fun nativeStop()
     external fun nativeOpenMidi(device: MidiDevice, portIndex: Int): Boolean
@@ -170,6 +173,111 @@ object NativeBridge {
     /** Four ints per edge: fromNode, fromPin, toNode, toPin — nodes as ordinals. */
     external fun nativeEdges(): IntArray
 
+    // ------------------------------------------------------------ direct USB
+    //
+    // The two direct modes, where this process -- not snd-usb-audio -- drives
+    // the device. Kotlin owns the connection (permission, claim, release);
+    // native owns everything that needs the descriptors, so the parser that
+    // plans the claim is the one that opens the endpoints.
+
+    /** Parses getRawDescriptors(); see [UsbPlan] for the layout. */
+    external fun nativeUsbPlan(raw: ByteArray, preferUmp: Boolean): IntArray
+
+    /**
+     * Rate, then altsetting, then URBs. The interfaces in the plan must already
+     * be claimed on [fd]. Null on success, otherwise why not.
+     */
+    external fun nativeStartUsbAudio(fd: Int, raw: ByteArray, bufferMs: Int, preferredRate: Int): String?
+
+    /** Stops the direct output and returns the streaming interfaces to alt 0. */
+    external fun nativeStopUsbAudio(fd: Int, raw: ByteArray)
+
+    /** `port` is the cable (MIDI 1.0) or group (MIDI 2.0). Null on success. */
+    external fun nativeStartUsbMidi(fd: Int, raw: ByteArray, preferUmp: Boolean, port: Int): String?
+
+    /** Builds the graph if no sink has, so the instrument loaders have nodes. */
+    external fun nativePrepareGraph()
+
+    /**
+     * The master volume in dB, applied at the very end of the chain -- after the
+     * limiter, before the single conversion to the device's format. 0 dB is
+     * unity; the range is [MASTER_MIN_DB, MASTER_MAX_DB] and the bottom is
+     * silence. Not part of a patch: it belongs to the room, not the sound.
+     */
+    external fun nativeSetMasterDb(db: Float)
+    external fun nativeGetMasterDb(): Float
+
+    const val MASTER_MIN_DB = -40f
+    const val MASTER_MAX_DB = 12f
+
+    /** GET_INTERFACE: what the DEVICE says is active; -1 if it will not answer. */
+    external fun nativeUsbAltSetting(fd: Int, iface: Int): Int
+
+    /** USBDEVFS_CONNECT: give a released interface back to its kernel driver. */
+    external fun nativeUsbReconnectKernel(fd: Int, iface: Int): Boolean
+
+    /** USBDEVFS_RESET: the fallback when reconnecting does not bring ALSA back. */
+    external fun nativeUsbReset(fd: Int): Boolean
+
+    /** snd-usb-audio's card short name, by the rule tested in engine/. */
+    external fun nativeAlsaCardName(product: String?, vid: Int, pid: Int): String
+
+    /** snd-usb-audio's MIDI port name: "card jack", or "card MIDI n" without one. */
+    external fun nativeAlsaMidiPortName(card: String, jack: String?, index: Int): String
+
+    /** Decoded [nativeUsbPlan]. Indices must match native_bridge.cpp. */
+    class UsbPlan(v: IntArray) {
+        val audioOk = v.isNotEmpty() && (v[0] and 1) != 0
+        val midiOk = v.isNotEmpty() && (v[0] and 2) != 0
+        val midiUmp = v.isNotEmpty() && (v[0] and 4) != 0
+        val configValue = v.getOrElse(1) { -1 }
+        val audioInterface = v.getOrElse(2) { -1 }
+        val audioAlt = v.getOrElse(3) { -1 }
+        /** 0 none, 1 implicit (the CP-88), 2 explicit. */
+        val feedback = v.getOrElse(4) { 0 }
+        val channels = v.getOrElse(7) { 0 }
+        val subslotBytes = v.getOrElse(8) { 0 }
+        val bitResolution = v.getOrElse(9) { 0 }
+        val midiInterface = v.getOrElse(10) { -1 }
+        val midiPortCount = v.getOrElse(12) { 0 }.coerceAtLeast(0)
+
+        /**
+         * The AudioControl interface, or -1.
+         *
+         * On UAC2 it carries the clock, so audio has to claim it too — see
+         * planAudioOut. It is named separately because it is the one claimed
+         * interface that is NOT streaming: waiting for the kernel to stop
+         * streaming it would wait for something that never happens.
+         */
+        val controlInterface = v.getOrElse(13) { -1 }
+
+        val portStringIndex: IntArray
+        /** What "USB interface" audio claims: the audio function's interfaces. */
+        val audioInterfaces: List<Int>
+        /** What "USB interface" MIDI claims: the MIDI streaming interface. */
+        val midiInterfaces: List<Int>
+        /** What "USB device" claims: every interface of the configuration. */
+        val allInterfaces: List<Int>
+
+        /** The audio interfaces that actually carry samples. */
+        val streamingInterfaces: List<Int> get() = audioInterfaces.filter { it != controlInterface }
+
+        init {
+            var i = 14
+            portStringIndex = IntArray(midiPortCount) { v.getOrElse(i + it) { 0 } }
+            i += midiPortCount
+            fun list(): List<Int> {
+                val n = v.getOrElse(i) { 0 }.coerceAtLeast(0)
+                val out = (0 until n).map { v.getOrElse(i + 1 + it) { -1 } }
+                i += 1 + n
+                return out
+            }
+            audioInterfaces = list()
+            midiInterfaces = list()
+            allInterfaces = list()
+        }
+    }
+
     /** Decoded view of the stats array. Indices must match native_bridge.cpp. */
     class Stats(private val v: FloatArray) {
         val latencyMs get() = v[0]
@@ -223,6 +331,21 @@ object NativeBridge {
 
         /** oboe::StreamState. 2 = Open, 4 = Started, 6 = Paused, 8 = Stopped. */
         val streamState get() = v[26].toInt()
+
+        // --- direct USB -------------------------------------------------------
+        val usbActive get() = v.getOrElse(27) { 0f }.toInt() == 1
+        val usbRunning get() = v.getOrElse(28) { 0f }.toInt() == 1
+        /**
+         * Wall time minus the audio the controller says it put on the wire. It
+         * settles at a constant and stays; GROWTH is a hole the device heard as
+         * silence, however healthy everything else reads.
+         */
+        val usbDeficitMs get() = v.getOrElse(29) { 0f }
+        val usbLate get() = v.getOrElse(30) { 0f }.toInt()
+        val usbStarved get() = v.getOrElse(31) { 0f }.toInt()
+        val usbErrors get() = v.getOrElse(32) { 0f }.toInt()
+        val usbFeedbackRate get() = v.getOrElse(33) { 0f }
+        val usbMaxGapMs get() = v.getOrElse(34) { 0f }
 
         /** The unambiguous combination: making signal, and nothing coming out. */
         val audioStalled get() = timestampOk && stalledSeconds > 1.0f && outputPeak > 0.001f

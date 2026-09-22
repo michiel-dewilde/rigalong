@@ -25,12 +25,17 @@ OUT="${TMPDIR:-/tmp}/bagosynths-engine-tests"
 "$CXX" -std=c++20 -O1 -g -Wall -Wextra -Wno-unused-parameter \
     -fno-omit-frame-pointer \
     -I"$ENGINE/include" \
+    -I"$HERE" \
     -o "$OUT" \
     "$ENGINE/src/Graph.cpp" \
+    "$ENGINE/src/UsbDescriptors.cpp" \
     "$HERE/harness.cpp" \
     "$HERE/test_graph.cpp" \
     "$HERE/test_paramqueue.cpp" \
-    "$HERE/test_sampleformat.cpp"
+    "$HERE/test_sampleformat.cpp" \
+    "$HERE/test_usbdescriptors.cpp" \
+    "$HERE/test_usbmidi.cpp" \
+    "$HERE/test_gain.cpp"
 
 echo "engine tests ($("$CXX" --dumpversion 2>/dev/null || echo "$CXX"))"
 exec "$OUT" "$@"

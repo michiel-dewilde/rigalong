@@ -7,6 +7,7 @@
 #include <string>
 #include <vector>
 
+#include <bagosynths/Gain.h>
 #include <bagosynths/Graph.h>
 #include <bagosynths/ParamQueue.h>
 
@@ -127,6 +128,11 @@ private:
     void pushParam(int index, float value);
     void refreshPresets();     // off the audio thread, after a font loads
     void panic();
+
+    // Immediate, unlike panic(): see DexedNode::allNotesOff for why a frozen
+    // release tail is the thing being prevented.
+    void allNotesOff() override;
+    float lastRenderPeak() const override { return mLastPeak; }
     void silence(const ProcessArgs& args);
 
     std::atomic<fluid_synth_t*> mSynth{nullptr};
@@ -168,6 +174,13 @@ private:
     ParamQueue<256> mQueue;
 
     float mMaxRenderMs = 0.0f;
+
+    // Peak of the last rendered block, taken before this node applies its own
+    // level: see Node::lastRenderPeak. Render thread only.
+    float mLastPeak = 0.0f;
+
+    // The output level, ramped rather than stepped: see SmoothedGain.
+    SmoothedGain mGain;
 };
 
 }  // namespace bagosynths

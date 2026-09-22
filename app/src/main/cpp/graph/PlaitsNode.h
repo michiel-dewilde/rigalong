@@ -6,6 +6,7 @@
 #include <string>
 #include <vector>
 
+#include <bagosynths/Gain.h>
 #include <bagosynths/Graph.h>
 #include <bagosynths/ParamQueue.h>
 
@@ -115,6 +116,8 @@ private:
     void noteOff(int midiNote);
     void releaseSustained();
     void panic();
+    void allNotesOff() override { panic(); }
+    float lastRenderPeak() const override { return mLastPeak; }
     int chooseVoice(int midiNote);
     void applyParam(int index, float value);
     void pushParam(int index, float value);
@@ -145,6 +148,13 @@ private:
     ParamQueue<256> mQueue;
 
     float mMaxRenderMs = 0.0f;
+
+    // Peak of the last rendered block, taken before this node applies its own
+    // level: see Node::lastRenderPeak. Render thread only.
+    float mLastPeak = 0.0f;
+
+    // The output level, ramped rather than stepped: see SmoothedGain.
+    SmoothedGain mGain;
 };
 
 }  // namespace bagosynths

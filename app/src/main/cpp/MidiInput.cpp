@@ -36,7 +36,16 @@ bool MidiInput::open(JNIEnv* env, jobject midiDeviceObj, int portIndex) {
     return true;
 }
 
+bool MidiInput::openUsb(int fd, int endpoint, int maxPacket, bool ump, int port) {
+    close();
+    mRunningStatus = 0;
+    if (!mUsb.start(fd, endpoint, maxPacket, ump, port)) return false;
+    mUsbOpen.store(true, std::memory_order_release);
+    return true;
+}
+
 void MidiInput::close() {
+    if (mUsbOpen.exchange(false, std::memory_order_acq_rel)) mUsb.stop();
     AMidiOutputPort* port = mPort.exchange(nullptr, std::memory_order_acq_rel);
     if (port != nullptr) {
         AMidiOutputPort_close(port);
@@ -48,6 +57,18 @@ void MidiInput::close() {
 }
 
 void MidiInput::poll(bagosynths::MidiBuffer& out) {
+    if (mUsbOpen.load(std::memory_order_acquire)) {
+        // Bounded like the AMidi path: at most kBufferBytes per block, so a
+        // flood cannot blow the render deadline; the rest waits a block.
+        uint8_t bytes[kBufferBytes];
+        const int n = mUsb.drain(bytes, kBufferBytes);
+        if (n > 0) {
+            dispatch(bytes, static_cast<size_t>(n), out);
+            mMessageCount.fetch_add(1, std::memory_order_relaxed);
+        }
+        return;
+    }
+
     AMidiOutputPort* port = mPort.load(std::memory_order_acquire);
     if (port == nullptr) return;
 
@@ -128,7 +149,18 @@ void MidiInput::dispatch(const uint8_t* data, size_t numBytes, bagosynths::MidiB
         ev.status = statusByte;
         ev.data1 = d1;
         ev.data2 = d2;
+
+        // The far end of the count that starts in UsbMidiIn::push. These two
+        // bracket every stage a note can disappear in -- the ring, the drain,
+        // this parser -- so a session of playing says which half to look at.
+        const int before = out.size();
         out.push(ev);
-        (void)type;
+        if (out.size() == before) {
+            mSinkFull.fetch_add(1, std::memory_order_relaxed);
+        } else if (type == 0x90 && d2 > 0) {
+            mNoteOnOut.fetch_add(1, std::memory_order_relaxed);
+        } else if (type == 0x80 || type == 0x90) {
+            mNoteOffOut.fetch_add(1, std::memory_order_relaxed);
+        }
     }
 }

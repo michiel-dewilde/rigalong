@@ -1,5 +1,7 @@
 #include "AudioEngine.h"
 
+#include "RealtimePriority.h"
+
 #include <android/log.h>
 
 #include <algorithm>
@@ -192,9 +194,36 @@ bool AudioEngine::openStream(int32_t deviceId, int bufferBursts) {
     // Device specific and may be a no-op -- there is no downside to asking.
     mStream->setPerformanceHintEnabled(true);
 
+    prepareRing(burst);
 
+    mFlushDenormalsDone.store(false, std::memory_order_relaxed);
+    mCallbackMaxMs.store(0.0f, std::memory_order_relaxed);
+
+    // Build (or rebuild for the new rate/block size) the graph before the stream
+    // starts, so the first callback already has a schedule to run.
+    std::string graphError;
+    if (!rebuildGraph(&graphError)) {
+        LOGE("graph compile failed: %s", graphError.c_str());
+    }
+
+    LOGI("stream open: rate=%d burst=%d buffer=%d sharing=%d perf=%d aaudio=%d",
+         mStream->getSampleRate(), burst, mStream->getBufferSizeInFrames(),
+         static_cast<int>(mStream->getSharingMode()),
+         static_cast<int>(mStream->getPerformanceMode()),
+         mStream->usesAAudio() ? 1 : 0);
+
+    return true;
+}
+
+void AudioEngine::prepareRing(int32_t burst) {
     // Preallocate render scratch with generous headroom. Allocating inside the
     // callback is the cardinal sin; this is the one place it is allowed.
+    // The master ramp needs the rate to know how long 15 ms is, and this is
+    // the one place that runs off the audio thread whenever the rate can have
+    // changed. It starts AT the current gain, so opening a stream does not
+    // fade the instrument in.
+    mMasterRamp.prepare(currentRate(), mMasterGain.load(std::memory_order_relaxed));
+
     mScratchFrames = std::max(2048, burst * 16);
     mScratch.assign(static_cast<size_t>(mScratchFrames) * 2, 0.0f);
     mDitherOut.assign(static_cast<size_t>(mScratchFrames) * 2, 0);
@@ -223,24 +252,103 @@ bool AudioEngine::openStream(int32_t deviceId, int bufferBursts) {
     mMaxFill.store(std::min(std::max(kMaxFillFrames, minFill + 2 * kGrowFrames),
                             kRingFrames / 2), std::memory_order_relaxed);
     mTargetFill.store(minFill, std::memory_order_relaxed);
+}
 
+double AudioEngine::currentRate() const {
+    if (mUsbActive.load(std::memory_order_acquire)) {
+        const int32_t r = mUsbRate.load(std::memory_order_relaxed);
+        if (r > 0) return r;
+    }
+    return mStream ? mStream->getSampleRate() : 44100.0;
+}
+
+void AudioEngine::setMasterDb(float db) {
+    const float clamped = std::clamp(db, kMasterMinDb, kMasterMaxDb);
+    mMasterDb.store(clamped, std::memory_order_relaxed);
+    // The bottom of the range is silence rather than -40 dB of signal, so the
+    // slider has a real "off" at its left end.
+    const float gain = clamped <= kMasterMinDb ? 0.0f : std::pow(10.0f, clamped / 20.0f);
+    mMasterGain.store(gain, std::memory_order_relaxed);
+    LOGI("master volume %.1f dB (gain %.4f)", static_cast<double>(clamped),
+         static_cast<double>(gain));
+}
+
+void AudioEngine::prepareGraph() {
+    std::lock_guard<std::mutex> lock(mStreamLock);
+    if (mSchedule.load(std::memory_order_acquire) != nullptr) return;
+    std::string graphError;
+    if (!rebuildGraph(&graphError)) LOGE("graph compile failed: %s", graphError.c_str());
+}
+
+bool AudioEngine::startUsb(const UsbAudioOut::Config& config, std::string* error) {
+    std::lock_guard<std::mutex> lock(mStreamLock);
+    if (mRunning.load(std::memory_order_acquire)) closeStream();
+
+    mUsbRate.store(config.rate, std::memory_order_relaxed);
+    mUsbActive.store(true, std::memory_order_release);
+    mActualDeviceId.store(kUsbDeviceId, std::memory_order_relaxed);
+    mOpenedDeviceId.store(kUsbDeviceId, std::memory_order_relaxed);
+
+    // Size the ring for what the USB sink takes per call: one packet, a
+    // millisecond on the CP-88 -- the burst the ring's floor is relative to.
+    // The floor constant (192 frames) still governs there, so the reserve on
+    // this path is the same as on the AAudio path, and the latency comparison
+    // between the two is like for like.
+    const int32_t packetFrames = std::max(1, static_cast<int32_t>(config.rate / 1000));
+    prepareRing(packetFrames);
     mFlushDenormalsDone.store(false, std::memory_order_relaxed);
     mCallbackMaxMs.store(0.0f, std::memory_order_relaxed);
 
-    // Build (or rebuild for the new rate/block size) the graph before the stream
-    // starts, so the first callback already has a schedule to run.
     std::string graphError;
-    if (!rebuildGraph(&graphError)) {
-        LOGE("graph compile failed: %s", graphError.c_str());
+    if (!rebuildGraph(&graphError)) LOGE("graph compile failed: %s", graphError.c_str());
+
+    // The render thread first, so the ring is not empty when the first OUT
+    // packets are sized.
+    mRunning.store(true, std::memory_order_release);
+    mRenderRun.store(true, std::memory_order_release);
+    mRenderThread = std::thread([this] { renderLoop(); });
+
+    if (!mUsbOut.start(config, &AudioEngine::pullForUsb, this, error)) {
+        closeStream();
+        return false;
     }
-
-    LOGI("stream open: rate=%d burst=%d buffer=%d sharing=%d perf=%d aaudio=%d",
-         mStream->getSampleRate(), burst, mStream->getBufferSizeInFrames(),
-         static_cast<int>(mStream->getSharingMode()),
-         static_cast<int>(mStream->getPerformanceMode()),
-         mStream->usesAAudio() ? 1 : 0);
-
+    LOGI("direct USB output running: %d Hz, %d ms", config.rate, config.bufferMs);
     return true;
+}
+
+uint32_t AudioEngine::pullFromRing(float* dst, uint32_t want) {
+    const uint32_t read = mRingRead.load(std::memory_order_relaxed);
+    const uint32_t write = mRingWrite.load(std::memory_order_acquire);
+    const uint32_t availableFrames = write - read;          // unsigned wrap is fine
+    // Clamped to the scratch as well as to what the ring holds. A request
+    // larger than the scratch would otherwise run off the end of it; clamping
+    // reports an underrun and leaves silence for the remainder, which is a
+    // bounded fault rather than a buffer overrun.
+    const uint32_t take = std::min({availableFrames, want,
+                                    static_cast<uint32_t>(mScratchFrames)});
+    for (uint32_t i = 0; i < take; ++i) {
+        const uint32_t idx = ((read + i) & (kRingFrames - 1)) * 2;
+        dst[i * 2] = mRing[idx];
+        dst[i * 2 + 1] = mRing[idx + 1];
+    }
+    mRingRead.store(read + take, std::memory_order_release);
+
+    // Peak of what is ACTUALLY handed to the device, measured here rather than
+    // on the float graph output. See onAudioReady for why that matters.
+    float cbNow = 0.0f;
+    for (uint32_t i = 0; i < take * 2; ++i) cbNow = std::max(cbNow, std::fabs(dst[i]));
+    const float cbHeld = mCallbackPeak.load(std::memory_order_relaxed) * 0.90f;
+    mCallbackPeak.store(std::max(cbNow, cbHeld), std::memory_order_relaxed);
+
+    if (take < want) mRingUnderruns.fetch_add(1, std::memory_order_relaxed);
+    mRingFillMs.store(static_cast<float>(1000.0 * (availableFrames - take) / currentRate()),
+                      std::memory_order_relaxed);
+    return take;
+}
+
+int AudioEngine::pullForUsb(void* ctx, float* dst, int frames) {
+    auto* self = static_cast<AudioEngine*>(ctx);
+    return static_cast<int>(self->pullFromRing(dst, static_cast<uint32_t>(std::max(0, frames))));
 }
 
 bool AudioEngine::openInput(int32_t deviceId) {
@@ -358,6 +466,12 @@ void AudioEngine::closeStream() {
         mStream->close();
         mStream.reset();
     }
+    // The USB sink AFTER the render thread has stopped, so nothing is pulling
+    // from the ring while it is torn down.
+    if (mUsbActive.exchange(false, std::memory_order_acq_rel)) {
+        mUsbOut.stop();
+        mActualDeviceId.store(kUnspecifiedDevice, std::memory_order_relaxed);
+    }
     mRunning.store(false, std::memory_order_release);
 }
 
@@ -377,25 +491,13 @@ oboe::DataCallbackResult AudioEngine::onAudioReady(oboe::AudioStream* stream,
     // last moment keeps the ring at the engine's own precision. It costs one
     // pass over a burst -- 96 frames on the CP-88 -- which is arithmetic on data
     // already in cache.
-    const uint32_t read = mRingRead.load(std::memory_order_relaxed);
-    const uint32_t write = mRingWrite.load(std::memory_order_acquire);
-    const uint32_t availableFrames = write - read;          // unsigned wrap is fine
     const auto want = static_cast<uint32_t>(numFrames);
-    // Clamped to the scratch as well as to what the ring holds. A callback
-    // larger than the scratch would otherwise run off the end of it; clamping
-    // instead reports an underrun and emits silence for the remainder, which is
-    // a bounded fault rather than a buffer overrun.
-    const uint32_t take = std::min({availableFrames, want,
-                                    static_cast<uint32_t>(mScratchFrames)});
 
     // Straighten the ring out first: it wraps, and the dither wants a run.
+    // pullFromRing is shared with the direct-USB sink, so the two paths count
+    // underruns, fill and peak identically.
     float* src = mCbScratch.data();
-    for (uint32_t i = 0; i < take; ++i) {
-        const uint32_t idx = ((read + i) & (kRingFrames - 1)) * 2;
-        src[i * 2] = mRing[idx];
-        src[i * 2 + 1] = mRing[idx + 1];
-    }
-    mRingRead.store(read + take, std::memory_order_release);
+    const uint32_t take = pullFromRing(src, want);
 
     const uint32_t samples = take * 2;
     switch (mStreamFormat) {
@@ -427,43 +529,226 @@ oboe::DataCallbackResult AudioEngine::onAudioReady(oboe::AudioStream* stream,
             break;
     }
 
-    // Peak of what is ACTUALLY handed to AAudio, measured on the int16 frames
-    // in the callback rather than on the float graph output.
+    // The peak of what is ACTUALLY handed to AAudio is taken in pullFromRing,
+    // on the frames straight out of the ring.
     //
     // For the silence that survives a stream restart: the engine meter says
     // 0,148 and nothing is audible, and everything between the two is invisible
-    // -- the dither, the probe overwrite, the ring copy. If this reads zero
+    // -- the dither, the probe overwrite, the ring copy. If that peak reads zero
     // while the graph meter does not, the samples die inside this process.
     // If both read the same, we are handing real audio to the HAL and the
     // fault is below us -- which is how the dock was found on 2026-09-20.
-    float cbNow = 0.0f;
-    for (uint32_t i = 0; i < samples; ++i) {
-        const float v = std::fabs(src[i]);
-        if (v > cbNow) cbNow = v;
-    }
-    const float cbHeld = mCallbackPeak.load(std::memory_order_relaxed) * 0.90f;
-    mCallbackPeak.store(std::max(cbNow, cbHeld), std::memory_order_relaxed);
 
     if (take < want) {
         // The render thread did not keep up. Emit silence for the remainder --
-        // audible, but bounded, and the counter says it happened.
+        // audible, but bounded, and pullFromRing has counted it.
         std::memset(static_cast<uint8_t*>(audioData) +
                         static_cast<size_t>(take) * mBytesPerFrame,
                     0, static_cast<size_t>(want - take) * mBytesPerFrame);
-        mRingUnderruns.fetch_add(1, std::memory_order_relaxed);
     }
-
-    const double blockSeconds = static_cast<double>(numFrames) / stream->getSampleRate();
-    mRingFillMs.store(static_cast<float>(1000.0 * (availableFrames - take + 0.0) /
-                                         stream->getSampleRate()),
-                      std::memory_order_relaxed);
-    (void)blockSeconds;
+    (void)stream;
     return oboe::DataCallbackResult::Continue;
+}
+
+// Only the instruments that can be heard actually run.
+//
+// The pedalboard model had every engine rendering every block whatever its
+// level, so choosing one part cost the CPU of all six. An engine at level zero
+// is provably silent, so this gates it OUT of the schedule entirely (see
+// Node::setEnabled) -- which is what makes "only the selected instrument runs"
+// true rather than merely inaudible.
+//
+// ON EVERY TRANSITION the node's voices are released. A node that is not
+// processed cannot finish the notes it is holding: without this it would keep
+// a voice state nobody can hear and then resurrect it, mid-chord, the moment
+// the part was selected again. Releasing costs a little work, but only when a
+// part is switched, which is a human action and not a per-block one.
+void AudioEngine::updateInstrumentGates(int frames) {
+    struct Gate { bagosynths::Node* node; float level; };
+    const Gate gates[] = {
+        {mSfizz,   mSfizz   ? mSfizz->getParam(bagosynths::SfizzNode::kLevel)     : 0.0f},
+        {mHammond, mHammond ? mHammond->getParam(bagosynths::HammondNode::kLevel) : 0.0f},
+        {mSurge,   mSurge   ? mSurge->getParam(bagosynths::SurgeNode::kLevel)     : 0.0f},
+        {mDexed,   mDexed   ? mDexed->getParam(bagosynths::DexedNode::kLevel)     : 0.0f},
+        {mPlaits,  mPlaits  ? mPlaits->getParam(bagosynths::PlaitsNode::kLevel)   : 0.0f},
+        {mFluid,   mFluid   ? mFluid->getParam(bagosynths::FluidNode::kLevel)     : 0.0f},
+    };
+    const int quietFrames = static_cast<int>(currentRate() * kQuietSeconds);
+    // Twice the gain ramp, so the level is provably at zero before any voice is
+    // cut. Cheap insurance against an off-by-one-block.
+    const int fadeFrames =
+        static_cast<int>(currentRate() * bagosynths::SmoothedGain::kRampSeconds * 2.0) + 1;
+    const int ceilingFrames = static_cast<int>(currentRate() * kQuietCeilingSeconds);
+    int index = 0;
+    for (const Gate& g : gates) {
+        const int i = index++;
+        if (g.node == nullptr) continue;
+
+        // Loudness, held. The on-screen meter decays in 60 ms, which makes it
+        // unusable for "how loud is THIS engine for that note" -- the question
+        // behind Michiel's report that the piano is much quieter than the rest.
+        // Taken before the node's own level, so it measures the ENGINE and not
+        // where its fader happens to be. Cleared by resetPeaks().
+        // Only while the node is actually RUNNING. A parked node is not
+        // processed, so its last peak is frozen at whatever it was rendering
+        // before it stopped -- sampling that reports a silent engine as loud,
+        // which is exactly how this probe first lied.
+        if (g.node->enabled()) {
+            const float p = g.node->lastRenderPeak();
+            if (p > mNodePeakHold[i]) mNodePeakHold[i] = p;
+        }
+        // A hair above zero, not zero: a fader dragged to the bottom lands on
+        // exactly 0, but a restored patch can carry a value like 1e-7.
+        const bool want = g.level > 0.005f;
+
+        if (want) {
+            // Selected again DURING a flush. The node never stopped, so the
+            // "running" line below does not fire -- and without this one
+            // nothing in the log says why an engine went on rendering for a
+            // minute. Michiel saw exactly that: flicking back and forth
+            // between two parts restarted the silence clock each time, and the
+            // engine stayed live the whole while with no line to show it.
+            if (mGateFlushing[i]) {
+                LOGI("%s selected again while flushing -- still running",
+                     g.node->typeName());
+            }
+            mGateFlushing[i] = false;
+            mGateFade[i] = 0;
+            mGateQuiet[i] = 0;
+            mGateFlush[i] = 0;
+            g.node->setMidiMuted(false);        // it can hear again
+            if (!g.node->enabled()) {
+                // Start clean: anything still held from last time dies before
+                // the first block, rather than resuming mid-decay.
+                g.node->allNotesOff();
+                g.node->setEnabled(true);
+                LOGI("%s running", g.node->typeName());
+            }
+            continue;
+        }
+        if (!g.node->enabled()) continue;
+
+        // --- stopping, but not instantly ------------------------------------
+        //
+        // Killing the voices is not enough for an engine that carries its OWN
+        // effects. The Hammond's rotary speaker and reverb live inside beatrix,
+        // and a frozen effect resumes where it left off: Michiel heard the tail
+        // of an organ note return when the part was selected again "an eon
+        // later".
+        //
+        // So the node keeps RUNNING after its voices are killed, until it has
+        // been measurably silent -- its own pre-level peak under the floor --
+        // for a full second without interruption. Nothing of this is audible;
+        // its level is already zero. It costs a second or two of CPU after a
+        // part switch, which is a human action, not a per-block one.
+        //
+        // Waiting for the sound rather than for a stopwatch is the difference
+        // between "probably long enough" and "demonstrably finished": a five
+        // second reverb tail gets five seconds, and an engine that drops dead
+        // on the first block gets one.
+        if (!mGateFlushing[i]) {
+            // NOT allNotesOff() yet. The node's level is ramping down over
+            // 15 ms (see SmoothedGain), and killing its voices during that ramp
+            // would put back exactly the discontinuity the ramp exists to
+            // remove -- sfizz's allSoundOff() is a hard stop, not a release.
+            // So the fade is allowed to finish first.
+            mGateFlushing[i] = true;
+            mGateFade[i] = fadeFrames;
+            mGateQuiet[i] = 0;
+            mGateFlush[i] = 0;
+            // Deaf from this instant. It is inaudible from here on, so any
+            // note it accepted would be a note started by nobody -- and would
+            // be waiting, already sounding, if the part were selected again.
+            g.node->setMidiMuted(true);
+            LOGI("%s silenced, fading out", g.node->typeName());
+            continue;
+        }
+        if (mGateFade[i] > 0) {
+            mGateFade[i] -= frames;
+            if (mGateFade[i] <= 0) {
+                mGateFade[i] = 0;
+                g.node->allNotesOff();
+                LOGI("%s faded, flushing its tails", g.node->typeName());
+            }
+            continue;
+        }
+
+        // The peak is from the block just rendered: the gate runs before
+        // schedule->run(), so it is one block behind, which costs 3 ms of a
+        // one-second wait.
+        const float peak = g.node->lastRenderPeak();
+        mGateFlush[i] += frames;
+        // A node that does not report a peak falls back to the stopwatch:
+        // every instrument here reports one, but the graph does not require it.
+        if (peak < 0.0f || peak <= kSilenceFloor) {
+            mGateQuiet[i] += frames;
+        } else {
+            mGateQuiet[i] = 0;
+        }
+
+        const bool quiet = mGateQuiet[i] >= quietFrames;
+        const bool droning = mGateFlush[i] >= ceilingFrames;
+        if (quiet || droning) {
+            g.node->setEnabled(false);
+            mGateFlushing[i] = false;
+            if (droning && !quiet) {
+                LOGI("%s stopped (level 0) after %.0f s WITHOUT going quiet -- "
+                     "it is still producing %.6f into a muted output",
+                     g.node->typeName(), kQuietCeilingSeconds,
+                     static_cast<double>(peak));
+            } else {
+                LOGI("%s stopped (level 0), quiet after %.2f s",
+                     g.node->typeName(),
+                     static_cast<double>(mGateFlush[i]) / currentRate());
+            }
+            mGateQuiet[i] = 0;
+            mGateFlush[i] = 0;
+        }
+    }
+}
+
+// The MIDI chain, stage by stage, so a dropped note can be LOCATED.
+//
+// Michiel loses about one note-on or note-off in thirty, at random, playing
+// single notes on any engine in USB device mode. That rules out voice stealing
+// and the sampler's note-on queue, and reading the path found nothing, so the
+// path reports itself instead:
+//
+//   pkt    bulk transfers that returned data
+//   msg    messages pushed into the reader's ring
+//   on/off notes the READER saw
+//   ->     notes the GRAPH received
+//
+// The two note figures are the whole test. If they agree with each other but
+// not with the keys played, the wire or the ioctl lost it; if they disagree,
+// the ring or the parser did, and ringFull/short/undec/sinkFull say which.
+void AudioEngine::logMidiChain() const {
+    const UsbMidiIn& u = mMidi.usb();
+    const uint64_t on = u.noteOns(), off = u.noteOffs();
+    const uint64_t gotOn = mMidi.noteOnsOut(), gotOff = mMidi.noteOffsOut();
+    if (on == 0 && off == 0 && gotOn == 0 && gotOff == 0) return;   // nothing played
+
+    LOGI("midi pkt=%llu msg=%llu on=%llu off=%llu -> on=%llu off=%llu "
+         "ringFull=%llu short=%llu undec=%llu filt=%llu sinkFull=%llu err=%llu(%d)",
+         static_cast<unsigned long long>(u.packets()),
+         static_cast<unsigned long long>(u.messages()),
+         static_cast<unsigned long long>(on),
+         static_cast<unsigned long long>(off),
+         static_cast<unsigned long long>(gotOn),
+         static_cast<unsigned long long>(gotOff),
+         static_cast<unsigned long long>(u.ringFull()),
+         static_cast<unsigned long long>(u.shortReads()),
+         static_cast<unsigned long long>(u.undecoded()),
+         static_cast<unsigned long long>(u.filtered()),
+         static_cast<unsigned long long>(mMidi.sinkFull()),
+         static_cast<unsigned long long>(u.errors()), u.lastErrno());
 }
 
 void AudioEngine::renderBlockIntoRing(int frames) {
     bagosynths::Schedule* schedule = mSchedule.load(std::memory_order_acquire);
     if (schedule == nullptr) return;
+
+    updateInstrumentGates(frames);
 
     // MIDI is consumed HERE, not in the callback: events are applied at render
     // time, which runs ahead of playback by the ring's reserve.
@@ -498,7 +783,7 @@ void AudioEngine::renderBlockIntoRing(int frames) {
     }
 
     const int chunk = std::min(frames, mScratchFrames);
-    schedule->run(chunk, mStream ? mStream->getSampleRate() : 44100.0);
+    schedule->run(chunk, currentRate());
 
     // Interleave, dither, and write into the ring.
     if (schedule->audioOutputSource != nullptr) {
@@ -509,13 +794,25 @@ void AudioEngine::renderBlockIntoRing(int frames) {
         // in registers, so the meter is very nearly free. "Am I making signal?"
         // is a question a three-part rig raises constantly, and answering it on
         // screen beats answering it by listening to a PA at soundcheck.
-        float peak = 0.0f;
+        //
+        // The master volume is applied HERE, at the end of everything: after
+        // the limiter, before the ring, and so before the single conversion to
+        // the device's format. The meter below therefore reads post-master --
+        // what actually leaves, not what the graph produced.
+        // Ramped like the instrument levels, and for the same reason: a fader
+        // drag steps the gain once per block, and a big jump -- a preset
+        // recall, a mute -- is a step in the samples. The ramp is applied to
+        // the interleaved scratch, which is the last place the float signal
+        // exists before the sink converts it.
+        const float master = mMasterGain.load(std::memory_order_relaxed);
         for (int i = 0; i < chunk; ++i) {
-            const float sl = l[i];
-            const float sr = r[i];
-            mScratch[i * 2] = sl;
-            mScratch[i * 2 + 1] = sr;
-            peak = std::max(peak, std::max(std::fabs(sl), std::fabs(sr)));
+            mScratch[i * 2] = l[i];
+            mScratch[i * 2 + 1] = r[i];
+        }
+        mMasterRamp.applyInterleavedStereo(mScratch.data(), chunk, master);
+        float peak = 0.0f;
+        for (int i = 0; i < chunk * 2; ++i) {
+            peak = std::max(peak, std::fabs(mScratch[i]));
         }
         // Decay, so the number falls back on its own rather than latching at the
         // loudest thing that ever happened. One block at 44100 is 2.9 ms, and
@@ -544,10 +841,19 @@ void AudioEngine::renderBlockIntoRing(int frames) {
 }
 
 void AudioEngine::renderLoop() {
-    // Ordinary thread, raised priority. Denormal flushing is per-thread, and
-    // this is now the thread that does the arithmetic.
-    setpriority(PRIO_PROCESS, 0, -19);
+    // Real-time if the system will grant it, urgent-audio nice if not, and it
+    // says which in the log. Denormal flushing is per-thread, and this is the
+    // thread that does the arithmetic.
+    bos::raiseRenderPriority("render thread");
     enableFlushToZero();
+
+    // And the part that actually moves the needle on this tablet: a
+    // Performance Hint session. A nice value only orders this thread against
+    // others; the hint tells the governor there is a DEADLINE, so it raises
+    // the clock and keeps the thread off the little cores rather than
+    // discovering the miss afterwards. The deadline is one render block.
+    mPerfHint.start({gettid()},
+                    static_cast<int64_t>(kRenderBlockFrames / currentRate() * 1e9));
 
     int64_t seenUnderruns = mRingUnderruns.load(std::memory_order_relaxed);
     double lastChange = nowSeconds();
@@ -580,16 +886,22 @@ void AudioEngine::renderLoop() {
         if (filled < static_cast<uint32_t>(target)) {
             const double t0 = nowSeconds();
             renderBlockIntoRing(kRenderBlockFrames);
-            const auto ms = static_cast<float>((nowSeconds() - t0) * 1000.0);
+            const double spent = nowSeconds() - t0;
+            const auto ms = static_cast<float>(spent * 1000.0);
             if (ms > mRenderMaxMs.load(std::memory_order_relaxed)) {
                 mRenderMaxMs.store(ms, std::memory_order_relaxed);
             }
+            // Only the blocks we actually rendered are reported. The sleep
+            // branch below is idle time, and telling the governor that the
+            // work took no time at all would make it wind the clock DOWN.
+            mPerfHint.report(static_cast<int64_t>(spent * 1e9));
         } else {
             // Reserve is full. Sleep briefly rather than spin: this thread must
             // not steal CPU from the callback.
             std::this_thread::sleep_for(std::chrono::microseconds(500));
         }
     }
+    mPerfHint.stop();
 }
 
 void AudioEngine::runLatencyProbe(float* out, int32_t numFrames) {
@@ -828,6 +1140,17 @@ AudioEngine::Stats AudioEngine::stats() const {
     s.cpuLoadPercent = mCpuLoad.load(std::memory_order_relaxed);
     s.callbackMaxMs = mCallbackMaxMs.load(std::memory_order_relaxed);
     s.activeVoices = mSfizz ? mSfizz->activeVoices() : 0;
+    // The high-water mark, because the instantaneous count is sampled four
+    // times a second and the moment that matters -- hitting the ceiling, where
+    // sfizz starts stealing voices -- lasts far less than that. Without this,
+    // "it reaches 64" is something only a person watching the screen can say.
+    {
+        int peak = mPeakVoices.load(std::memory_order_relaxed);
+        while (s.activeVoices > peak &&
+               !mPeakVoices.compare_exchange_weak(peak, s.activeVoices,
+                                                  std::memory_order_relaxed)) {
+        }
+    }
     s.outputPeak = mOutputPeak.load(std::memory_order_relaxed);
     s.deviceId = mActualDeviceId.load(std::memory_order_relaxed);
     s.loading = mLoading.load(std::memory_order_relaxed) ? 1 : 0;
@@ -890,11 +1213,59 @@ AudioEngine::Stats AudioEngine::stats() const {
         if (latency) s.latencyMs = static_cast<float>(latency.value());
     }
 
+    if (mUsbActive.load(std::memory_order_acquire)) {
+        const UsbAudioOut::Stats u = mUsbOut.stats();
+        const double rate = currentRate();
+        s.usbActive = 1;
+        s.usbRunning = mUsbOut.running() ? 1 : 0;
+        // A USB sink that has died on its own (the device went away, or a
+        // submission failed) must read as NOT running, or the watchdog would
+        // never rebuild it.
+        s.running = (s.running != 0 && s.usbRunning != 0) ? 1 : 0;
+        s.sampleRate = static_cast<int32_t>(rate);
+        s.burstFrames = mUsbOut.framesPerUrb();
+        s.bufferFrames = mUsbOut.framesPerUrb() * mUsbOut.urbCount();
+        // What sits between the render thread and the wire: the URBs in flight
+        // plus the ring's reserve. There is no HAL latency to ask for here, and
+        // nothing hidden below it.
+        s.latencyMs = static_cast<float>(1000.0 * s.bufferFrames / rate) +
+                      mRingFillMs.load(std::memory_order_relaxed);
+        s.sharingMode = -1;
+        s.performanceMode = -1;
+        s.usesAAudio = 0;
+        s.usbDeficitMs = u.deficitMs;
+        s.usbLate = static_cast<int32_t>(u.late);
+        s.usbStarved = static_cast<int32_t>(u.starved);
+        s.usbErrors = static_cast<int32_t>(u.outErrors + u.inErrors);
+        s.usbFeedbackRate = u.feedbackRate;
+        s.usbMaxGapMs = u.maxGapMs;
+
+        const double now = nowSeconds();
+        if (now - mLastHealthLogAt.load(std::memory_order_relaxed) > 10.0) {
+            mLastHealthLogAt.store(now, std::memory_order_relaxed);
+            const std::string why = mUsbOut.fatal();
+            LOGI("health usb %s  out=%.4f cb=%.4f voices=%d/%d frames=%lld deficit=%.1fms "
+                 "late=%lld starved=%lld errors=%lld fb=%.1fHz ringUnder=%lld%s%s",
+                 s.usbRunning ? "ok" : "DOWN",
+                 static_cast<double>(s.outputPeak),
+                 static_cast<double>(mCallbackPeak.load(std::memory_order_relaxed)),
+                 s.activeVoices, mPeakVoices.load(std::memory_order_relaxed),
+                 static_cast<long long>(u.frames),
+                 static_cast<double>(u.deficitMs), static_cast<long long>(u.late),
+                 static_cast<long long>(u.starved),
+                 static_cast<long long>(u.outErrors + u.inErrors),
+                 static_cast<double>(u.feedbackRate),
+                 static_cast<long long>(mRingUnderruns.load(std::memory_order_relaxed)),
+                 why.empty() ? "" : " fatal=", why.c_str());
+            logMidiChain();
+        }
+    }
+
     s.ringUnderruns = mRingUnderruns.load(std::memory_order_relaxed);
     s.ringFillMs = mRingFillMs.load(std::memory_order_relaxed);
     s.renderMaxMs = mRenderMaxMs.load(std::memory_order_relaxed);
     s.ringTargetMs = static_cast<float>(1000.0 * mTargetFill.load(std::memory_order_relaxed) /
-                                        (mStream ? mStream->getSampleRate() : 44100.0));
+                                        currentRate());
     s.probeState = static_cast<int32_t>(mProbeState.load(std::memory_order_acquire));
     s.roundTripMs = mRoundTripMs.load(std::memory_order_relaxed);
     s.inputPeak = mInputPeak.load(std::memory_order_relaxed);
@@ -917,16 +1288,19 @@ AudioEngine::Stats AudioEngine::stats() const {
         const bool stalled = s.timestampOk != 0 && s.stalledSeconds > 1.0f;
         if (now - lastLog > 10.0 || (stalled && now - lastLog > 1.0)) {
             mLastHealthLogAt.store(now, std::memory_order_relaxed);
-            LOGI("health %s  out=%.4f cb=%.4f voices=%d presented=%lld stalled=%.1fs "
+            LOGI("health %s  out=%.4f cb=%.4f voices=%d/%d presented=%lld stalled=%.1fs "
                  "state=%d xruns=%d ringUnder=%lld fill=%.1fms dev=%d",
                  stalled ? "STALLED" : "ok",
                  static_cast<double>(s.outputPeak),
                  static_cast<double>(mCallbackPeak.load(std::memory_order_relaxed)),
-                 s.activeVoices,
+                 s.activeVoices, mPeakVoices.load(std::memory_order_relaxed),
                  static_cast<long long>(mLastPresented.load(std::memory_order_relaxed)),
                  static_cast<double>(s.stalledSeconds), s.streamState, s.xRuns,
                  static_cast<long long>(s.ringUnderruns),
                  static_cast<double>(s.ringFillMs), s.deviceId);
+            // Also on the ALSA path: the comparison only means something if
+            // both modes are counted the same way.
+            logMidiChain();
 
             // The one unambiguous combination, shouted so it is findable in a
             // long log: the engine is making signal, and the hardware is not
@@ -953,6 +1327,7 @@ void AudioEngine::resetPeaks() {
     // passage expensive?". A peak you cannot re-arm is not a measurement.
     mRenderMaxMs.store(0.0f, std::memory_order_relaxed);
     mRingUnderruns.store(0, std::memory_order_relaxed);
+    mUsbOut.resetPeaks();
 
     // Per-node peaks as well, so the profile log and this button agree.
     if (bagosynths::Schedule* s = mSchedule.load(std::memory_order_acquire)) {
@@ -964,6 +1339,7 @@ void AudioEngine::resetPeaks() {
     if (mFluid != nullptr) mFluid->resetProfile();
     if (mHammond != nullptr) mHammond->resetProfile();
     if (mSfizz != nullptr) mSfizz->resetProfile();
+    for (float& p : mNodePeakHold) p = 0.0f;
 }
 
 
@@ -980,7 +1356,6 @@ bool AudioEngine::rebuildGraph(std::string* error) {
         auto plaits = std::make_unique<bagosynths::PlaitsNode>();
         auto fluid = std::make_unique<bagosynths::FluidNode>();
         auto reverb = std::make_unique<bagosynths::ReverbNode>();
-        auto limiter = std::make_unique<bagosynths::LimiterNode>();
         auto out = std::make_unique<bagosynths::AudioOutNode>();
 
         mSfizz = sfizz.get();
@@ -990,7 +1365,6 @@ bool AudioEngine::rebuildGraph(std::string* error) {
         mPlaits = plaits.get();
         mFluid = fluid.get();
         mReverb = reverb.get();
-        mLimiter = limiter.get();
 
         const bagosynths::NodeId idMidi = mGraph.addNode(std::move(midiIn));
         const bagosynths::NodeId idSfizz = mGraph.addNode(std::move(sfizz));
@@ -1000,7 +1374,6 @@ bool AudioEngine::rebuildGraph(std::string* error) {
         const bagosynths::NodeId idPlaits = mGraph.addNode(std::move(plaits));
         const bagosynths::NodeId idFluid = mGraph.addNode(std::move(fluid));
         const bagosynths::NodeId idReverb = mGraph.addNode(std::move(reverb));
-        const bagosynths::NodeId idLimiter = mGraph.addNode(std::move(limiter));
         const bagosynths::NodeId idOut = mGraph.addNode(std::move(out));
 
         // The default patch. Built in code; identical in every respect to what
@@ -1010,13 +1383,23 @@ bool AudioEngine::rebuildGraph(std::string* error) {
         //             |               |
         //             +--> Hammond  --+
         //             |               |
-        //             +--> Surge XT --+--> Reverb --> Limiter --> Audio Out
+        //             +--> Surge XT --+--> Reverb --> Audio Out
         //             |               |
         //             +--> Dexed    --+
         //             |               |
         //             +--> Plaits   --+
         //             |               |
         //             +--> FluidSynth-+
+        //
+        // NO LIMITER IN THE DEFAULT PATCH (Michiel, 2026-09-22). LimiterNode
+        // still exists and the graph editor may place one, but it does not
+        // belong in the minimal chain: it reduced gain invisibly, with no
+        // control anywhere in the UI, which is a change to how the instrument
+        // SOUNDS that nobody asked for and nobody can see. What follows the
+        // master volume now is the conversion to the device's format and
+        // nothing else -- saturating on overs, dithered only for a 16-bit
+        // target. An over is then audible as an over, which is honest and is
+        // what a fader is for.
         //
         // Every instrument sees every note and every one runs every block.
         // That is the pedalboard model taken at its word: parts are mixed, not
@@ -1040,8 +1423,7 @@ bool AudioEngine::rebuildGraph(std::string* error) {
         mGraph.connect(idDexed, 0, idReverb, 0);
         mGraph.connect(idPlaits, 0, idReverb, 0);
         mGraph.connect(idFluid, 0, idReverb, 0);
-        mGraph.connect(idReverb, 0, idLimiter, 0);
-        mGraph.connect(idLimiter, 0, idOut, 0);
+        mGraph.connect(idReverb, 0, idOut, 0);
 
         mGraph.setMidiEntry(idMidi);
         mGraph.setAudioExit(idOut);
@@ -1055,7 +1437,7 @@ bool AudioEngine::rebuildGraph(std::string* error) {
         mFluid->setParam(bagosynths::FluidNode::kLevel, 0.0f);
     }
 
-    const double rate = mStream ? mStream->getSampleRate() : 44100.0;
+    const double rate = currentRate();
     const int frames = mScratchFrames > 0 ? mScratchFrames : 2048;
 
     auto compiled = mGraph.compile(rate, frames, error);
@@ -1210,7 +1592,7 @@ void AudioEngine::initFluidAsync(const std::vector<std::string>& dirs) {
     if (mFluid == nullptr) return;
     if (mFluidBusy.exchange(true, std::memory_order_acq_rel)) return;
 
-    const double rate = mStream ? mStream->getSampleRate() : 44100.0;
+    const double rate = currentRate();
     if (!runOnBigStack([this, dirs, rate] {
             if (mFluid->init(rate)) {
                 mFluid->scanSoundFonts(dirs);
@@ -1384,6 +1766,20 @@ void AudioEngine::logProfile() {
              mSfizz->maxNoteMs(), mSfizz->maxRenderMs(), mSfizz->lastNoteOns(),
              mSfizz->pendingNoteOns(), mSfizz->pendingDropped());
         mSfizz->resetProfile();
+    }
+    // Per-engine loudness, so gain staging is a measurement rather than an
+    // argument. dBFS of the engine's own output BEFORE its level fader, held
+    // since the last reset: play the same note on each engine in turn and the
+    // numbers say what "much quieter" is worth in decibels.
+    {
+        static const char* kNames[6] = {"sfizz", "Hammond", "Surge XT",
+                                        "Dexed", "Plaits", "FluidSynth"};
+        for (int i = 0; i < 6; ++i) {
+            if (mNodePeakHold[i] <= 0.0f) continue;
+            LOGI("PROFILE %-12s peak %.4f (%.1f dBFS, pre-level)", kNames[i],
+                 static_cast<double>(mNodePeakHold[i]),
+                 20.0 * std::log10(static_cast<double>(mNodePeakHold[i])));
+        }
     }
     LOGI("PROFILE block deadline = %.3f ms, xruns = %d",
          mStream ? 1000.0 * mStream->getFramesPerBurst() / mStream->getSampleRate() : 0.0,

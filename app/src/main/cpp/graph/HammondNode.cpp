@@ -123,6 +123,10 @@ HammondNode::~HammondNode() {
 }
 
 void HammondNode::prepare(double sampleRate, int maxFrames) {
+    // Start AT the current level, so a graph recompile does not fade the
+    // instrument in from silence.
+    mGain.prepare(sampleRate, mParams[kLevel]);
+
     // prepare() runs on every graph compile. Building the tone generator means
     // computing 91 wheels' worth of wavetables, which takes real time, so it
     // happens once per RATE rather than once per compile.
@@ -352,6 +356,11 @@ void HammondNode::applyParam(int index, float value) {
 
 // ------------------------------------------------------------------ process
 
+// Beatrix's own panic, the same call the CC 120/123 handling makes below.
+void HammondNode::allNotesOff() {
+    if (mInst != nullptr) midi_panic(mInst);
+}
+
 void HammondNode::process(const ProcessArgs& args) {
     if (args.numAudioOut < 1) return;
     const AudioPort& out = args.audioOut[0];
@@ -427,13 +436,14 @@ void HammondNode::process(const ProcessArgs& args) {
     }
     renderTo(args.numFrames);
 
-    const float level = mParams[kLevel];
-    if (level != 1.0f) {
-        for (int i = 0; i < args.numFrames; ++i) {
-            outL[i] *= level;
-            outR[i] *= level;
-        }
-    }
+    // Measured here, before the level: this is what the gate watches to decide
+    // that the rotary speaker and the reverb have finally run dry. After the
+    // multiply it would read zero the instant the part is switched away.
+    mLastPeak = blockPeak(outR, args.numFrames, blockPeak(outL, args.numFrames));
+
+    // Ramped, not stepped: switching away from the organ while it is sounding
+    // used to put a step straight into the samples.
+    mGain.apply(outL, outR, args.numFrames, mParams[kLevel]);
 
     const auto ms = static_cast<float>((nowSec() - t0) * 1000.0);
     if (ms > mMaxRenderMs) mMaxRenderMs = ms;

@@ -223,6 +223,10 @@ add_library(bagosynths SHARED
         native_bridge.cpp
         AudioEngine.cpp
         MidiInput.cpp
+        RealtimePriority.cpp
+        usb/UsbAudioOut.cpp
+        usb/UsbMidiIn.cpp
+        usb/UsbControl.cpp
         Synth.cpp
         graph/Nodes.cpp
         graph/HammondNode.cpp
