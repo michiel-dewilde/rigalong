@@ -279,7 +279,8 @@ public:
     void injectUsbBias(int count, int delta) { mUsbOut.injectBias(count, delta); }
     void injectUsbStarve(int count) { mUsbOut.injectStarve(count); }
     void setUsbBalanceGuard(bool on) { mUsbOut.setBalanceGuard(on); }
-    void holdUsbOut(int us, int count) { mUsbOut.holdOut(us, count); }
+    void setUsbTone(float hz) { mUsbOut.setTone(hz); }
+    void holdUsbOut(int us, int count, int every) { mUsbOut.holdOut(us, count, every); }
 
     /// The rate the CHOSEN DEVICE declares, from AudioDeviceInfo. 0 = let
     /// AAudio decide. Takes effect on the next openStream().

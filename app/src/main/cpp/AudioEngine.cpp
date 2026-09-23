@@ -1440,7 +1440,7 @@ AudioEngine::Stats AudioEngine::stats() const {
             LOGI("health usb %s  out=%.4f cb=%.4f voices=%d/%d frames=%lld deficit=%.1fms "
                  "late=%lld starved=%lld errors=%lld fb=%.1fHz ringUnder=%lld ringTarget=%.1fms "
                  "inSize=%d..%d/%lld fbDrift=%lld fbDrop=%lld fbClamp=%lld "
-                 "inLost=%lld zeroAvoided=%lld shaped=%lld bal=%lld/%lld rise=%lld fifo=%lld held=%lld outShort=%lld outOdd=%lld%s%s",
+                 "inLost=%lld zeroAvoided=%lld shaped=%lld bal=%lld/%lld rise=%lld fifo=%lld held=%lld outShort=%lld outOdd=%lld outDry=%lld%s%s",
                  s.usbRunning ? "ok" : "DOWN",
                  static_cast<double>(s.outputPeak),
                  static_cast<double>(mCallbackPeak.load(std::memory_order_relaxed)),
@@ -1498,6 +1498,11 @@ AudioEngine::Stats AudioEngine::stats() const {
                  // other counter here can see.
                  static_cast<long long>(u.outShort),
                  static_cast<long long>(u.outOdd),
+                 // Times the OUT ring certainly emptied, so ISO_ASAP RESTARTED
+                 // the stream instead of resuming it. The count, not the
+                 // duration -- `deficit` is the duration and it does not
+                 // separate a run that latches from one that does not.
+                 static_cast<long long>(u.outDry),
                  why.empty() ? "" : " fatal=", why.c_str());
             logMidiChain();
         }

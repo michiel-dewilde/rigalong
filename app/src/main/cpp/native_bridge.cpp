@@ -149,8 +149,14 @@ Java_be_mdw_bagosynths_NativeBridge_nativeSetBalanceGuard(JNIEnv*, jobject, jboo
 }
 
 JNIEXPORT void JNICALL
-Java_be_mdw_bagosynths_NativeBridge_nativeHoldOut(JNIEnv*, jobject, jint us, jint count) {
-    engine().holdUsbOut(us, count);
+Java_be_mdw_bagosynths_NativeBridge_nativeSetUsbTone(JNIEnv*, jobject, jfloat hz) {
+    engine().setUsbTone(hz);
+}
+
+JNIEXPORT void JNICALL
+Java_be_mdw_bagosynths_NativeBridge_nativeHoldOut(JNIEnv*, jobject, jint us,
+                                                  jint count, jint every) {
+    engine().holdUsbOut(us, count, every);
 }
 
 JNIEXPORT void JNICALL

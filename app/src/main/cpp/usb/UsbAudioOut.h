@@ -185,6 +185,7 @@ public:
         int64_t fifoPeak = 0;    // modelled device FIFO, worst this interval
         int64_t outShort = 0;    // OUT packets the controller cut short; MUST stay 0
         int64_t outOdd = 0;      // OUT packets not a whole number of frames; MUST stay 0
+        int64_t outDry = 0;      // reap gaps longer than the OUT ring: stream RESTARTS
         int64_t balanceHeld = 0; // packets the ceiling cut down; should stay 0
         int64_t fbDrop = 0;          // requests discarded on queue overflow
         int64_t fbClamp = 0;         // requests cut down to the max packet
@@ -247,10 +248,21 @@ public:
 
     // Delay the resubmission of OUT URBs only, `count` times, `us` each. IN
     // keeps being serviced from its own queue throughout. TEST ONLY.
-    void holdOut(int us, int count) {
+    // `every` spaces the holds out: hold on every Nth OUT URB rather than on
+    // consecutive ones, which is the difference between one long hole and many
+    // short ones. Back-to-back holds merge into a single absence, which is the
+    // shape already known to be survivable.
+    void holdOut(int us, int count, int every) {
         mHoldOutUs.store(us, std::memory_order_relaxed);
+        mHoldOutEvery.store(every, std::memory_order_relaxed);
+        mHoldOutSeen = 0;
         mHoldOutLeft.store(count, std::memory_order_relaxed);
     }
+
+    // Replace the payload with usbhost's tone while everything else -- threads,
+    // priorities, packet sizes, the ring and the render load behind it --
+    // stays exactly as it is. 0 turns it off. TEST ONLY.
+    void setTone(float hz) { mToneHz.store(hz, std::memory_order_relaxed); }
 
     void injectStarve(int count) {
         mInjectStarve.store(count, std::memory_order_relaxed);
@@ -427,8 +439,14 @@ private:
     mutable std::atomic<int64_t> mFifoPeak{0};
     std::atomic<int64_t> mOutShort{0};
     std::atomic<int64_t> mOutOdd{0};
+    std::atomic<int64_t> mOutDry{0};
+    int64_t mOutRingUs = 0;
+    std::atomic<float> mToneHz{0.0f};
+    double mTonePhase = 0.0;
     std::atomic<int64_t> mHoldOutUs{0};
     std::atomic<int64_t> mHoldOutLeft{0};
+    std::atomic<int64_t> mHoldOutEvery{1};
+    int64_t mHoldOutSeen = 0;
     std::atomic<int64_t> mInjectStarve{0};
     std::atomic<int64_t> mInjectSizeLeft{0};
     std::atomic<int32_t> mInjectSizeFrames{0};

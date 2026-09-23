@@ -46,8 +46,11 @@ object NativeBridge {
     /** The cumulative-balance ceiling. Off only to reproduce the old fault. */
     external fun nativeSetBalanceGuard(on: Boolean)
 
+    /** Replaces the USB payload with a tone, load and sizes unchanged. TEST ONLY. */
+    external fun nativeSetUsbTone(hz: Float)
+
     /** Delays OUT resubmission only, [count] times, [us] each. TEST ONLY. */
-    external fun nativeHoldOut(us: Int, count: Int)
+    external fun nativeHoldOut(us: Int, count: Int, every: Int)
 
     external fun nativeResetPeaks()
     external fun nativeTestNote(note: Int, velocity: Int)

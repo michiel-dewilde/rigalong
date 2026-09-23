@@ -201,6 +201,7 @@ class MainActivity : Activity() {
         filter.addAction("be.mdw.bagosynths.BIAS")
         filter.addAction("be.mdw.bagosynths.STARVE")
         filter.addAction("be.mdw.bagosynths.GUARD")
+        filter.addAction("be.mdw.bagosynths.TONE")
         filter.addAction("be.mdw.bagosynths.HOLD")
         filter.addAction("be.mdw.bagosynths.CONCEAL")
         filter.addAction("be.mdw.bagosynths.REINIT")
@@ -1848,7 +1849,14 @@ class MainActivity : Activity() {
                     val ms = intent.getIntExtra("ms", 100)
                     val k = intent.getIntExtra("times", 1)
                     android.util.Log.i("bos-ui", "inject: $k OUT holds of $ms ms")
-                    NativeBridge.nativeHoldOut(ms * 1000, k)
+                    NativeBridge.nativeHoldOut(ms * 1000, k, intent.getIntExtra("every", 1))
+                }
+                //   ... .TONE --ef hz 440   usbhost's payload, this app's transport
+                "be.mdw.bagosynths.TONE" -> {
+                    val hz = intent.getFloatExtra("hz", 0f)
+                    NativeBridge.nativeSetUsbTone(hz)
+                    android.util.Log.i("bos-ui", "usb payload: " +
+                        if (hz > 0f) "synthetic tone ${hz} Hz" else "the engine")
                 }
                 //   ... .GUARD --ei on 0    overfeeding allowed again
                 "be.mdw.bagosynths.GUARD" -> {

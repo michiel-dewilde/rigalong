@@ -107,6 +107,7 @@ bool UsbAudioOut::start(const Config& config, PullFn pull, void* ctx, std::strin
     mBalPeak = std::numeric_limits<int64_t>::min();
     mBalRise = 0;
     mOutShort = 0; mOutOdd = 0;
+    mOutDry = 0;
     mFifoFrames = 0;
     mFifoPeak = 0;
     mFifoCeiling = static_cast<int64_t>(mUrbs) * mPackets * mCfg.rate / 1000 +
@@ -438,6 +439,39 @@ void UsbAudioOut::fillOut(Urb& b) {
                         static_cast<size_t>(frames - got) * mFrameBytes);
         }
 
+        // MICHIEL'S EXPERIMENT: usbhost's payload, in this process.
+        //
+        // usbhost has never latched and this app does, and "it has no
+        // synthesiser" was withdrawn as an explanation because it explains
+        // nothing. This isolates the one remaining difference in what reaches
+        // the wire: the bytes. The pull above STILL RUNS, so the ring drains at
+        // exactly the normal rate and the render thread keeps rendering at
+        // exactly the normal load -- the render loop only works when
+        // `filled < target`, so a reaper that stopped consuming would quietly
+        // switch the load off and prove nothing. Same threads, same priorities,
+        // same sizes, same ring traffic. Only the payload changes, to the tone
+        // usbhost sends.
+        if (mToneHz.load(std::memory_order_relaxed) > 0.0f) {
+            const double hz = mToneHz.load(std::memory_order_relaxed);
+            const double step = 2.0 * M_PI * hz / mCfg.rate;
+            const int chans = std::max(1, mCfg.channels);
+            const int sub = std::max(1, mCfg.subslotBytes);
+            for (int f = 0; f < frames; ++f) {
+                mTonePhase += step;
+                if (mTonePhase > 2.0 * M_PI) mTonePhase -= 2.0 * M_PI;
+                // Quiet on purpose: the verdict comes from the probe with the
+                // tone switched back off, and content has been excluded anyway.
+                const double v = std::sin(mTonePhase) * 0.02;
+                int32_t q = static_cast<int32_t>(v * 8388607.0);
+                if (sub == 2) q = static_cast<int32_t>(v * 32767.0);
+                else if (sub == 4) q = static_cast<int32_t>(v * 2147483647.0);
+                for (int c = 0; c < chans; ++c) {
+                    uint8_t* o = dst + (static_cast<size_t>(f) * chans + c) * sub;
+                    for (int k = 0; k < sub; ++k) o[k] = static_cast<uint8_t>(q >> (8 * k));
+                }
+            }
+        }
+
         const int bytes = frames * mFrameBytes;
         b.u->iso_frame_desc[p].length = static_cast<unsigned>(bytes);
         b.u->iso_frame_desc[p].actual_length = 0;
@@ -597,6 +631,7 @@ void UsbAudioOut::reapLoop() {
     // queued for its whole 256 ms, and the counter read 119582 in one trial.
     const int64_t outRingNs =
             static_cast<int64_t>(mUrbs * mPackets * mPeriodUs * 1000.0);
+    mOutRingUs = static_cast<int64_t>(mUrbs * mPackets * mPeriodUs);
     const int64_t inRingNs =
             static_cast<int64_t>(mInUrbs * mPackets * mPeriodUs * 1000.0);
 
@@ -616,6 +651,17 @@ void UsbAudioOut::reapLoop() {
         if (gapUs > mMaxGapUs.load(std::memory_order_relaxed)) {
             mMaxGapUs.store(gapUs, std::memory_order_relaxed);
         }
+        // HOW OFTEN THE OUT ENDPOINT RAN DRY, which is not the same question as
+        // how long it was dry for, and only the second one has ever been
+        // measured. `deficit` is total absence: the run that latches shows 73
+        // ms of it, and a run of forty 300 ms holes shows 11 612 ms and plays
+        // on. So the dose is not the variable. The count might be, because
+        // every URB here carries ISO_ASAP: a ring that merely runs late is
+        // resumed, but a ring that EMPTIES is restarted at whatever frame the
+        // controller has reached by then. Forty big holes are forty restarts;
+        // a render thread jittering either side of six milliseconds could be
+        // thousands, for almost no total absence at all.
+        if (gapUs > mOutRingUs) mOutDry.fetch_add(1, std::memory_order_relaxed);
         lastReap = t;
 
         auto* u = static_cast<usbdevfs_urb*>(p);
@@ -650,7 +696,11 @@ void UsbAudioOut::reapLoop() {
             // stalls tested previously do not reproduce that: this does, and it
             // does it with no synthesiser, no spinners and no lateness.
             const int64_t holdUs = mHoldOutUs.load(std::memory_order_relaxed);
-            if (holdUs > 0 && mHoldOutLeft.fetch_sub(1, std::memory_order_relaxed) > 0) {
+            const int64_t every = mHoldOutEvery.load(std::memory_order_relaxed);
+            bool due = true;
+            if (every > 1) due = (++mHoldOutSeen % every) == 0;
+            if (holdUs > 0 && due &&
+                mHoldOutLeft.fetch_sub(1, std::memory_order_relaxed) > 0) {
                 timespec ts{static_cast<time_t>(holdUs / 1000000),
                             static_cast<long>((holdUs % 1000000) * 1000)};
                 nanosleep(&ts, nullptr);
@@ -707,6 +757,7 @@ UsbAudioOut::Stats UsbAudioOut::stats() const {
     s.fifoPeak = mFifoPeak.exchange(0, std::memory_order_relaxed);
     s.outShort = mOutShort.load(std::memory_order_relaxed);
     s.outOdd = mOutOdd.load(std::memory_order_relaxed);
+    s.outDry = mOutDry.load(std::memory_order_relaxed);
     s.balanceHeld = mBalanceHeld.load(std::memory_order_relaxed);
     s.maxGapMs = mMaxGapUs.load(std::memory_order_relaxed) / 1000.0f;
     s.feedbackRate = mFbRate.load(std::memory_order_relaxed);
