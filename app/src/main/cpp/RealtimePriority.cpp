@@ -8,6 +8,7 @@
 
 #include <cerrno>
 #include <cstring>
+#include <atomic>
 #include <string>
 
 #define LOG_TAG "bos-sched"
@@ -52,6 +53,75 @@ void raiseRenderPriority(const char* what, int niceValue) {
 // what it is doing: if the platform has the symbols, use them; if not, do
 // nothing. It also survives a device that ships the header's API level without
 // the implementation.
+namespace {
+
+// -1 means no pinning at all, which is the default and the shipped behaviour.
+std::atomic<int> gTransportCore{-1};
+std::atomic<bool> gPinTransportThread{false};
+
+// The mask that was actually granted, read back rather than assumed: a
+// setaffinity that succeeds can still be narrowed by the cpuset the app is in.
+std::string allowedList() {
+    cpu_set_t got;
+    CPU_ZERO(&got);
+    if (sched_getaffinity(0, sizeof(got), &got) != 0) return "unknown";
+    std::string out;
+    for (int i = 0; i < CPU_SETSIZE && i < 64; ++i) {
+        if (!CPU_ISSET(i, &got)) continue;
+        if (!out.empty()) out += ",";
+        out += std::to_string(i);
+    }
+    return out.empty() ? "none" : out;
+}
+
+void applyAffinity(const char* what, bool onlyTransportCore) {
+    const int core = gTransportCore.load(std::memory_order_relaxed);
+    if (core < 0) return;                       // the default: do nothing
+    const long cores = sysconf(_SC_NPROCESSORS_CONF);
+    if (core >= cores) {
+        LOGI("%s: transport core %d does not exist (%ld cores)", what, core, cores);
+        return;
+    }
+    cpu_set_t set;
+    CPU_ZERO(&set);
+    if (onlyTransportCore) {
+        CPU_SET(core, &set);
+    } else {
+        for (long i = 0; i < cores; ++i) {
+            if (i != core) CPU_SET(static_cast<int>(i), &set);
+        }
+    }
+    if (sched_setaffinity(0, sizeof(set), &set) != 0) {
+        LOGE("%s: affinity refused: %s", what, std::strerror(errno));
+        return;
+    }
+    LOGI("%s: cpus %s", what, allowedList().c_str());
+}
+
+}  // namespace
+
+void setTransportCore(int core) {
+    gTransportCore.store(core, std::memory_order_relaxed);
+    LOGI("transport core: %s", core < 0 ? "none (default)"
+                                        : std::to_string(core).c_str());
+}
+int transportCore() { return gTransportCore.load(std::memory_order_relaxed); }
+
+void setPinTransportThread(bool pin) {
+    gPinTransportThread.store(pin, std::memory_order_relaxed);
+}
+
+void pinToTransportCore(const char* what) {
+    // In reserve mode the reap thread is deliberately left alone: the core is
+    // kept clear of our renderer, but this thread may still run anywhere.
+    if (!gPinTransportThread.load(std::memory_order_relaxed)) {
+        LOGI("%s: not pinned (core reserved, thread free to migrate)", what);
+        return;
+    }
+    applyAffinity(what, true);
+}
+void pinOffTransportCore(const char* what) { applyAffinity(what, false); }
+
 namespace {
 
 struct Adpf {

@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "AudioEngine.h"
+#include "RealtimePriority.h"
 #include "usb/UsbControl.h"
 
 #include <linux/usbdevice_fs.h>
@@ -115,6 +116,18 @@ Java_be_mdw_bagosynths_NativeBridge_nativeRecordedSeconds(JNIEnv*, jobject) {
 JNIEXPORT jboolean JNICALL
 Java_be_mdw_bagosynths_NativeBridge_nativeIsRecording(JNIEnv*, jobject) {
     return engine().isRecording() ? JNI_TRUE : JNI_FALSE;
+}
+
+JNIEXPORT void JNICALL
+Java_be_mdw_bagosynths_NativeBridge_nativeSetConcealment(JNIEnv*, jobject, jboolean on) {
+    engine().setConcealment(on == JNI_TRUE);
+}
+
+JNIEXPORT void JNICALL
+Java_be_mdw_bagosynths_NativeBridge_nativeSetTransportCore(JNIEnv*, jobject, jint core,
+                                                          jboolean pin) {
+    bos::setTransportCore(core);
+    bos::setPinTransportThread(pin == JNI_TRUE);
 }
 
 JNIEXPORT void JNICALL

@@ -24,6 +24,12 @@ object NativeBridge {
     /** Whether the native AMidi port is actually open. False after an unplug. */
     external fun nativeMidiOpen(): Boolean
     external fun nativePanic()
+    /** EXPERIMENT ONLY: pin the reap thread to this core, others off it. -1 = off (default). */
+    /** Underrun concealment on/off, for judging it by ear against its absence. */
+    external fun nativeSetConcealment(on: Boolean)
+
+    external fun nativeSetTransportCore(core: Int, pin: Boolean)
+
     /** Packets per OUT URB for the next direct-USB start; total depth stays the same. */
     external fun nativeSetPacketsPerUrb(n: Int)
 

@@ -104,7 +104,21 @@ object ModeRule {
  * So this value stands on latency alone, which is the reason to want it.
  */
 object UsbBuffers {
-    val choicesMs = intArrayOf(4, 8, 16)
+    // 16 ms is gone: it is more latency than a player will accept, so offering
+    // it only invites choosing it. 6 ms is in because it was never actually
+    // testable before -- the debug route silently ignored any value outside
+    // this list, so a sweep that asked for 6 ms quietly ran at 8 and was
+    // written down as a 6 ms result.
+    //
+    // Measured under a deliberately brutal stress (90 rounds of 64 voices
+    // against 16 CPU spinners), 2026-09-23:
+    //   4 ms  survived 0 of 3, deficit 3335-4467 ms
+    //   8 ms  survived 2 of 4, deficit 1296-1949 ms
+    // 4 ms stays a choice because that stress is far past playing, but it is
+    // the worst of them and the gap is structural rather than statistical: the
+    // endpoint holds half as much audio when the reap thread is descheduled
+    // for 100-300 ms, so it runs dry about twice as often.
+    val choicesMs = intArrayOf(4, 6, 8)
     const val DEFAULT_MS = 4
 }
 

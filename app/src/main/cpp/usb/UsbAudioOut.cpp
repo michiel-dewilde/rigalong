@@ -529,13 +529,15 @@ void UsbAudioOut::reapLoop() {
     // The highest band an app is given, and above the render thread: this is
     // the thread that actually puts audio on the wire.
     bos::raiseRenderPriority("usb reap thread", bos::kTransportNice);
+    // No-op unless a transport core was set for an experiment; see
+    // RealtimePriority.h. Shipped behaviour is no pinning at all.
+    bos::pinToTransportCore("usb reap thread");
     // The deadline is one URB: if this thread has not reaped, refilled and
     // resubmitted within that, the endpoint runs dry.
     mHint.start({gettid()},
                 static_cast<int64_t>(mPackets * mPeriodUs * 1000.0));
 
     int64_t lastReap = nowNs();
-    int64_t workStartNs = 0;
     // Per direction, because the two queues are deliberately different depths
     // now. Measuring IN URBs against the OUT ring made `late` meaningless the
     // moment the feedback stream went deep -- every IN URB legitimately sits
@@ -557,9 +559,7 @@ void UsbAudioOut::reapLoop() {
         }
         const int64_t t = nowNs();
         const int64_t gapUs = (t - lastReap) / 1000;
-        // What the previous iteration actually cost, reported before this one
-        // is measured. The governor uses the ratio against the target.
-        if (workStartNs != 0) mHint.report(t - workStartNs);
+
         if (gapUs > mMaxGapUs.load(std::memory_order_relaxed)) {
             mMaxGapUs.store(gapUs, std::memory_order_relaxed);
         }
@@ -617,8 +617,19 @@ void UsbAudioOut::reapLoop() {
             completeIn(*b);
             fillIn(*b, mPackets, mCfg.fbMaxPacket);
         }
-        workStartNs = nowNs();
         if (!submit(*b)) break;
+
+        // WHAT THE WORK ACTUALLY COST, which is not the same as the period.
+        //
+        // The first version of this reported the interval from one submit to
+        // the next reap, which is dominated by blocking in REAPURB waiting for
+        // the controller -- roughly the whole 2 ms period. Telling the governor
+        // that work costing tens of microseconds takes the entire deadline is
+        // simply false, and it asks for a permanent clock boost on a thread
+        // that is asleep for most of it. Measured here instead: reap returned
+        // at `t`, everything since then is completing, refilling and
+        // resubmitting, and that is the CPU time the deadline is about.
+        mHint.report(nowNs() - t);
 
         // The injected stall sits HERE, between handing one URB back and
         // reaping the next, because that is exactly where a descheduled reap

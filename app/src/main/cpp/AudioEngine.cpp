@@ -249,7 +249,7 @@ void AudioEngine::prepareRing(int32_t burst) {
     const int32_t minFill = std::min(std::max(kMinFillFrames, burst + burst / 2),
                                      kRingFrames / 2);
     mMinFill.store(minFill, std::memory_order_relaxed);
-    mMaxFill.store(std::min(std::max(kMaxFillFrames, minFill + 2 * kGrowFrames),
+    mMaxFill.store(std::min(std::max(kMaxFillFrames, minFill + kFillHeadroomFrames),
                             kRingFrames / 2), std::memory_order_relaxed);
     mTargetFill.store(minFill, std::memory_order_relaxed);
 }
@@ -340,7 +340,81 @@ uint32_t AudioEngine::pullFromRing(float* dst, uint32_t want) {
     const float cbHeld = mCallbackPeak.load(std::memory_order_relaxed) * 0.90f;
     mCallbackPeak.store(std::max(cbNow, cbHeld), std::memory_order_relaxed);
 
-    if (take < want) mRingUnderruns.fetch_add(1, std::memory_order_relaxed);
+    if (take < want) {
+        mRingUnderruns.fetch_add(1, std::memory_order_relaxed);
+
+        // CONCEAL rather than zero-fill. See the note on mConcealedFrames.
+        //
+        // The source is the ring ITSELF, read behind the play position: the
+        // writer is ahead of the reader, so the frames just consumed are still
+        // there and need no separate history buffer. One period back, looped.
+        //
+        // Three things make it sound like a covered gap rather than a fault:
+        // a short crossfade at the splice so the join is not a step, a decay
+        // to silence over ~40 ms so a long stall does not drone, and a counter
+        // that persists across calls so a stall spanning many pulls keeps
+        // fading instead of restarting at full level each time.
+        // Bounded by the scratch exactly as `take` is, because that clamp is
+        // what stops a request larger than the buffer running off the end of
+        // it. Concealment must not be the thing that reintroduces that.
+        const uint32_t safe = std::min(want, static_cast<uint32_t>(mScratchFrames));
+        const uint32_t missing = safe > take ? safe - take : 0;
+        if (!mConcealOn.load(std::memory_order_relaxed)) {
+            // The old behaviour, kept switchable: a hard jump to zero.
+            std::fill_n(dst + take * 2, missing * 2, 0.0f);
+            mConcealedFrames = 0;
+            mRingFillMs.store(0.0f, std::memory_order_relaxed);
+            return safe;
+        }
+        const uint32_t base = read + take;      // where the hole begins
+        for (uint32_t i = 0; i < missing; ++i) {
+            const uint32_t age = mConcealedFrames + i;
+            float g = 1.0f - static_cast<float>(age) / kConcealFadeFrames;
+            if (g < 0.0f) g = 0.0f;
+            const uint32_t phase = age % kConcealPeriodFrames;
+            const uint32_t back = kConcealPeriodFrames - phase;
+            const uint32_t idx = ((base + i - back) & (kRingFrames - 1)) * 2;
+            float l = mRing[idx];
+            float r = mRing[idx + 1];
+            // The loop SEAM needs the same treatment as the splice. Repeating a
+            // fixed period of pitched audio puts a waveform discontinuity at
+            // every wrap; blending the last frames of the period into the first
+            // removes it, at the cost of a little smearing nobody will hear
+            // under a fade this short.
+            if (phase >= kConcealPeriodFrames - kConcealXfadeFrames) {
+                const float w = static_cast<float>(kConcealPeriodFrames - phase) /
+                                kConcealXfadeFrames;
+                const uint32_t nIdx =
+                        ((base + i - back + kConcealPeriodFrames) & (kRingFrames - 1)) * 2;
+                l = l * w + mRing[nIdx] * (1.0f - w);
+                r = r * w + mRing[nIdx + 1] * (1.0f - w);
+            }
+            l *= g;
+            r *= g;
+            // Crossfade the very first frames of a NEW hole against the audio
+            // that really was delivered, so the splice is not a step.
+            if (mConcealedFrames == 0 && i < kConcealXfadeFrames && take > 0) {
+                const float w = static_cast<float>(i) / kConcealXfadeFrames;
+                const uint32_t lastIdx = ((base - 1) & (kRingFrames - 1)) * 2;
+                l = mRing[lastIdx] * (1.0f - w) + l * w;
+                r = mRing[lastIdx + 1] * (1.0f - w) + r * w;
+            }
+            dst[(take + i) * 2] = l;
+            dst[(take + i) * 2 + 1] = r;
+        }
+        mConcealedFrames += missing;
+        mConcealedTotal.fetch_add(missing, std::memory_order_relaxed);
+        // Everything that fits is now in dst, concealed or real.
+        for (uint32_t i = take * 2; i < safe * 2; ++i) {
+            cbNow = std::max(cbNow, std::fabs(dst[i]));
+        }
+        mCallbackPeak.store(std::max(cbNow,
+                                     mCallbackPeak.load(std::memory_order_relaxed)),
+                            std::memory_order_relaxed);
+        mRingFillMs.store(0.0f, std::memory_order_relaxed);
+        return safe;
+    }
+    mConcealedFrames = 0;
     mRingFillMs.store(static_cast<float>(1000.0 * (availableFrames - take) / currentRate()),
                       std::memory_order_relaxed);
     return take;
@@ -879,6 +953,7 @@ void AudioEngine::renderLoop() {
     // render block is absorbed and inaudible; nothing absorbs a late URB. See
     // RealtimePriority.h.
     bos::raiseRenderPriority("render thread", bos::kRenderNice);
+    bos::pinOffTransportCore("render thread");
     enableFlushToZero();
 
     // And the part that actually moves the needle on this tablet: a
@@ -890,6 +965,7 @@ void AudioEngine::renderLoop() {
                     static_cast<int64_t>(kRenderBlockFrames / currentRate() * 1e9));
 
     int64_t seenUnderruns = mRingUnderruns.load(std::memory_order_relaxed);
+    int64_t seenConcealed = mConcealedTotal.load(std::memory_order_relaxed);
     double lastChange = nowSeconds();
 
     while (mRenderRun.load(std::memory_order_acquire)) {
@@ -898,17 +974,30 @@ void AudioEngine::renderLoop() {
         int32_t target = mTargetFill.load(std::memory_order_relaxed);
         const double now = nowSeconds();
 
-        if (underruns != seenUnderruns) {
-            // It actually hurt. Deepen immediately -- latency is cheaper than a
-            // dropout, and this is the only evidence that matters.
-            seenUnderruns = underruns;
-            target = std::min(target + kGrowFrames, mMaxFill.load(std::memory_order_relaxed));
-            mTargetFill.store(target, std::memory_order_relaxed);
+        const int64_t concealed = mConcealedTotal.load(std::memory_order_relaxed);
+        const int64_t missed = concealed - seenConcealed;
+        seenUnderruns = underruns;                  // kept for the health line
+        if (missed > 0) {
+            seenConcealed = concealed;
+            // Any concealment at all counts as "not calm", so the reserve never
+            // shrinks through a rough patch made of small misses.
             lastChange = now;
+            if (missed >= kGrowThresholdFrames) {
+                // Deepen by what was actually missed, plus headroom. A one
+                // packet hiccup buys about 2 ms; a real stall still jumps hard.
+                const int32_t grow = static_cast<int32_t>(
+                        std::min<int64_t>(missed, mMaxFill.load(std::memory_order_relaxed))) +
+                        kGrowMarginFrames;
+                target = std::min(target + grow, mMaxFill.load(std::memory_order_relaxed));
+                mTargetFill.store(target, std::memory_order_relaxed);
+            }
         } else if (now - lastChange > kShrinkAfterSeconds &&
                    target > mMinFill.load(std::memory_order_relaxed)) {
-            // Calm for a while: give the latency back, a little at a time.
-            target = std::max(target - kShrinkFrames, mMinFill.load(std::memory_order_relaxed));
+            // Geometric: fast while far above the floor, gentle near it, so it
+            // does not hunt around the threshold the way a fixed step does.
+            const int32_t floor = mMinFill.load(std::memory_order_relaxed);
+            const int32_t step = std::max(kShrinkMinFrames, (target - floor) / kShrinkDivisor);
+            target = std::max(target - step, floor);
             mTargetFill.store(target, std::memory_order_relaxed);
             lastChange = now;
         }
@@ -1325,7 +1414,7 @@ AudioEngine::Stats AudioEngine::stats() const {
             mLastHealthLogAt.store(now, std::memory_order_relaxed);
             const std::string why = mUsbOut.fatal();
             LOGI("health usb %s  out=%.4f cb=%.4f voices=%d/%d frames=%lld deficit=%.1fms "
-                 "late=%lld starved=%lld errors=%lld fb=%.1fHz ringUnder=%lld "
+                 "late=%lld starved=%lld errors=%lld fb=%.1fHz ringUnder=%lld ringTarget=%.1fms "
                  "inSize=%d..%d/%lld fbDrift=%lld fbDrop=%lld fbClamp=%lld "
                  "flightUs=%lld/%lld inLost=%lld zeroAvoided=%lld outEmpty=%lld/%lld%s%s",
                  s.usbRunning ? "ok" : "DOWN",
@@ -1338,6 +1427,9 @@ AudioEngine::Stats AudioEngine::stats() const {
                  static_cast<long long>(u.outErrors + u.inErrors),
                  static_cast<double>(u.feedbackRate),
                  static_cast<long long>(mRingUnderruns.load(std::memory_order_relaxed)),
+                 // The adaptive reserve, in milliseconds. Watching it is the
+                 // only way to see the growth and shrink policy behave.
+                 1000.0 * mTargetFill.load(std::memory_order_relaxed) / currentRate(),
                  // -1..-1 means NO IN packets arrived in this interval. The
                  // old guard keyed off inSizeMax and so printed 0..0 for that
                  // -- indistinguishable from a device delivering nothing but

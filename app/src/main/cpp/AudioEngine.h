@@ -260,6 +260,7 @@ public:
 
     Stats stats() const;
     void resetPeaks();
+    void setConcealment(bool on) { mConcealOn.store(on, std::memory_order_relaxed); }
     // Mechanism test: see UsbAudioOut::injectStarve.
     void injectUsbStarve(int packets, int frames) { mUsbOut.injectStarve(packets, frames); }
     void injectUsbStall(int us, int count) { mUsbOut.injectStall(us, count); }
@@ -545,9 +546,33 @@ private:
     // is actually hurt, and recovers the latency once the passage is over.
     static constexpr int kMinFillFrames = 192;     // ~4.4 ms floor
     static constexpr int kMaxFillFrames = 704;     // ~16 ms ceiling
-    static constexpr int kGrowFrames = 256;        // +5.8 ms per underrun: react hard
-    static constexpr int kShrinkFrames = 32;       // -0.7 ms per calm period
-    static constexpr double kShrinkAfterSeconds = 6.0;   // give latency back slowly
+    // HOW THE RESERVE ADAPTS, rewritten 2026-09-23.
+    //
+    // It used to add 256 frames (5,8 ms) on any change of the underrun COUNT
+    // and give back 32 frames (0,7 ms) per six calm seconds. Two faults. It
+    // could not tell one frame short from forty-five, so a trivial hiccup cost
+    // the same as a real stall; and the asymmetry meant a single bad moment
+    // cost about fifty seconds of raised latency, while a hard passage pinned
+    // it at the 16 ms ceiling for roughly ninety-six. The instrument got
+    // measurably laggier after loud playing and stayed that way.
+    //
+    // Now: grow by what was actually MISSED, and only when the miss is worth
+    // hearing; shrink geometrically so a big excursion comes back quickly and
+    // the last millimetre comes back gently.
+    //
+    // The threshold is deliberately low. Concealment makes short gaps "less
+    // clicky - better" by ear, which is a modest improvement rather than a
+    // cure, so this is not licence to ignore small underruns -- only to stop
+    // charging 5,8 ms for one.
+    // The ceiling must sit a useful distance above whatever floor a device
+    // ends up with, or the reserve has nowhere to grow into. 512 frames is
+    // ~11,6 ms, which is what two of the old fixed growth steps came to.
+    static constexpr int kFillHeadroomFrames = 512;
+    static constexpr int kGrowThresholdFrames = 32;   // ~0,7 ms before reacting
+    static constexpr int kGrowMarginFrames = 64;      // headroom above the miss
+    static constexpr int kShrinkDivisor = 8;          // give back an eighth
+    static constexpr int kShrinkMinFrames = 16;
+    static constexpr double kShrinkAfterSeconds = 4.0;
 
     // FLOAT, not int16. The engine renders in float and the devices differ:
     // the CP-88 wants 24-bit packed, the tablet speaker 16-bit. Keeping the ring
@@ -567,6 +592,43 @@ private:
     std::thread mRenderThread;
     std::atomic<bool> mRenderRun{false};
     std::atomic<int64_t> mRingUnderruns{0};
+
+    // UNDERRUN CONCEALMENT, and how far into one we are.
+    //
+    // A late render used to become a hard jump to zero: a click AND a gap, and
+    // `ringUnder` reaches four figures under stress, so there are a lot of
+    // them. Michiel's suggestion was to repeat the last audio instead of
+    // sending silence, which is right for the short gaps that dominate.
+    //
+    // Straight repetition is wrong for long ones -- repeating two
+    // milliseconds a hundred times turns a dropout into a drone, which is
+    // worse than silence -- so the repeat decays to nothing over kConcealFadeMs
+    // and a sustained stall ends up silent anyway, just without the click.
+    //
+    // This counts frames concealed CONSECUTIVELY, so the fade continues across
+    // successive calls rather than restarting at full level on each one. Reset
+    // the moment the ring delivers everything asked for.
+    //
+    // It conceals a symptom and changes no packet size, so it cannot affect THE
+    // LATCH; the device is still sent exactly the frame counts it asked for.
+    uint32_t mConcealedFrames = 0;
+    // Switchable so concealment can be judged by ear against its own absence
+    // on the same load, rather than in the absolute. Default on.
+    std::atomic<bool> mConcealOn{true};
+    // Frames concealed since the stream started. The reserve adapts on the
+    // DELTA of this rather than on the underrun count, because it carries
+    // severity: one frame short and a whole packet short are not the same
+    // event and should not buy the same latency.
+    std::atomic<int64_t> mConcealedTotal{0};
+    static constexpr int kConcealPeriodFrames = 441;   // ~10 ms at 44,1 kHz
+    // 20 ms, not 40. The repeat loops a fixed period, and for pitched material
+    // that seam does not match the waveform, so a long gap clicks once per
+    // loop. Most underruns are one or two packets and never reach the seam at
+    // all; fading twice as fast means the few long ones are near silence by the
+    // time they would. Judged by ear against concealment switched off: "less
+    // clicky - better", which is a modest win, so this is tuned modestly.
+    static constexpr int kConcealFadeFrames = 882;     // ~20 ms to silence
+    static constexpr int kConcealXfadeFrames = 64;
     std::atomic<float> mRingFillMs{0.0f};
     std::atomic<float> mRenderMaxMs{0.0f};
     std::atomic<int32_t> mTargetFill{160};
