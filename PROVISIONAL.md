@@ -206,3 +206,28 @@ of this bug. The rule exists to stop unproven FIXES accumulating; this is not a
 fix, it is a simplification that happens to have been motivated by a hypothesis
 that failed. If that reads as special pleading, delete it — the previous code
 is one revert away and is documented in LOG.md.
+
+---
+
+## Settled 2026-09-23, night — the balance ceiling
+
+### KEPT, with the reason
+
+| what | why |
+|---|---|
+| `bal` / `rise` / `fifo` counters | Measurement, not a fix. `rise` is the balance from its own running minimum, which is the only part of a deficit the device can feel: its FIFO stops at empty and our books do not. `fifo` reads exactly 265 frames at rest on a 6 ms ring — the ring itself — stable to the frame. |
+| `SIZE` / `BIAS` injectors | They established the second proven mechanism: over-feeding wedges the device at about 170 frames, under-feeding never does at any depth. Regression infrastructure for a proven fault, like `ZLP`. |
+| `STARVE` injector | Answered a question that had stood since the first `starved=82`: starvation is self-cancelling, because the request it skips stays in the queue. Kept because that answer is easy to forget. |
+| `HOLD` injector | The one disturbance shape a uniform reap stall cannot make: OUT off the wire while IN keeps flowing, which is what contention actually does here. Twelve seconds of it is survivable — worth being able to re-check. |
+| `mInFramesTotal` reset in `start()` | A bug fix, not a hack: every drift figure taken after a REINIT or a RESET was the previous stream's total. |
+
+### KEPT BUT DEFAULTED OFF, and flagged as such
+
+**The balance ceiling** (`GUARD`). A saturating model of the device's FIFO,
+clamped at the ring level plus two packets. It pinned exactly where it was told
+to — `fifo=352 held=3852` — and the sustained overfeed wedged the device anyway.
+So the model gets the resting level right and the cliff wrong, and a fix that
+does not fix does not run by default. It stays behind the broadcast because it
+is the only handle on the one over-feeding mechanism that is proven, and because
+the counters beside it are worth having. If it is still off and still unproven
+next time this file is read, delete it.

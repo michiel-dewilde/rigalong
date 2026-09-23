@@ -1440,7 +1440,7 @@ AudioEngine::Stats AudioEngine::stats() const {
             LOGI("health usb %s  out=%.4f cb=%.4f voices=%d/%d frames=%lld deficit=%.1fms "
                  "late=%lld starved=%lld errors=%lld fb=%.1fHz ringUnder=%lld ringTarget=%.1fms "
                  "inSize=%d..%d/%lld fbDrift=%lld fbDrop=%lld fbClamp=%lld "
-                 "inLost=%lld zeroAvoided=%lld%s%s",
+                 "inLost=%lld zeroAvoided=%lld shaped=%lld bal=%lld/%lld rise=%lld fifo=%lld held=%lld%s%s",
                  s.usbRunning ? "ok" : "DOWN",
                  static_cast<double>(s.outputPeak),
                  static_cast<double>(mCallbackPeak.load(std::memory_order_relaxed)),
@@ -1471,6 +1471,27 @@ AudioEngine::Stats AudioEngine::stats() const {
                  // MUST be 0. A single zero-length OUT packet wedges the
                  // device permanently, so this counts near misses.
                  static_cast<long long>(u.zeroAvoided),
+                 // OUT packets a deliberate size or bias injection rewrote.
+                 // Non-zero means a trial is running and the stream is NOT
+                 // representative of normal operation.
+                 static_cast<long long>(u.shaped),
+                 // THE counter for this device: cumulative frames sent minus
+                 // frames asked, and the worst it reached this interval. Sending
+                 // MORE than was asked wedges the CP-88 at about +170 frames;
+                 // sending less is free. Both of these must stay negative.
+                 static_cast<long long>(u.balance),
+                 static_cast<long long>(u.balPeak),
+                 // How far the balance climbed back off its own floor: the
+                 // only part of the deficit the device can actually feel,
+                 // because its FIFO stops at empty and ours does not.
+                 static_cast<long long>(u.balRise),
+                 // The modelled device FIFO, worst this interval. The device
+                 // wedges past about 170 frames; the ceiling holds it at 88.
+                 static_cast<long long>(u.fifoPeak),
+                 // Packets the ceiling had to cut down. Non-zero means the
+                 // transport tried to overfeed and was stopped -- interesting
+                 // every single time, because normal sizing cannot do it.
+                 static_cast<long long>(u.balanceHeld),
                  why.empty() ? "" : " fatal=", why.c_str());
             logMidiChain();
         }

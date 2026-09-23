@@ -10,6 +10,7 @@
 #include <unistd.h>
 
 #include <algorithm>
+#include <limits>
 #include <cerrno>
 #include <cmath>
 #include <cstdlib>
@@ -94,6 +95,21 @@ bool UsbAudioOut::start(const Config& config, PullFn pull, void* ctx, std::strin
     mFrames = 0; mOutBytes = 0; mOutErr = 0; mInErr = 0;
     mStarved = 0; mLate = 0; mMaxGapUs = 0;
     mInPacketsTotal = 0;
+    // mInFramesTotal was NOT in this list, so every counter derived from it --
+    // fbDrift, and now bal -- carried the previous stream's total across a
+    // restart and read as a surplus of millions. The numbers were nonsense from
+    // the first REINIT onwards and nobody noticed, because the health line only
+    // ever gets compared against itself.
+    mInFramesTotal = 0;
+    mFbDrop = 0; mFbClamp = 0; mZeroAvoided = 0; mShaped = 0;
+    mBalanceHeld = 0;
+    mBalMin = std::numeric_limits<int64_t>::max();
+    mBalPeak = std::numeric_limits<int64_t>::min();
+    mBalRise = 0;
+    mFifoFrames = 0;
+    mFifoPeak = 0;
+    mFifoCeiling = static_cast<int64_t>(mUrbs) * mPackets * mCfg.rate / 1000 +
+                   kFifoMarginFrames;
     mFbRate = static_cast<float>(mCfg.rate);
 
     if (!allocStream(mOut, mUrbs, mPackets, mCfg.outEp, true, mCfg.outMaxPacket)) {
@@ -253,7 +269,13 @@ bool UsbAudioOut::submit(Urb& b) {
 
 int UsbAudioOut::nextFrames() {
     if (mCfg.feedback == kImplicit) {
-        if (mSizeCount > 0) {
+        // TEST ONLY: force the dry-queue path with a queue that is not dry.
+        bool starve = false;
+        if (mInjectStarve.load(std::memory_order_relaxed) > 0) {
+            mInjectStarve.fetch_sub(1, std::memory_order_relaxed);
+            starve = true;
+        }
+        if (!starve && mSizeCount > 0) {
             const int n = mSizes[mSizeHead];
             mSizeHead = (mSizeHead + 1) % kSizeCap;
             --mSizeCount;
@@ -323,11 +345,85 @@ void UsbAudioOut::fillOut(Urb& b) {
             mZeroAvoided.fetch_add(1, std::memory_order_relaxed);
             frames = 1;
         }
-        // TEST ONLY: break the invariant on purpose, so recovery paths can be
-        // measured against a deterministic latch. See injectRawZero.
-        if (mInjectRawZero.load(std::memory_order_relaxed) > 0) {
-            mInjectRawZero.fetch_sub(1, std::memory_order_relaxed);
-            frames = 0;
+        // TEST ONLY: overrule the size the invariant just guaranteed, so the
+        // device can be asked directly what it refuses. See injectSize.
+        if (mInjectSizeLeft.load(std::memory_order_relaxed) > 0) {
+            mInjectSizeLeft.fetch_sub(1, std::memory_order_relaxed);
+            frames = std::clamp(mInjectSizeFrames.load(std::memory_order_relaxed),
+                                0, maxFrames);
+            mShaped.fetch_add(1, std::memory_order_relaxed);
+        } else if (mInjectBiasLeft.load(std::memory_order_relaxed) > 0) {
+            mInjectBiasLeft.fetch_sub(1, std::memory_order_relaxed);
+            frames = std::clamp(frames + mInjectBiasDelta.load(std::memory_order_relaxed),
+                                0, maxFrames);
+            mShaped.fetch_add(1, std::memory_order_relaxed);
+        }
+
+        // THE BALANCE CEILING, and it is the whole of what this device asks of
+        // a host. Measured on the CP-88, 2026-09-23, with everything else
+        // normal and no lateness anywhere:
+        //
+        //   sending LESS than it asked, cumulatively, is free. 10 s at one
+        //   frame per packet below the request -- 227 ms of deficit -- played
+        //   on. So did a hundred consecutive ONE-FRAME packets.
+        //   sending MORE than it asked WEDGES IT. One frame per packet above
+        //   the request: 175 packets survived, 190 wedged, every time. That is
+        //   about 170 frames, 3,9 ms. It accumulates across gaps -- three
+        //   bursts of 100 two seconds apart wedged it just the same -- so the
+        //   device is integrating, and nothing ever drains what it integrates.
+        //
+        // So the rule is not symmetric and the transport must not treat it as
+        // if it were: cumulative frames sent may never exceed cumulative frames
+        // asked. This is that rule, enforced at the only place that can enforce
+        // it, and it makes the fault impossible rather than rare. A packet cut
+        // down by it is a deficit, which costs a fraction of a millisecond of
+        // audio and is proven harmless; the alternative is a dead device and a
+        // USB reset in the middle of a piece.
+        //
+        // The model is a SATURATING accumulator, and the saturation is the
+        // whole point. Cumulative sent-minus-asked is not what the device
+        // feels: its FIFO stops at empty, so the twelve seconds of deficit a
+        // hole leaves in our books are fiction to it, and a ceiling placed on
+        // that number sits hundreds of frames the wrong side of the cliff. A
+        // level that cannot go below zero tracks the thing that can overflow.
+        if (mBalanceGuard.load(std::memory_order_relaxed)) {
+            const int64_t room = mFifoCeiling - mFifoFrames;
+            if (frames > room) {
+                // Never zero, whatever the arithmetic says: see the invariant.
+                frames = static_cast<int>(std::max<int64_t>(1, room));
+                mBalanceHeld.fetch_add(1, std::memory_order_relaxed);
+            }
+        }
+        mFifoFrames += frames;
+        {
+            int64_t seen = mFifoPeak.load(std::memory_order_relaxed);
+            while (mFifoFrames > seen &&
+                   !mFifoPeak.compare_exchange_weak(seen, mFifoFrames,
+                                                    std::memory_order_relaxed)) {}
+        }
+        {
+            const int64_t bal = mFrames.load(std::memory_order_relaxed) + frames -
+                                mInFramesTotal.load(std::memory_order_relaxed);
+            int64_t seen = mBalPeak.load(std::memory_order_relaxed);
+            while (bal > seen &&
+                   !mBalPeak.compare_exchange_weak(seen, bal,
+                                                   std::memory_order_relaxed)) {}
+            // THE RISE, which is the number that means something to the device.
+            // `bal` tracks the device's playout FIFO up to a constant -- but
+            // only while the FIFO has anything in it. A hole empties it, and an
+            // empty FIFO cannot go further negative, so from that point our
+            // accumulated deficit is fiction and the only honest measure is how
+            // far we have REFILLED since: bal minus its own running minimum.
+            // A surplus of about 170 frames wedges this device, and the deficit
+            // a hole leaves behind is measured in seconds, so the interesting
+            // question is not how deep the hole was but how hard the recovery
+            // pushed afterwards. Nothing has ever measured that.
+            if (bal < mBalMin) mBalMin = bal;
+            const int64_t rise = bal - mBalMin;
+            seen = mBalRise.load(std::memory_order_relaxed);
+            while (rise > seen &&
+                   !mBalRise.compare_exchange_weak(seen, rise,
+                                                   std::memory_order_relaxed)) {}
         }
 
         // ONE MEMCPY. That is the whole of this thread's per-packet work with
@@ -395,6 +491,10 @@ void UsbAudioOut::completeIn(Urb& b) {
                    !mInSizeMax.compare_exchange_weak(seen, frames,
                                                      std::memory_order_relaxed)) {}
         }
+        // The device consumes what it asks for, so its IN packets are the only
+        // statement of its drain we get. Saturating at empty: it cannot owe us.
+        mFifoFrames -= frames;
+        if (mFifoFrames < 0) mFifoFrames = 0;
         mInPackets.fetch_add(1, std::memory_order_relaxed);
         mInPacketsTotal.fetch_add(1, std::memory_order_relaxed);
         mInFramesTotal.fetch_add(frames, std::memory_order_relaxed);
@@ -522,6 +622,22 @@ void UsbAudioOut::reapLoop() {
         }
 
         if (b->out) {
+            // TEST ONLY: THE SHAPE A HOLE ACTUALLY HAS, with no load to make it.
+            //
+            // Under contention this transport does NOT stall symmetrically.
+            // The IN stream is 512 URBs deep, so the controller keeps servicing
+            // it from buffers already queued and the device's packets keep
+            // flowing; the OUT stream is three URBs deep, so six milliseconds
+            // after this thread stops running the OUT endpoint has nothing
+            // queued and the host puts NOTHING on the wire. The uniform reap
+            // stalls tested previously do not reproduce that: this does, and it
+            // does it with no synthesiser, no spinners and no lateness.
+            const int64_t holdUs = mHoldOutUs.load(std::memory_order_relaxed);
+            if (holdUs > 0 && mHoldOutLeft.fetch_sub(1, std::memory_order_relaxed) > 0) {
+                timespec ts{static_cast<time_t>(holdUs / 1000000),
+                            static_cast<long>((holdUs % 1000000) * 1000)};
+                nanosleep(&ts, nullptr);
+            }
             completeOut(*b);
             fillOut(*b);
         } else if (mCfg.feedback == kExplicit) {
@@ -565,6 +681,14 @@ UsbAudioOut::Stats UsbAudioOut::stats() const {
     s.fbDrop = mFbDrop.load(std::memory_order_relaxed);
     s.fbClamp = mFbClamp.load(std::memory_order_relaxed);
     s.zeroAvoided = mZeroAvoided.load(std::memory_order_relaxed);
+    s.shaped = mShaped.load(std::memory_order_relaxed);
+    s.balance = mFrames.load(std::memory_order_relaxed) -
+                mInFramesTotal.load(std::memory_order_relaxed);
+    s.balPeak = mBalPeak.exchange(std::numeric_limits<int64_t>::min(),
+                                  std::memory_order_relaxed);
+    s.balRise = mBalRise.exchange(0, std::memory_order_relaxed);
+    s.fifoPeak = mFifoPeak.exchange(0, std::memory_order_relaxed);
+    s.balanceHeld = mBalanceHeld.load(std::memory_order_relaxed);
     s.maxGapMs = mMaxGapUs.load(std::memory_order_relaxed) / 1000.0f;
     s.feedbackRate = mFbRate.load(std::memory_order_relaxed);
     const int64_t start = mStartNs.load(std::memory_order_relaxed);

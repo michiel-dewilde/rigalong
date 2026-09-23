@@ -275,6 +275,11 @@ public:
         mRenderPaused.store(paused, std::memory_order_relaxed);
     }
     void injectUsbRawZero(int count) { mUsbOut.injectRawZero(count); }
+    void injectUsbSize(int count, int frames) { mUsbOut.injectSize(count, frames); }
+    void injectUsbBias(int count, int delta) { mUsbOut.injectBias(count, delta); }
+    void injectUsbStarve(int count) { mUsbOut.injectStarve(count); }
+    void setUsbBalanceGuard(bool on) { mUsbOut.setBalanceGuard(on); }
+    void holdUsbOut(int us, int count) { mUsbOut.holdOut(us, count); }
 
     /// The rate the CHOSEN DEVICE declares, from AudioDeviceInfo. 0 = let
     /// AAudio decide. Takes effect on the next openStream().

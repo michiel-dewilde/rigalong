@@ -34,6 +34,21 @@ object NativeBridge {
     /** TEST ONLY: emit N genuinely zero-length OUT packets, bypassing the invariant. */
     external fun nativeInjectRawZero(count: Int)
 
+    /** The next [count] OUT packets carry exactly [frames] frames. TEST ONLY. */
+    external fun nativeInjectSize(count: Int, frames: Int)
+
+    /** The next [count] OUT packets carry what was asked plus [delta]. TEST ONLY. */
+    external fun nativeInjectBias(count: Int, delta: Int)
+
+    /** The next [count] OUT packets skip the feedback queue. TEST ONLY. */
+    external fun nativeInjectStarve(count: Int)
+
+    /** The cumulative-balance ceiling. Off only to reproduce the old fault. */
+    external fun nativeSetBalanceGuard(on: Boolean)
+
+    /** Delays OUT resubmission only, [count] times, [us] each. TEST ONLY. */
+    external fun nativeHoldOut(us: Int, count: Int)
+
     external fun nativeResetPeaks()
     external fun nativeTestNote(note: Int, velocity: Int)
     external fun nativeGetStats(): FloatArray

@@ -52,6 +52,7 @@
 // deadline should do the least work, which is ordinary real-time hygiene, not
 // because it bought anything here.
 
+#include <limits>
 #include <atomic>
 #include <cstdint>
 #include <string>
@@ -175,8 +176,14 @@ public:
         int32_t inSizeMax = 0;
         int64_t inPackets = 0;
         int64_t inFramesTotal = 0;   // what the device ASKED for, cumulative
-    int64_t inLostPackets = 0;   // IN packets the device sent with no URB waiting
-    int64_t zeroAvoided = 0;     // zero-length OUT packets prevented; MUST stay 0
+        int64_t inLostPackets = 0;   // IN packets the device sent with no URB waiting
+        int64_t zeroAvoided = 0; // zero-length OUT packets prevented; MUST stay 0
+        int64_t shaped = 0;      // OUT packets a size/bias injection rewrote
+        int64_t balance = 0;     // frames SENT minus frames ASKED; must stay <= 0
+        int64_t balPeak = 0;     // worst (highest) balance this interval
+        int64_t balRise = 0;     // furthest the balance climbed off its own floor
+        int64_t fifoPeak = 0;    // modelled device FIFO, worst this interval
+        int64_t balanceHeld = 0; // packets the ceiling cut down; should stay 0
         int64_t fbDrop = 0;          // requests discarded on queue overflow
         int64_t fbClamp = 0;         // requests cut down to the max packet
         float deficitMs = 0.0f;      // wall time minus wire time; GROWTH is a hole
@@ -205,8 +212,51 @@ public:
     // zero-length packets onto the wire, bypassing the guard, so that recovery
     // can be measured against a deterministic stimulus instead of a rare one.
     // Nothing in normal operation calls it.
-    void injectRawZero(int count) {
-        mInjectRawZero.store(count, std::memory_order_relaxed);
+    void injectRawZero(int count) { injectSize(count, 0); }
+
+    // The same knob, generalised, because "zero is fatal" is only half an
+    // answer. The transport now turns a would-be zero into a ONE-frame packet
+    // and calls the invariant kept -- and nobody has asked whether one frame is
+    // any less fatal than none. If it is not, that guard is a disguise.
+    //
+    //   injectSize(n, v) -- the next n OUT packets carry exactly v frames,
+    //                       whatever the device asked for. v=0 is the wedge.
+    //   injectBias(n, d) -- the next n packets carry what was asked PLUS d,
+    //                       clamped: a sustained surplus or deficit at the
+    //                       normal 44/45 cadence and with no lateness at all.
+    //                       Surplus has only ever been tried twenty frames
+    //                       deep; this can run it for ten seconds.
+    // TEST ONLY. Both sit below the invariant deliberately.
+    void injectSize(int count, int frames) {
+        mInjectBiasLeft.store(0, std::memory_order_relaxed);
+        mInjectSizeFrames.store(frames, std::memory_order_relaxed);
+        mInjectSizeLeft.store(count, std::memory_order_relaxed);
+    }
+    // And the shape that matters most, because it is the one this transport can
+    // produce by itself: STARVATION. The next `count` packets skip the feedback
+    // queue entirely and are sized from the nominal rate, exactly as a dry
+    // queue sizes them -- which is not a substitution but an ADDITION, because
+    // the request that was skipped is still in the queue and will be honoured a
+    // packet later. Every starved packet is therefore ~44 frames of PERMANENT
+    // surplus, and nothing anywhere drains it.
+    // A/B for the ceiling itself: off reproduces every latch measured before it
+    // existed, on should make them impossible. TEST ONLY.
+    void setBalanceGuard(bool on) { mBalanceGuard.store(on, std::memory_order_relaxed); }
+
+    // Delay the resubmission of OUT URBs only, `count` times, `us` each. IN
+    // keeps being serviced from its own queue throughout. TEST ONLY.
+    void holdOut(int us, int count) {
+        mHoldOutUs.store(us, std::memory_order_relaxed);
+        mHoldOutLeft.store(count, std::memory_order_relaxed);
+    }
+
+    void injectStarve(int count) {
+        mInjectStarve.store(count, std::memory_order_relaxed);
+    }
+    void injectBias(int count, int delta) {
+        mInjectSizeLeft.store(0, std::memory_order_relaxed);
+        mInjectBiasDelta.store(delta, std::memory_order_relaxed);
+        mInjectBiasLeft.store(count, std::memory_order_relaxed);
     }
 private:
     struct Urb {
@@ -345,7 +395,42 @@ private:
     // frames it wants, destroyed before they were read. Unlike `starved`, which
     // only notices that the size queue ran dry, this counts requests that are
     // GONE and can never be answered.
-    std::atomic<int64_t> mInjectRawZero{0};
+    // Cumulative frames sent may never exceed cumulative frames asked. Zero,
+    // not a margin: the device's own tolerance was measured at about 170 frames
+    // and a ceiling should not be set at the edge of the cliff it guards.
+    // How far above its own resting level the modelled FIFO may go. The resting
+    // level is not zero and never was: it is the OUT ring, every frame of which
+    // the device is holding -- measured at exactly 265 frames for a 6 ms ring,
+    // stable to the frame. So the ceiling is computed from the ring at start(),
+    // not written down here, and this is only the margin above it. 88 is two
+    // packets: healthy operation excursions are one, and the cliff is ~170.
+    static constexpr int64_t kFifoMarginFrames = 88;
+    int64_t mFifoCeiling = 0;
+    // OFF by default, and it stays off until it is shown to prevent something.
+    // It does not: holding the modelled FIFO exactly at this ceiling (measured,
+    // fifo=352 held=3852) did NOT stop a sustained overfeed from wedging the
+    // device. So the model predicts the resting level correctly and the cliff
+    // wrongly, and a fix that does not fix is a hack. Kept behind the GUARD
+    // broadcast because it is the only handle on the one mechanism that IS
+    // proven, and because the counters beside it are worth having.
+    std::atomic<bool> mBalanceGuard{false};
+    std::atomic<int64_t> mBalanceHeld{0};
+    // mutable, like the other interval peaks: stats() is const and resets it.
+    mutable std::atomic<int64_t> mBalPeak{std::numeric_limits<int64_t>::min()};
+    mutable std::atomic<int64_t> mBalRise{0};
+    // Reap thread only, so no atomic: the floor `balRise` is measured from.
+    int64_t mBalMin = std::numeric_limits<int64_t>::max();
+    // Reap thread only: fillOut adds, completeIn subtracts, floor at zero.
+    int64_t mFifoFrames = 0;
+    mutable std::atomic<int64_t> mFifoPeak{0};
+    std::atomic<int64_t> mHoldOutUs{0};
+    std::atomic<int64_t> mHoldOutLeft{0};
+    std::atomic<int64_t> mInjectStarve{0};
+    std::atomic<int64_t> mInjectSizeLeft{0};
+    std::atomic<int32_t> mInjectSizeFrames{0};
+    std::atomic<int64_t> mInjectBiasLeft{0};
+    std::atomic<int32_t> mInjectBiasDelta{0};
+    std::atomic<int64_t> mShaped{0};
     std::atomic<int64_t> mInPacketsTotal{0};
     std::atomic<int64_t> mInFramesTotal{0};
     std::atomic<int64_t> mFbDrop{0};

@@ -127,6 +127,33 @@ Java_be_mdw_bagosynths_NativeBridge_nativeInjectRawZero(JNIEnv*, jobject, jint c
 }
 
 JNIEXPORT void JNICALL
+Java_be_mdw_bagosynths_NativeBridge_nativeInjectSize(JNIEnv*, jobject, jint count,
+                                                    jint frames) {
+    engine().injectUsbSize(count, frames);
+}
+
+JNIEXPORT void JNICALL
+Java_be_mdw_bagosynths_NativeBridge_nativeInjectBias(JNIEnv*, jobject, jint count,
+                                                    jint delta) {
+    engine().injectUsbBias(count, delta);
+}
+
+JNIEXPORT void JNICALL
+Java_be_mdw_bagosynths_NativeBridge_nativeInjectStarve(JNIEnv*, jobject, jint count) {
+    engine().injectUsbStarve(count);
+}
+
+JNIEXPORT void JNICALL
+Java_be_mdw_bagosynths_NativeBridge_nativeSetBalanceGuard(JNIEnv*, jobject, jboolean on) {
+    engine().setUsbBalanceGuard(on == JNI_TRUE);
+}
+
+JNIEXPORT void JNICALL
+Java_be_mdw_bagosynths_NativeBridge_nativeHoldOut(JNIEnv*, jobject, jint us, jint count) {
+    engine().holdUsbOut(us, count);
+}
+
+JNIEXPORT void JNICALL
 Java_be_mdw_bagosynths_NativeBridge_nativeResetPeaks(JNIEnv*, jobject) {
     engine().resetPeaks();
 }

@@ -197,6 +197,11 @@ class MainActivity : Activity() {
         filter.addAction("be.mdw.bagosynths.PANIC")
         filter.addAction("be.mdw.bagosynths.STRESS")
         filter.addAction("be.mdw.bagosynths.ZLP")
+        filter.addAction("be.mdw.bagosynths.SIZE")
+        filter.addAction("be.mdw.bagosynths.BIAS")
+        filter.addAction("be.mdw.bagosynths.STARVE")
+        filter.addAction("be.mdw.bagosynths.GUARD")
+        filter.addAction("be.mdw.bagosynths.HOLD")
         filter.addAction("be.mdw.bagosynths.CONCEAL")
         filter.addAction("be.mdw.bagosynths.REINIT")
         filter.addAction("be.mdw.bagosynths.RESETPEAKS")
@@ -1828,6 +1833,40 @@ class MainActivity : Activity() {
                     val n = intent.getIntExtra("count", 1)
                     android.util.Log.i("bos-ui", "inject: $n RAW zero-length packet(s)")
                     NativeBridge.nativeInjectRawZero(n)
+                }
+                // TEST ONLY: ask the device what, exactly, it refuses.
+                //   ... .SIZE --ei n 1 --ei frames 1   is one frame fatal too?
+                //   ... .BIAS --ei n 10000 --ei delta 1   10 s of 2,3 % surplus
+                "be.mdw.bagosynths.SIZE" -> {
+                    val n = intent.getIntExtra("n", 1)
+                    val f = intent.getIntExtra("frames", 0)
+                    android.util.Log.i("bos-ui", "inject: $n OUT packets forced to $f frames")
+                    NativeBridge.nativeInjectSize(n, f)
+                }
+                //   ... .HOLD --ei ms 200 --ei times 20   OUT off the wire only
+                "be.mdw.bagosynths.HOLD" -> {
+                    val ms = intent.getIntExtra("ms", 100)
+                    val k = intent.getIntExtra("times", 1)
+                    android.util.Log.i("bos-ui", "inject: $k OUT holds of $ms ms")
+                    NativeBridge.nativeHoldOut(ms * 1000, k)
+                }
+                //   ... .GUARD --ei on 0    overfeeding allowed again
+                "be.mdw.bagosynths.GUARD" -> {
+                    val on = intent.getIntExtra("on", 1) != 0
+                    NativeBridge.nativeSetBalanceGuard(on)
+                    android.util.Log.i("bos-ui", "balance ceiling: " + if (on) "ON" else "OFF")
+                }
+                //   ... .STARVE --ei n 4     the dry-queue path, on demand
+                "be.mdw.bagosynths.STARVE" -> {
+                    val n = intent.getIntExtra("n", 1)
+                    android.util.Log.i("bos-ui", "inject: $n starved OUT packets")
+                    NativeBridge.nativeInjectStarve(n)
+                }
+                "be.mdw.bagosynths.BIAS" -> {
+                    val n = intent.getIntExtra("n", 1)
+                    val d = intent.getIntExtra("delta", 1)
+                    android.util.Log.i("bos-ui", "inject: $n OUT packets biased by $d frames")
+                    NativeBridge.nativeInjectBias(n, d)
                 }
                 //   adb shell am broadcast -a be.mdw.bagosynths.CONCEAL --ei on 0
                 "be.mdw.bagosynths.CONCEAL" -> {
