@@ -196,12 +196,8 @@ class MainActivity : Activity() {
         filter.addAction("be.mdw.bagosynths.PARAM")
         filter.addAction("be.mdw.bagosynths.PANIC")
         filter.addAction("be.mdw.bagosynths.STRESS")
-        filter.addAction("be.mdw.bagosynths.STARVE")
-        filter.addAction("be.mdw.bagosynths.STALL")
         filter.addAction("be.mdw.bagosynths.ZLP")
-        filter.addAction("be.mdw.bagosynths.MIDIUSB")
         filter.addAction("be.mdw.bagosynths.CONCEAL")
-        filter.addAction("be.mdw.bagosynths.TRACE")
         filter.addAction("be.mdw.bagosynths.REINIT")
         filter.addAction("be.mdw.bagosynths.RESETPEAKS")
         filter.addAction("be.mdw.bagosynths.PROFILE")
@@ -1202,9 +1198,6 @@ class MainActivity : Activity() {
     // latch is present or must have occurred. HANDOFF section 21 lists what has
     // already been ruled out, so that work does not start from zero.
 
-    /** Experiment only: keeps the USB MIDI reader off the shared usbfs fd. */
-    private var midiUsbBlocked = false
-
     private var altTick = 0
     private var lastAltReport: String? = null
     private var altReads = 0
@@ -1366,7 +1359,7 @@ class MainActivity : Activity() {
             startEngine()
         }
 
-        if (mMode.direct && midi?.usb != null && !midiUsbBlocked) {
+        if (mMode.direct && midi?.usb != null) {
             val s = sessions.getValue(midi.usb.deviceName)
             val err = NativeBridge.nativeStartUsbMidi(s.fd, s.raw, true, midi.port)
             runOnUiThread {
@@ -1730,15 +1723,6 @@ class MainActivity : Activity() {
                 // whoever is in the room did not ask for that.
                 //   adb shell am broadcast -a be.mdw.bagosynths.PANIC
                 "be.mdw.bagosynths.PANIC" -> NativeBridge.nativePanic()
-                // The mechanism test. Sizes the next N OUT packets as a dry
-                // feedback queue would, with no load and no hole anywhere near
-                // it, so "does inventing a size wedge the device" is asked on
-                // its own.
-                //   adb shell am broadcast -a be.mdw.bagosynths.STARVE --ei packets 200
-                // The second mechanism, isolated: drains the OUT endpoint
-                // with no load at all, while the deep IN queue keeps
-                // starvation out of the result.
-                //   adb shell am broadcast -a be.mdw.bagosynths.STALL --ei us 20000 --ei count 50
                 // REINIT: the cheap recovery candidate.
                 //
                 // Michiel: "if routing to alsa and back fixes it, surely you
@@ -1785,54 +1769,12 @@ class MainActivity : Activity() {
                             "reinit level $level in $ms ms" + (err?.let { " FAILED: $it" } ?: ""))
                     }
                 }
-                //   adb shell am broadcast -a be.mdw.bagosynths.TRACE
-                //   ... TRACE --ei from 12345 --ei count 512
-                "be.mdw.bagosynths.TRACE" -> NativeBridge.nativeDumpUsbTrace(
-                    intent.getIntExtra("from", 0), intent.getIntExtra("count", 0))
-                // Stops the USB MIDI reader while leaving audio streaming, so
-                // a trial can run with NOTHING else touching the usbfs fd.
-                //
-                // Section 20 dismissed MIDI on the grounds that USBDEVFS_BULK
-                // does not go through the reap queue, which is true and beside
-                // the point. The reader sits in a bulk ioctl with a 100 ms
-                // timeout on the SAME file descriptor the isochronous URBs are
-                // submitted through, and usbfs serialises per device. usbhost
-                // -- which never latches -- ran no MIDI at all, and that
-                // difference has never been controlled for.
-                //   adb shell am broadcast -a be.mdw.bagosynths.MIDIUSB --ei on 0
-                "be.mdw.bagosynths.MIDIUSB" -> {
-                    // Sticky. Stopping the reader alone is not enough: the
-                    // routing poller re-applies and reopens it within seconds,
-                    // which made the first attempt at this experiment
-                    // meaningless -- the log showed STOPPED immediately
-                    // followed by a fresh reader thread at nice -16.
-                    midiUsbBlocked = intent.getIntExtra("on", 1) == 0
-                    if (midiUsbBlocked) {
-                        NativeBridge.nativeCloseMidi()
-                        android.util.Log.i("bos-ui", "usb midi reader: BLOCKED (experiment)")
-                    } else {
-                        applyRouting("midi back on")
-                        android.util.Log.i("bos-ui", "usb midi reader: unblocked")
-                    }
-                }
                 // TEST ONLY: the deterministic latch. One is enough.
                 //   adb shell am broadcast -a be.mdw.bagosynths.ZLP --ei count 1
                 "be.mdw.bagosynths.ZLP" -> {
                     val n = intent.getIntExtra("count", 1)
                     android.util.Log.i("bos-ui", "inject: $n RAW zero-length packet(s)")
                     NativeBridge.nativeInjectRawZero(n)
-                }
-                "be.mdw.bagosynths.STALL" -> {
-                    val us = intent.getIntExtra("us", 20000)
-                    val n = intent.getIntExtra("count", 50)
-                    android.util.Log.i("bos-ui", "inject: stall ${us}us x $n")
-                    NativeBridge.nativeInjectStall(us, n)
-                }
-                "be.mdw.bagosynths.STARVE" -> {
-                    val n = intent.getIntExtra("packets", 200)
-                    val f = intent.getIntExtra("frames", 0)
-                    android.util.Log.i("bos-ui", "inject: starve $n packets at $f frames")
-                    NativeBridge.nativeInjectStarve(n, f)
                 }
                 //   adb shell am broadcast -a be.mdw.bagosynths.CONCEAL --ei on 0
                 "be.mdw.bagosynths.CONCEAL" -> {
@@ -1941,22 +1883,6 @@ class MainActivity : Activity() {
                     // Packets per OUT URB, same total depth. See the sweep in
                     // LOG.md: the division is a variable in its own right.
                     //   ... --ei pkts 2
-                    // EXPERIMENT ONLY, and -1 (off) is the shipped default.
-                    // Takes effect when the stream restarts, which this
-                    // broadcast does anyway.
-                    //   ... ROUTE --ei core 7      (pin) / --ei core -1 (off)
-                    if (intent.hasExtra("core")) {
-                        val c = intent.getIntExtra("core", -1)
-                        // pin=0 reserves the core without confining the reap
-                        // thread to it, which keeps its ability to migrate.
-                        val pin = intent.getIntExtra("pin", 0) != 0
-                        NativeBridge.nativeSetTransportCore(c, pin)
-                    }
-                    if (intent.hasExtra("pkts")) {
-                        val n = intent.getIntExtra("pkts", 2).coerceIn(1, 8)
-                        NativeBridge.nativeSetPacketsPerUrb(n)
-                        android.util.Log.i("bos-ui", "packets per URB: $n")
-                    }
                     if (intent.hasExtra("buffer")) {
                         // ANY value here, not just the three the UI offers.
                         // This used to accept only UsbBuffers.choicesMs and

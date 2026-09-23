@@ -88,7 +88,6 @@ void UsbMidiIn::loop() {
     // thread. A MIDI byte read a millisecond late delays a note; a URB
     // submitted a millisecond late is audio that was never sent.
     bos::raiseRenderPriority("usb midi reader", bos::kRenderNice);
-    bos::pinOffTransportCore("usb midi reader");
 
     uint8_t buf[512];
     const int len = mMaxPacket <= static_cast<int>(sizeof(buf)) ? mMaxPacket : static_cast<int>(sizeof(buf));

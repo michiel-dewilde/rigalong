@@ -156,3 +156,53 @@ proved mechanism, and cost nothing in latency. See LOG.md.
 8 ms as 8 URBs x 1 packet latched 0 for 6; as 4 URBs x 2 packets it is 7 of 9.
 Same latency. One-millisecond URBs double the syscall rate on the thread that
 must not fall behind. Default 2, sweepable with `ROUTE --ei pkts N`.
+
+---
+
+## Settled 2026-09-23, final round — the tree is now clean
+
+Everything below was either kept with a reason or deleted. Nothing is left in
+"because it is harmless".
+
+### DELETED
+
+| what | why |
+|---|---|
+| all CPU affinity, and its knob | The corrected experiment gave cpu3 `late` 18-33 against 250-290 — but reserve-versus-pin showed the confinement contributes none of it, the spinner exclusion that made it work is unrealistic, and identical configurations varied eightfold. Not trustworthy at three trials a cell. |
+| the latch watchdog | Michiel's rule: no recovery that cannot conclusively detect the latch over the wire. Holes are now routine and survivable, so a hole-triggered reset is a dropout generator. |
+| `STARVE` injector | Superseded by `ZLP`, which is the same mechanism isolated exactly. |
+| `STALL` injector | Answered: 16 s of drain, including five 1 s holes, never latched. |
+| `TRACE` wire trace | Answered: the submitted cadence is a flawless 44/45 straight through a 500 ms deficit jump. |
+| `MIDIUSB` block | Answered: 0 of 5 with the reader verifiably off. |
+| `RENDER` pause | Answered: `late` +4 with the render thread running, +4 paused. |
+| `outEmpty` / `outShort` | Answered: the controller never emits an empty or truncated packet. 0 throughout. |
+| `flightUs` | Answered its question twice, in both directions. |
+| `packPeak` | Verified the packing path once (`out` and `packPeak` identical); done. |
+| `start_frame` probe | Answered: 0 on every URB, so explicit scheduling is unreachable. |
+| float scratch + dither in `UsbAudioOut` | The reap thread no longer touches samples. |
+
+### KEPT, with the reason
+
+| what | why |
+|---|---|
+| the zero-length invariant, `zeroAvoided` | The one PROVEN mechanism: a single zero-length OUT packet wedges the CP-88, 11 trials of 11. Not on probation. |
+| `ZLP` injector | The only deterministic reproducer of a proven fault. Regression-test infrastructure, not a hack. |
+| deep IN capture, 64-entry size queue | Never invent a size, never use a stale one. `starved` 82 → 0, `inLost` → 0, and IN depth costs no latency. |
+| split nice bands (−19 / −16) | Follows from the design rather than a measurement: the ring absorbs a late render, nothing absorbs a late URB. |
+| ADPF on both threads | The supported substitute for the SCHED_FIFO this tablet always refuses. The work-duration fix took `late` from 550-650 to 242-355. |
+| concealment | Judged by ear against its own absence, same load: "less clicky - better". |
+| the reserve adaptation | Grows by what was missed rather than 5,8 ms for any hiccup; returns from the ceiling in ~45 s instead of ~96. |
+
+### KEPT WITHOUT A MEASURED GAIN, and flagged as such
+
+**The device-format byte ring.** Moving channel mapping, dither and packing to
+the render thread left `late` unchanged — 301 against 242-400. It did not
+improve the outcome it was aimed at.
+
+It stays anyway, and this is the one place in this file where that is allowed,
+so the reason has to be good: the thread with a hard deadline should do the
+least work that is possible, which is ordinary real-time practice independent
+of this bug. The rule exists to stop unproven FIXES accumulating; this is not a
+fix, it is a simplification that happens to have been motivated by a hypothesis
+that failed. If that reads as special pleading, delete it — the previous code
+is one revert away and is documented in LOG.md.

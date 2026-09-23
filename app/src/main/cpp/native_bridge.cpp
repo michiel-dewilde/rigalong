@@ -8,7 +8,6 @@
 #include <vector>
 
 #include "AudioEngine.h"
-#include "RealtimePriority.h"
 #include "usb/UsbControl.h"
 
 #include <linux/usbdevice_fs.h>
@@ -24,12 +23,6 @@ AudioEngine& engine() {
     return instance;
 }
 }  // namespace
-
-// Packets per OUT URB, for the depth-shape sweep. Total depth is latency; how
-// it divides between URB count and packets per URB is free, and 2026-09-23
-// showed the division matters on its own -- 8 ms survives as 4 URBs x 2 packets
-// and latches as 8 URBs x 1 packet.
-static std::atomic<int> gPacketsPerUrb{2};
 
 extern "C" {
 
@@ -119,42 +112,18 @@ Java_be_mdw_bagosynths_NativeBridge_nativeIsRecording(JNIEnv*, jobject) {
 }
 
 JNIEXPORT void JNICALL
+Java_be_mdw_bagosynths_NativeBridge_nativeSetRenderPaused(JNIEnv*, jobject, jboolean p) {
+    engine().setRenderPaused(p == JNI_TRUE);
+}
+
+JNIEXPORT void JNICALL
 Java_be_mdw_bagosynths_NativeBridge_nativeSetConcealment(JNIEnv*, jobject, jboolean on) {
     engine().setConcealment(on == JNI_TRUE);
 }
 
 JNIEXPORT void JNICALL
-Java_be_mdw_bagosynths_NativeBridge_nativeSetTransportCore(JNIEnv*, jobject, jint core,
-                                                          jboolean pin) {
-    bos::setTransportCore(core);
-    bos::setPinTransportThread(pin == JNI_TRUE);
-}
-
-JNIEXPORT void JNICALL
-Java_be_mdw_bagosynths_NativeBridge_nativeSetPacketsPerUrb(JNIEnv*, jobject, jint n) {
-    gPacketsPerUrb.store(n, std::memory_order_relaxed);
-}
-
-JNIEXPORT void JNICALL
-Java_be_mdw_bagosynths_NativeBridge_nativeDumpUsbTrace(JNIEnv*, jobject, jint from, jint count) {
-    engine().dumpUsbTrace(static_cast<uint32_t>(from < 0 ? 0 : from),
-                          static_cast<uint32_t>(count < 0 ? 0 : count));
-}
-
-JNIEXPORT void JNICALL
 Java_be_mdw_bagosynths_NativeBridge_nativeInjectRawZero(JNIEnv*, jobject, jint count) {
     engine().injectUsbRawZero(count);
-}
-
-JNIEXPORT void JNICALL
-Java_be_mdw_bagosynths_NativeBridge_nativeInjectStall(JNIEnv*, jobject, jint us, jint count) {
-    engine().injectUsbStall(us, count);
-}
-
-JNIEXPORT void JNICALL
-Java_be_mdw_bagosynths_NativeBridge_nativeInjectStarve(JNIEnv*, jobject, jint packets,
-                                                      jint frames) {
-    engine().injectUsbStarve(packets, frames);
 }
 
 JNIEXPORT void JNICALL
@@ -928,7 +897,7 @@ Java_be_mdw_bagosynths_NativeBridge_nativeStartUsbAudio(JNIEnv* env, jobject, ji
     cfg.subslotBytes = p.subslotBytes;
     cfg.rate = static_cast<int>(rate);
     cfg.bufferMs = bufferMs;
-    cfg.packetsPerUrb = gPacketsPerUrb.load(std::memory_order_relaxed);
+    cfg.packetsPerUrb = 2;   // measured: 1 ms URBs are worse, 4 no better
 
     std::string startErr;
     if (!engine().startUsb(cfg, &startErr)) {

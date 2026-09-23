@@ -61,64 +61,6 @@ constexpr int kRenderNice = -16;
  * `what` names the thread in the log.
  */
 void raiseRenderPriority(const char* what, int niceValue = kTransportNice);
-/**
- * CPU AFFINITY FOR THE TRANSPORT THREAD. OFF BY DEFAULT, AND IT STAYS OFF.
- *
- * The idea: give the USB reap thread a core to itself and keep every other
- * thread in this process off it, so nothing the app does can deschedule the one
- * thread that must never be late.
- *
- * It was on by default for a while, hard-coded to cpu6, and was deleted on
- * 2026-09-23 because it prevented no latches. Then Michiel found the flaw in
- * the experiment that "showed" that: the render and MIDI threads were excluded
- * from the core, but the TEST LOAD -- up to sixteen shell spinners -- was
- * launched with no affinity at all, so the scheduler could put all of them on
- * the very core that was supposed to be private. The measurement was of a
- * dedicated core that was never dedicated.
- *
- * So it comes back as a KNOB, not as behaviour: `setTransportCore(-1)` is the
- * default and disables every call below. `tools/latchhunt.sh` takes SPIN_MASK
- * to keep the spinners off the chosen core, which is what makes the experiment
- * mean anything.
- *
- * What still cannot be had: kernel threads, IRQ handlers and other processes
- * use any core they like. Genuine isolation needs isolcpus or a boot cpuset,
- * which needs root, which this tablet will not get. The honest description of
- * the best case here is "no app threads and no test load on that core".
- *
- * WHICH CORE IS AN OPEN QUESTION, and speed is the wrong way to pick it.
- * Michiel: "it isn't so cpu heavy - just needs to avoid scheduling delay."
- * Exactly so. This thread does tens of microseconds of work per millisecond,
- * so throughput is irrelevant and WAKE-UP LATENCY is everything. By that
- * measure the prime core is a poor candidate rather than an obvious one: it is
- * where the scheduler parks bursty foreground work, so it is contended in the
- * way that matters. A quiet little core may well be scheduled sooner.
- *
- * On this SoC: cpu0-2 are 2,016 GHz, cpu3-6 are 2,803 GHz, cpu7 is 3,36 GHz.
- * The old default of 6 was one of four mid cores and was never justified. Sweep
- * it and measure `late` rather than reasoning from clock speed.
- */
-void setTransportCore(int core);
-int transportCore();
-
-/**
- * Whether the reap thread is PINNED to the transport core, or merely has it
- * kept clear for it.
- *
- * Michiel: "the pinning also prevents the reaper to run from a free core if
- * there was one." Just so, and the two effects are separable:
- *
- *   reserve (false) -- render and MIDI are excluded from the core, the reap
- *     thread is left free. It can use the reserved core whenever it likes,
- *     because this app's renderer is never on it, AND it can still migrate to
- *     any other idle core. The exclusion without the constraint.
- *   pin (true) -- as above, plus the reap thread is confined to that one core.
- *     Buys nothing extra against our own threads and forfeits migration.
- *
- * Default false, because the constraint is the half with a cost.
- */
-void setPinTransportThread(bool pin);
-
 /** Pins the calling thread to the transport core. No-op unless one is set. */
 void pinToTransportCore(const char* what);
 

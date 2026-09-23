@@ -119,7 +119,16 @@ object UsbBuffers {
     // endpoint holds half as much audio when the reap thread is descheduled
     // for 100-300 ms, so it runs dry about twice as often.
     val choicesMs = intArrayOf(4, 6, 8)
-    const val DEFAULT_MS = 4
+    // 6 ms: three URBs of two packets. A middle ground, and it needs one,
+    // because 4 ms measured as the worst of the three and 8 ms is more delay
+    // than a player should pay by default.
+    //
+    // Honest about its status: 6 ms had NEVER been measured when it was chosen
+    // as the default. Every earlier attempt to test it silently ran at 8,
+    // because the debug route ignored any value outside choicesMs without
+    // saying so. Whatever numbers sit beside it now were taken after that was
+    // fixed.
+    const val DEFAULT_MS = 6
 }
 
 /**

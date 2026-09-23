@@ -1,5 +1,7 @@
 #include "AudioEngine.h"
 
+#include <chrono>
+
 #include "RealtimePriority.h"
 
 #include <android/log.h>
@@ -296,6 +298,14 @@ bool AudioEngine::startUsb(const UsbAudioOut::Config& config, std::string* error
     // between the two is like for like.
     const int32_t packetFrames = std::max(1, static_cast<int32_t>(config.rate / 1000));
     prepareRing(packetFrames);
+
+    // The endpoint's own layout, so the render thread can write it directly.
+    mUsbChannels = std::max(1, config.channels);
+    mUsbSubslot = std::clamp(config.subslotBytes, 2, 4);
+    mUsbFrameBytes = mUsbChannels * mUsbSubslot;
+    mByteRing.assign(static_cast<size_t>(kRingFrames) * mUsbFrameBytes, 0);
+    mPackScratch.assign(static_cast<size_t>(kRenderBlockFrames) * mUsbChannels, 0.0f);
+    mPackI16.assign(static_cast<size_t>(kRenderBlockFrames) * mUsbChannels, 0);
     mFlushDenormalsDone.store(false, std::memory_order_relaxed);
     mCallbackMaxMs.store(0.0f, std::memory_order_relaxed);
 
@@ -308,7 +318,7 @@ bool AudioEngine::startUsb(const UsbAudioOut::Config& config, std::string* error
     mRenderRun.store(true, std::memory_order_release);
     mRenderThread = std::thread([this] { renderLoop(); });
 
-    if (!mUsbOut.start(config, &AudioEngine::pullForUsb, this, error)) {
+    if (!mUsbOut.start(config, &AudioEngine::pullBytesForUsb, this, error)) {
         closeStream();
         return false;
     }
@@ -937,10 +947,24 @@ void AudioEngine::renderBlockIntoRing(int frames) {
     runLatencyProbe(mScratch.data(), chunk);
 
     const uint32_t write = mRingWrite.load(std::memory_order_relaxed);
-    for (int i = 0; i < chunk; ++i) {
-        const uint32_t idx = ((write + i) & (kRingFrames - 1)) * 2;
-        mRing[idx] = mScratch[i * 2];
-        mRing[idx + 1] = mScratch[i * 2 + 1];
+    if (mUsbActive.load(std::memory_order_acquire)) {
+        // Straight into the endpoint's layout. Split at the wrap so the reader
+        // can memcpy without caring where the boundary falls.
+        const uint32_t first = std::min<uint32_t>(
+                static_cast<uint32_t>(chunk), kRingFrames - (write & (kRingFrames - 1)));
+        packForUsb(mByteRing.data() +
+                           static_cast<size_t>(write & (kRingFrames - 1)) * mUsbFrameBytes,
+                   mScratch.data(), static_cast<int>(first));
+        if (first < static_cast<uint32_t>(chunk)) {
+            packForUsb(mByteRing.data(), mScratch.data() + first * 2,
+                       static_cast<int>(chunk - first));
+        }
+    } else {
+        for (int i = 0; i < chunk; ++i) {
+            const uint32_t idx = ((write + i) & (kRingFrames - 1)) * 2;
+            mRing[idx] = mScratch[i * 2];
+            mRing[idx + 1] = mScratch[i * 2 + 1];
+        }
     }
     mRingWrite.store(write + static_cast<uint32_t>(chunk), std::memory_order_release);
 }
@@ -953,7 +977,6 @@ void AudioEngine::renderLoop() {
     // render block is absorbed and inaudible; nothing absorbs a late URB. See
     // RealtimePriority.h.
     bos::raiseRenderPriority("render thread", bos::kRenderNice);
-    bos::pinOffTransportCore("render thread");
     enableFlushToZero();
 
     // And the part that actually moves the needle on this tablet: a
@@ -1006,6 +1029,12 @@ void AudioEngine::renderLoop() {
         const uint32_t read = mRingRead.load(std::memory_order_acquire);
         const uint32_t filled = write - read;
 
+        if (mRenderPaused.load(std::memory_order_relaxed)) {
+            // Produce nothing and sleep, so this thread costs what usbhost's
+            // absent render thread costs. The transport runs on concealment.
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+            continue;
+        }
         if (filled < static_cast<uint32_t>(target)) {
             const double t0 = nowSeconds();
             renderBlockIntoRing(kRenderBlockFrames);
@@ -1389,7 +1418,7 @@ AudioEngine::Stats AudioEngine::stats() const {
                 // full-queue ~7500, with IN delivery collapsed to 54 packets
                 // per 250 ms against ~250, in the same interval.
                 LOGI("usb hole: late %lld (+%lld) errors %lld (+%lld) deficit %.1f ms (%+.1f) "
-                     "maxGap %.1f ms starved %lld flightUs %lld/%lld inPkt %lld inLost %lld traceAt %u "
+                     "maxGap %.1f ms starved %lld inPkt %lld inLost %lld "
                      "frames %lld voices %d",
                      static_cast<long long>(u.late),
                      static_cast<long long>(u.late - lastLate),
@@ -1398,13 +1427,8 @@ AudioEngine::Stats AudioEngine::stats() const {
                      static_cast<double>(u.deficitMs), static_cast<double>(jump),
                      static_cast<double>(u.maxGapMs),
                      static_cast<long long>(u.starved),
-                     static_cast<long long>(u.outMinFlightUs),
-                     static_cast<long long>(u.inMinFlightUs),
                      static_cast<long long>(u.inPackets),
                      static_cast<long long>(u.inLostPackets),
-                     // Index into the wire trace at this hole, so the window
-                     // around a transition can be dumped afterwards.
-                     mUsbOut.traceAt(),
                      static_cast<long long>(u.frames), s.activeVoices);
             }
         }
@@ -1416,7 +1440,7 @@ AudioEngine::Stats AudioEngine::stats() const {
             LOGI("health usb %s  out=%.4f cb=%.4f voices=%d/%d frames=%lld deficit=%.1fms "
                  "late=%lld starved=%lld errors=%lld fb=%.1fHz ringUnder=%lld ringTarget=%.1fms "
                  "inSize=%d..%d/%lld fbDrift=%lld fbDrop=%lld fbClamp=%lld "
-                 "flightUs=%lld/%lld inLost=%lld zeroAvoided=%lld outEmpty=%lld/%lld%s%s",
+                 "inLost=%lld zeroAvoided=%lld%s%s",
                  s.usbRunning ? "ok" : "DOWN",
                  static_cast<double>(s.outputPeak),
                  static_cast<double>(mCallbackPeak.load(std::memory_order_relaxed)),
@@ -1441,23 +1465,12 @@ AudioEngine::Stats AudioEngine::stats() const {
                  static_cast<long long>(u.inFramesTotal - u.frames),
                  static_cast<long long>(u.fbDrop),
                  static_cast<long long>(u.fbClamp),
-                 // Shortest time any OUT / IN URB spent in flight this
-                 // interval. With the queue full this sits near
-                 // (urbs-1) x packets x period; a value near ONE packet period
-                 // means the endpoint had nothing queued behind it.
-                 static_cast<long long>(u.outMinFlightUs),
-                 static_cast<long long>(u.inMinFlightUs),
                  // IN packets the device sent that no URB was queued to catch:
                  // requests destroyed before they were read. Should be zero.
                  static_cast<long long>(u.inLostPackets),
                  // MUST be 0. A single zero-length OUT packet wedges the
                  // device permanently, so this counts near misses.
                  static_cast<long long>(u.zeroAvoided),
-                 // Packets we filled that the controller sent as empty, and
-                 // ones it truncated. An empty one is the fatal event arriving
-                 // from the far side of the ioctl.
-                 static_cast<long long>(u.outEmpty),
-                 static_cast<long long>(u.outShort),
                  why.empty() ? "" : " fatal=", why.c_str());
             logMidiChain();
         }
@@ -1987,4 +2000,156 @@ void AudioEngine::logProfile() {
          mStream ? 1000.0 * mStream->getFramesPerBurst() / mStream->getSampleRate() : 0.0,
          mStream ? mStream->getXRunCount().value() : -1);
     sched->resetProfile();
+}
+
+// --------------------------------------------------------- device format ---
+
+void AudioEngine::packForUsb(uint8_t* dst, const float* stereo, int frames) {
+    // Channel map first: L/R into the first two and silence beyond, a mono
+    // device gets the sum. Same rule the USB sink used to apply per packet,
+    // moved to the producer where being late is absorbed by the ring.
+    const int ch = mUsbChannels;
+    float* f = mPackScratch.data();
+    for (int i = 0; i < frames; ++i) {
+        const float l = stereo[i * 2], r = stereo[i * 2 + 1];
+        if (ch == 1) {
+            f[i] = 0.5f * (l + r);
+        } else {
+            f[i * ch] = l;
+            f[i * ch + 1] = r;
+            for (int c = 2; c < ch; ++c) f[i * ch + c] = 0.0f;
+        }
+    }
+    const int samples = frames * ch;
+    switch (mUsbSubslot) {
+        case 2:
+            // Dither belongs with the conversion, so it moved here too.
+            mUsbDither.process(f, mPackI16.data(), samples);
+            std::memcpy(dst, mPackI16.data(), static_cast<size_t>(samples) * 2);
+            break;
+        case 3:
+            bagosynths::packI24(f, dst, samples);
+            break;
+        default:
+            bagosynths::packI32(f, reinterpret_cast<int32_t*>(dst), samples);
+            break;
+    }
+}
+
+uint32_t AudioEngine::pullBytes(uint8_t* dst, uint32_t want) {
+    const uint32_t read = mRingRead.load(std::memory_order_relaxed);
+    const uint32_t write = mRingWrite.load(std::memory_order_acquire);
+    const uint32_t take = std::min(write - read, want);
+
+    // Two memcpys at most, and usually one. This is the whole of the reap
+    // thread's per-packet work now.
+    const uint32_t off = read & (kRingFrames - 1);
+    const uint32_t first = std::min(take, kRingFrames - off);
+    std::memcpy(dst, mByteRing.data() + static_cast<size_t>(off) * mUsbFrameBytes,
+                static_cast<size_t>(first) * mUsbFrameBytes);
+    if (first < take) {
+        std::memcpy(dst + static_cast<size_t>(first) * mUsbFrameBytes, mByteRing.data(),
+                    static_cast<size_t>(take - first) * mUsbFrameBytes);
+    }
+    mRingRead.store(read + take, std::memory_order_release);
+
+    if (take < want) {
+        mRingUnderruns.fetch_add(1, std::memory_order_relaxed);
+        const uint32_t missing = want - take;
+        if (!mConcealOn.load(std::memory_order_relaxed)) {
+            std::memset(dst + static_cast<size_t>(take) * mUsbFrameBytes, 0,
+                        static_cast<size_t>(missing) * mUsbFrameBytes);
+        } else {
+            // Repeat from a period back, decaying. On packed bytes the fade
+            // needs a decode and re-encode per sample, which is fine: this runs
+            // only during an underrun, never on the healthy path.
+            concealBytes(dst, take, missing, read + take);
+        }
+        mConcealedFrames += missing;
+        mConcealedTotal.fetch_add(missing, std::memory_order_relaxed);
+        mRingFillMs.store(0.0f, std::memory_order_relaxed);
+        return want;
+    }
+    mConcealedFrames = 0;
+    mRingFillMs.store(static_cast<float>(1000.0 * (write - read - take) / currentRate()),
+                      std::memory_order_relaxed);
+    return take;
+}
+
+int AudioEngine::pullBytesForUsb(void* ctx, uint8_t* dst, int frames) {
+    auto* self = static_cast<AudioEngine*>(ctx);
+    return static_cast<int>(self->pullBytes(dst, static_cast<uint32_t>(std::max(0, frames))));
+}
+
+namespace {
+
+// One packed sample in and out, whatever the subslot width. Signed, and for
+// 24-in-4 the value is left justified exactly as packI32 writes it.
+inline int32_t loadSample(const uint8_t* p, int subslot) {
+    switch (subslot) {
+        case 2: return static_cast<int16_t>(p[0] | (p[1] << 8));
+        case 3: {
+            int32_t v = p[0] | (p[1] << 8) | (p[2] << 16);
+            if (v & 0x800000) v |= ~0xFFFFFF;
+            return v;
+        }
+        default:
+            return static_cast<int32_t>(static_cast<uint32_t>(p[0]) |
+                                        (static_cast<uint32_t>(p[1]) << 8) |
+                                        (static_cast<uint32_t>(p[2]) << 16) |
+                                        (static_cast<uint32_t>(p[3]) << 24));
+    }
+}
+
+inline void storeSample(uint8_t* p, int subslot, int32_t v) {
+    switch (subslot) {
+        case 2:
+            p[0] = static_cast<uint8_t>(v & 0xFF);
+            p[1] = static_cast<uint8_t>((v >> 8) & 0xFF);
+            break;
+        case 3:
+            p[0] = static_cast<uint8_t>(v & 0xFF);
+            p[1] = static_cast<uint8_t>((v >> 8) & 0xFF);
+            p[2] = static_cast<uint8_t>((v >> 16) & 0xFF);
+            break;
+        default:
+            p[0] = static_cast<uint8_t>(v & 0xFF);
+            p[1] = static_cast<uint8_t>((v >> 8) & 0xFF);
+            p[2] = static_cast<uint8_t>((v >> 16) & 0xFF);
+            p[3] = static_cast<uint8_t>((v >> 24) & 0xFF);
+            break;
+    }
+}
+
+}  // namespace
+
+void AudioEngine::concealBytes(uint8_t* dst, uint32_t take, uint32_t missing, uint32_t base) {
+    const int ch = mUsbChannels;
+    const int sub = mUsbSubslot;
+    const int fb = mUsbFrameBytes;
+    for (uint32_t i = 0; i < missing; ++i) {
+        const uint32_t age = mConcealedFrames + i;
+        float g = 1.0f - static_cast<float>(age) / kConcealFadeFrames;
+        if (g < 0.0f) g = 0.0f;
+        const uint32_t back = kConcealPeriodFrames - (age % kConcealPeriodFrames);
+        const uint8_t* src =
+                mByteRing.data() +
+                static_cast<size_t>((base + i - back) & (kRingFrames - 1)) * fb;
+        uint8_t* out = dst + static_cast<size_t>(take + i) * fb;
+        // Crossfade the first frames of a new hole against the audio that
+        // really was delivered, so the splice is not a step.
+        const bool splice = (mConcealedFrames == 0 && i < kConcealXfadeFrames && take > 0);
+        const uint8_t* last =
+                splice ? mByteRing.data() +
+                                 static_cast<size_t>((base - 1) & (kRingFrames - 1)) * fb
+                       : nullptr;
+        const float w = splice ? static_cast<float>(i) / kConcealXfadeFrames : 1.0f;
+        for (int c = 0; c < ch; ++c) {
+            float v = static_cast<float>(loadSample(src + c * sub, sub)) * g;
+            if (splice) {
+                v = static_cast<float>(loadSample(last + c * sub, sub)) * (1.0f - w) + v * w;
+            }
+            storeSample(out + c * sub, sub, static_cast<int32_t>(v));
+        }
+    }
 }

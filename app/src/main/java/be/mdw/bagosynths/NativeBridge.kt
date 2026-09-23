@@ -24,29 +24,15 @@ object NativeBridge {
     /** Whether the native AMidi port is actually open. False after an unplug. */
     external fun nativeMidiOpen(): Boolean
     external fun nativePanic()
-    /** EXPERIMENT ONLY: pin the reap thread to this core, others off it. -1 = off (default). */
+
     /** Underrun concealment on/off, for judging it by ear against its absence. */
     external fun nativeSetConcealment(on: Boolean)
-
-    external fun nativeSetTransportCore(core: Int, pin: Boolean)
-
-    /** Packets per OUT URB for the next direct-USB start; total depth stays the same. */
-    external fun nativeSetPacketsPerUrb(n: Int)
-
-    /** The last 4096 OUT packet sizes actually submitted, to the log. */
-    external fun nativeDumpUsbTrace(from: Int, count: Int)
 
     /** CLEAR_FEATURE(ENDPOINT_HALT) on both streaming endpoints. */
     external fun nativeUsbClearHalt(fd: Int, raw: ByteArray): Boolean
 
     /** TEST ONLY: emit N genuinely zero-length OUT packets, bypassing the invariant. */
     external fun nativeInjectRawZero(count: Int)
-
-    /** Mechanism test: stall the reap thread, draining the OUT endpoint only. */
-    external fun nativeInjectStall(us: Int, count: Int)
-
-    /** Mechanism test: size the next N OUT packets as a dry queue would. */
-    external fun nativeInjectStarve(packets: Int, frames: Int)
 
     external fun nativeResetPeaks()
     external fun nativeTestNote(note: Int, velocity: Int)

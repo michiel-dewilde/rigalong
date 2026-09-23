@@ -261,11 +261,20 @@ public:
     Stats stats() const;
     void resetPeaks();
     void setConcealment(bool on) { mConcealOn.store(on, std::memory_order_relaxed); }
-    // Mechanism test: see UsbAudioOut::injectStarve.
-    void injectUsbStarve(int packets, int frames) { mUsbOut.injectStarve(packets, frames); }
-    void injectUsbStall(int us, int count) { mUsbOut.injectStall(us, count); }
+
+    // EXPERIMENT ONLY: stop the render thread producing, while leaving the USB
+    // transport running on concealment.
+    //
+    // The last in-process difference from usbhost -- which holds `late` at 32
+    // under a system load of 62 -- is that this app renders the whole graph
+    // every block whether or not a note is sounding, and usbhost has no
+    // equivalent thread at all. `late` measures the reap thread and does not
+    // care what is in the ring, so pausing production isolates that difference
+    // from everything else about being an Android app.
+    void setRenderPaused(bool paused) {
+        mRenderPaused.store(paused, std::memory_order_relaxed);
+    }
     void injectUsbRawZero(int count) { mUsbOut.injectRawZero(count); }
-    void dumpUsbTrace(uint32_t from, uint32_t count) const { mUsbOut.dumpTrace(from, count); }
 
     /// The rate the CHOSEN DEVICE declares, from AudioDeviceInfo. 0 = let
     /// AAudio decide. Takes effect on the next openStream().
@@ -333,6 +342,13 @@ private:
     // there; the caller fills the rest with silence. Counts the underrun and
     // updates the fill and the peak, so the two sinks report identically.
     uint32_t pullFromRing(float* dst, uint32_t want);
+    /** Device-format bytes for the USB sink. Conceals a shortfall in place. */
+    uint32_t pullBytes(uint8_t* dst, uint32_t want);
+    static int pullBytesForUsb(void* ctx, uint8_t* dst, int frames);
+    /** Stereo float -> the endpoint's channel count and sample format. */
+    void packForUsb(uint8_t* dst, const float* stereo, int frames);
+    /** Conceal `missing` frames at `dst`, in the device's packed format. */
+    void concealBytes(uint8_t* dst, uint32_t take, uint32_t missing, uint32_t base);
     static int pullForUsb(void* ctx, float* dst, int frames);
 
     UsbAudioOut mUsbOut;
@@ -581,6 +597,33 @@ private:
     // instead of quantising to 16 bits here and padding back up afterwards.
     std::vector<float> mRing;
 
+    // THE DEVICE-FORMAT RING, used only when direct USB is the sink.
+    //
+    // The reap thread is the one thread in this process that must never be
+    // late, and it was doing the most work per URB of anything in the audio
+    // path: read the float ring, map channels, dither, pack to 24-bit, conceal.
+    // usbhost -- which holds `late` at 32 under a system load of 62 -- computes
+    // a sine inline and packs it, touching nothing shared. That difference in
+    // critical-section length is the last structural one between the two, and
+    // it is the one thing that moved `late` by large factors all day.
+    //
+    // So the producer now does the conversion. The render thread writes bytes
+    // in exactly the layout the endpoint wants, and the reap thread does a
+    // memcpy -- two across the wrap -- and sets the packet length. It never
+    // needs to know the packet size in advance, because it is slicing a byte
+    // stream rather than re-blocking fixed packets, so implicit feedback still
+    // decides 44 or 45 frames at fill time exactly as before.
+    //
+    // ALSA keeps using the float ring for now; the two sinks are mutually
+    // exclusive, so a flag at stream start is enough to say which is live.
+    std::vector<uint8_t> mByteRing;
+    std::vector<float> mPackScratch;      // channel-mapped, render thread only
+    std::vector<int16_t> mPackI16;
+    Dither mUsbDither;                    // 16-bit targets only; render thread
+    int mUsbChannels = 2;
+    int mUsbSubslot = 3;
+    int mUsbFrameBytes = 6;
+
     // Contiguous copy of one callback's worth, because the ring wraps and the
     // dither wants a straight run of samples. Preallocated at open.
     std::vector<float> mCbScratch;
@@ -615,6 +658,7 @@ private:
     // Switchable so concealment can be judged by ear against its own absence
     // on the same load, rather than in the absolute. Default on.
     std::atomic<bool> mConcealOn{true};
+    std::atomic<bool> mRenderPaused{false};
     // Frames concealed since the stream started. The reserve adapts on the
     // DELTA of this rather than on the underrun count, because it carries
     // severity: one frame short and a whole packet short are not the same

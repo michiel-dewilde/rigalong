@@ -24,6 +24,34 @@
 // The render ring is the engine's; this class only drains it, exactly as the
 // Oboe callback does. Nothing here allocates after start().
 
+// THE SPLIT BETWEEN THE RENDER THREAD AND THE REAP THREAD
+// -------------------------------------------------------
+// Settled by measurement on 2026-09-23, and worth stating once rather than
+// rediscovering:
+//
+//   THE REAP THREAD (here) owns PROTOCOL TIMING and nothing else.
+//     reap a URB -> account for it -> pop the next packet size from the
+//     feedback queue -> ONE memcpy of already-formatted bytes -> resubmit.
+//     No channel mapping, no dither, no packing, no float arithmetic, no
+//     allocation, no logging on the healthy path. It runs at nice -19 with an
+//     ADPF session whose deadline is one URB.
+//
+//   THE RENDER THREAD (AudioEngine) owns EVERY SAMPLE OPERATION.
+//     the graph, master gain, the latency probe, channel mapping, dither,
+//     packing to the endpoint's format, and concealing its own shortfall. It
+//     runs at nice -16, one band below, because the ring exists so that a late
+//     render is inaudible and NOTHING absorbs a late URB.
+//
+// The ring between them is device-format bytes, and it stays: it absorbs a late
+// render, which includes sfizz reaching for a sample that is not in memory yet.
+// That is I/O latency, and no amount of priority fixes it.
+//
+// What this split is NOT: it is not what stops the device latching. Moving the
+// conversion off this thread was measured and changed `late` not at all
+// (301 against 242-400 before). It is kept because the thread with a hard
+// deadline should do the least work, which is ordinary real-time hygiene, not
+// because it bought anything here.
+
 #include <atomic>
 #include <cstdint>
 #include <string>
@@ -110,9 +138,17 @@ public:
         int packetsPerUrb = 2;
     };
 
-    // Fills `frames` interleaved stereo floats; returns how many were really
-    // available. The engine's ring. Called on this class's reap thread.
-    using PullFn = int (*)(void* ctx, float* dst, int frames);
+    // Fills `frames` frames of audio ALREADY IN THE DEVICE'S FORMAT -- the
+    // endpoint's channel count and sample width, packed -- and returns how many
+    // it wrote. Called on this class's reap thread, which does nothing else to
+    // the data: no channel map, no dither, no packing, no concealment.
+    //
+    // That conversion used to happen here, per packet, on the one thread in the
+    // process that must never be late. The producer does it now. See the note
+    // on AudioEngine::mByteRing for why: usbhost, whose reap thread computes a
+    // sine inline and touches nothing shared, holds `late` at 32 under a system
+    // load of 62, where this app reached 250-600.
+    using PullFn = int (*)(void* ctx, uint8_t* dst, int frames);
 
     ~UsbAudioOut() { stop(); }
 
@@ -141,15 +177,11 @@ public:
         int64_t inFramesTotal = 0;   // what the device ASKED for, cumulative
     int64_t inLostPackets = 0;   // IN packets the device sent with no URB waiting
     int64_t zeroAvoided = 0;     // zero-length OUT packets prevented; MUST stay 0
-    int64_t outEmpty = 0;        // packets we filled that the controller sent as EMPTY
-    int64_t outShort = 0;        // packets the controller truncated
         int64_t fbDrop = 0;          // requests discarded on queue overflow
         int64_t fbClamp = 0;         // requests cut down to the max packet
         float deficitMs = 0.0f;      // wall time minus wire time; GROWTH is a hole
         float maxGapMs = 0.0f;       // worst reap interval since resetPeaks()
         float feedbackRate = 0.0f;   // the device's rate as last measured, Hz
-        int64_t outMinFlightUs = 0;  // shortest submit->reap seen, OUT, this interval
-        int64_t inMinFlightUs = 0;   // and IN
     };
     Stats stats() const;
     void resetPeaks() { mMaxGapUs.store(0, std::memory_order_relaxed); }
@@ -176,43 +208,6 @@ public:
     void injectRawZero(int count) {
         mInjectRawZero.store(count, std::memory_order_relaxed);
     }
-
-    void injectStarve(int packets, int frames) {
-        mInjectFrames.store(frames, std::memory_order_relaxed);
-        mInjectStarve.store(packets, std::memory_order_relaxed);
-    }
-
-    // THE SECOND MECHANISM, isolated. Stalls the reap thread for `us`
-    // microseconds, `count` times, and changes nothing else.
-    //
-    // Starvation is now proved and closed, yet trials still latch occasionally
-    // with starved=0 and inLost=0 -- no invented packet, no destroyed request.
-    // What is left is the OUT ENDPOINT DRAINING: only 8 ms is queued there,
-    // every URB carries ISO_ASAP, and a drained endpoint does not resume the
-    // stream, it starts a new one at whatever frame the controller has reached.
-    // Explicit start_frame scheduling would avoid that and is unreachable here
-    // (usbfs reports start_frame=0 always), so the drain is the only lever.
-    //
-    // A stall in this thread reproduces exactly that and nothing else: the OUT
-    // queue empties in 8 ms while the 1024 ms IN queue loses NOTHING, so
-    // starvation cannot contaminate the result. No CPU load, no synth, no
-    // contention -- the one variable.
-    // THE WIRE TRACE. Section 20 asked for this and it never got built.
-    //
-    // Every counter in this class is a summary, and a latch has now survived
-    // every summary anyone has thought of. This keeps the last 4096 OUT packet
-    // sizes actually submitted, as bytes, so the SEQUENCE can be read rather
-    // than its mean. If the fault is a pattern -- a run the device cannot take,
-    // a transition, a size that is legal in isolation and wrong in context --
-    // it is here and nowhere else.
-    void dumpTrace(uint32_t from, uint32_t count) const;
-    uint32_t traceAt() const { return mTraceAt.load(std::memory_order_relaxed); }
-
-    void injectStall(int us, int count) {
-        mStallUs.store(us, std::memory_order_relaxed);
-        mStallCount.store(count, std::memory_order_relaxed);
-    }
-
 private:
     struct Urb {
         usbdevfs_urb* u = nullptr;
@@ -294,11 +289,6 @@ private:
     int mSizes[kSizeCap] = {};
     int mSizeHead = 0, mSizeCount = 0;
 
-    // Scratch for one packet's worth of float and dithered int16.
-    std::vector<float> mFloat;
-    std::vector<float> mStereo;
-    std::vector<int16_t> mI16;
-    Dither mDither;
 
     std::atomic<int64_t> mFrames{0}, mOutBytes{0}, mOutErr{0}, mInErr{0};
 
@@ -355,17 +345,7 @@ private:
     // frames it wants, destroyed before they were read. Unlike `starved`, which
     // only notices that the size queue ran dry, this counts requests that are
     // GONE and can never be answered.
-    int mFrameLogged = 0;
-    // 65536 packets is 65 seconds at 1 ms, so a whole trial fits and the
-    // window around the transition can be chosen afterwards. 64 kB.
-    static constexpr int kTraceCap = 65536;
-    mutable uint8_t mTrace[kTraceCap] = {};
-    std::atomic<uint32_t> mTraceAt{0};
-    std::atomic<int64_t> mInjectStarve{0};
-    std::atomic<int> mInjectFrames{0};
     std::atomic<int64_t> mInjectRawZero{0};
-    std::atomic<int> mStallUs{0};
-    std::atomic<int64_t> mStallCount{0};
     std::atomic<int64_t> mInPacketsTotal{0};
     std::atomic<int64_t> mInFramesTotal{0};
     std::atomic<int64_t> mFbDrop{0};
@@ -376,46 +356,6 @@ private:
     // a full queue and no load. Anything but 0 here means the rig came within a
     // single packet of needing a USB reset.
     std::atomic<int64_t> mZeroAvoided{0};
-
-    // What the CONTROLLER did with a packet we filled. A submitted length of N
-    // completing with actual_length 0 means a zero-length packet went out --
-    // the one event proved fatal to this device -- without anything in this
-    // process having asked for it.
-    std::atomic<int64_t> mOutEmpty{0};
-    std::atomic<int64_t> mOutShort{0};
-
-    // DID THE ENDPOINT QUEUE RUN SHALLOW? Measured by flight time, because
-    // counting URBs cannot answer it.
-    //
-    // The question is real: usbhost runs 8 URBs per stream, this runs 4 at 8 ms
-    // and 2 at the 4 ms default. That is not the depth argument again -- what
-    // matters is how many URBs the endpoint still has to TRANSMIT while the
-    // reap thread is off refilling one. usbhost leaves 7, this leaves 1. At
-    // zero the endpoint goes quiet, and since every URB carries ISO_ASAP the
-    // next submission does not resume the stream, it starts one at whatever
-    // frame the controller has reached.
-    //
-    // The obvious instrument -- submitted minus reaped -- WAS BUILT AND IS
-    // WRONG, and it is worth saying why so nobody builds it again. The kernel
-    // completes URBs whether or not anyone reaps them; a completed URB simply
-    // waits on the completion queue. So that counter measures URBs I have not
-    // COLLECTED, not URBs the endpoint has yet to SEND, and the two move in
-    // opposite directions: a reap thread that is 300 ms late has a completion
-    // queue that is full, not empty. Measured, 2026-09-23: it sat at its
-    // healthy floor (3 of 4 queued, zero drains) through a run that reached
-    // maxGap 323,9 ms and 1337 ms of deficit. Reassuring and meaningless.
-    //
-    // Flight time answers it one-sidedly, which is enough. A URB cannot come
-    // back before the ones queued ahead of it have gone out, so with a full
-    // queue submit->reap is about (urbs-1) x packets x period -- roughly 6 ms
-    // here, 14 ms in usbhost. Reaping can only ever be LATE, never early, so a
-    // SHORT flight time proves the queue was shallow; a long one proves
-    // nothing. Short is the direction that matters.
-    //
-    // Reset on read, so each sample describes its own interval.
-    mutable std::atomic<int64_t> mOutMinFlightUs{INT64_MAX};
-    mutable std::atomic<int64_t> mInMinFlightUs{INT64_MAX};
-
     // TRIED AND REJECTED, 2026-09-23: measuring the LEVEL of the device's own
     // capture stream on endpoint 0x86, on the theory that a wedged audio
     // function might go silent in both directions, or that the CP-88's capture
