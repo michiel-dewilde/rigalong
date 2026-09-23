@@ -214,7 +214,33 @@ int UsbAudioOut::nextFrames() {
             --mSizeCount;
             return n;
         }
+        // DRY QUEUE: SEND NOTHING, never a guess.
+        //
+        // Implicit feedback is a contract. The device states, packet by packet
+        // and by how much it delivers on its own IN stream, exactly how many
+        // frames it wants back. When that information has not arrived yet, the
+        // host does not know the answer, and there are only two things it can
+        // do: send nothing, or invent a number.
+        //
+        // This used to invent one -- the nominal rate -- and that is a
+        // permanent surplus, not a temporary error. The requests we could not
+        // answer are not discarded: they arrive late, sit in the queue, and are
+        // honoured on later packets. So every invented frame is sent IN
+        // ADDITION to every frame the device actually asked for, and the
+        // overshoot never comes back.
+        //
+        // A zero-length packet is legal on an isochronous OUT endpoint and
+        // costs one packet interval of the device's buffer, which the very next
+        // packets refill because the queued requests are still there. Late, but
+        // never wrong. As Michiel put it: the protocol requires ABC or nothing
+        // at all, and AC is the thing that must not happen.
+        //
+        // Honesty about what this is: a latch has NOT been reproduced in the
+        // bare transport, by any means tried (see usbhost/latchgap.sh), so this
+        // is not a demonstrated cure. It removes a real protocol violation,
+        // which is worth doing on its own terms.
         mStarved.fetch_add(1, std::memory_order_relaxed);
+        return 0;
     } else if (mCfg.feedback == kExplicit && mFbQ16 != 0) {
         const uint32_t unitsPerPacket = 1u << (std::clamp(mCfg.outInterval, 1, 16) - 1);
         mFbAcc += mFbQ16 * unitsPerPacket;
@@ -233,7 +259,9 @@ void UsbAudioOut::fillOut(Urb& b) {
     const int maxFrames = mCfg.outMaxPacket / mFrameBytes;
     int offset = 0;
     for (int p = 0; p < mPackets; ++p) {
-        const int frames = std::clamp(nextFrames(), 0, maxFrames);
+        const int want = nextFrames();
+        const int frames = std::clamp(want, 0, maxFrames);
+        if (want != frames) mFbClamp.fetch_add(1, std::memory_order_relaxed);
 
         // Pull stereo float from the engine's ring; whatever it cannot supply
         // is silence. The engine counts that as a ring underrun itself.
@@ -305,9 +333,19 @@ void UsbAudioOut::completeIn(Urb& b) {
         const int frames = static_cast<int>(d.actual_length) / mCfg.fbFrameBytes;
         // Latch probe: the spread of these is the device's clock talking.
         mInPackets.fetch_add(1, std::memory_order_relaxed);
-        if (mSizeCount == kSizeCap) {          // keep the newest
+        mInFramesTotal.fetch_add(frames, std::memory_order_relaxed);
+        if (mSizeCount == kSizeCap) {
+            // THE QUEUE IS FULL AND SOMETHING MUST GIVE. Dropping the oldest
+            // request -- what this did before, "keep the newest" -- breaks the
+            // contract: that many frames were asked for and will never be sent.
+            // Dropping the NEWEST is equally a break, so neither choice is
+            // clean at this point; what matters is that it is counted rather
+            // than silent, because a contract broken without a counter is one
+            // nobody can argue about later. Measured at 0 across every latch
+            // reproduced so far, so this path is not the one that bites.
             mSizeHead = (mSizeHead + 1) % kSizeCap;
             --mSizeCount;
+            mFbDrop.fetch_add(1, std::memory_order_relaxed);
         }
         mSizes[(mSizeHead + mSizeCount) % kSizeCap] = frames;
         ++mSizeCount;
@@ -411,6 +449,9 @@ UsbAudioOut::Stats UsbAudioOut::stats() const {
     s.inSizeMin = mInSizeMin.exchange(1 << 30, std::memory_order_relaxed);
     s.inSizeMax = mInSizeMax.exchange(0, std::memory_order_relaxed);
     s.inPackets = mInPackets.exchange(0, std::memory_order_relaxed);
+    s.inFramesTotal = mInFramesTotal.load(std::memory_order_relaxed);
+    s.fbDrop = mFbDrop.load(std::memory_order_relaxed);
+    s.fbClamp = mFbClamp.load(std::memory_order_relaxed);
     s.maxGapMs = mMaxGapUs.load(std::memory_order_relaxed) / 1000.0f;
     s.feedbackRate = mFbRate.load(std::memory_order_relaxed);
     const int64_t start = mStartNs.load(std::memory_order_relaxed);

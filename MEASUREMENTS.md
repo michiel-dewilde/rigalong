@@ -710,6 +710,71 @@ reset: USB reset of "CP88/CP73"
 probe: OK 0,4405
 ```
 
+## 5j. THE LATCH isolated in a bare transport (2026-09-23)
+
+Michiel: "you don't need a synth and a bunch of load to have that late issue."
+Correct, and the isolation moved the question a long way. Full account in
+[`../usbhost/README.md`](../usbhost/README.md); what matters here:
+
+**Lateness is not the fault, at any magnitude.** The bare transport survived
+**8654 late URBs, 996 starved packets and 24,2 seconds of accumulated deficit**
+with the tone never moving off -23,0 dB. It also survived a single 500 ms stall,
+500 repeated 12 ms stalls, eight external spinners, spinners plus disk readers,
+and 1650 packets deliberately sized nominally.
+
+So every counter this project has been reading -- `late`, `deficit`, `maxGap` --
+measures something the CP-88 does not care about. That retires the idea that the
+watchdog's trigger is measuring the cause; it is measuring a correlate, and §5i's
+"necessary but not sufficient" is now better explained: holes accompany the fault
+without being it.
+
+**External load does not even reach us.** Eight spinners left the bare
+transport's `late` completely unchanged, 666 -> 666. A reap thread at nice -19
+wins that fight. Bag-O-Synths loses it only because its competition is INSIDE
+the process and in the same priority band -- the render thread.
+
+**The lead: the IN stream, not the OUT stream.** OUT and IN are separate
+isochronous streams and implicit feedback is a contract between them. Every
+disturbance above delays both together, preserving it. Delaying one alone:
+
+| disturbance | starved | trials | latched |
+|---|---|---|---|
+| IN stalled 5 ms x 200 | 52-60 | 5 | **2** |
+| OUT stalled 5 ms x 200 | 0 | 5 | 0 |
+
+`starved` is non-zero in every latch observed, in both apps, and zero in every
+OUT-only trial. Starving the IN stream starves the feedback queue, and the host
+then sizes packets from something other than what the device asked for.
+
+**Stated carefully, because an earlier draft overstated it:** this is a
+correlation and the trigger is STOCHASTIC. Two in five is a lead, not a
+mechanism. A claim that the IN stall reproduced the fault deterministically was
+made and is withdrawn -- the next two pairs of trials survived.
+
+Depth behaves the same way: 4 ms latched twice in three under load where 8 ms
+survived the same load, but a third 4 ms trial survived and Michiel reports
+latching at 8 ms too. **Depth shifts the odds; it is not the cause**, and
+treating it as one would be a number game.
+
+### What was changed here as a result
+
+`nextFrames()` no longer INVENTS a packet size when the feedback queue is dry;
+it returns 0, a zero-length packet. The argument is the contract: the requests
+we could not answer are not discarded, they arrive late and are honoured on
+later packets, so every invented frame used to be sent IN ADDITION to every
+frame the device asked for -- a permanent surplus. Zero-length preserves the
+cumulative total exactly. Late, but never wrong.
+
+**It does not cure the latch** -- three heavy trials after the change latched
+three times out of three, and an A/B in the bare transport latched WITH the fix
+and survived without it on the next trial, which is the stochastic trigger
+again. It is kept because it removes a real protocol violation, not because it
+was shown to fix anything.
+
+Also added and measured at zero in every latch so far, so not the path that
+bites: `fbDrop` (a request discarded on queue overflow) and `fbClamp` (a request
+cut down to the endpoint's max packet).
+
 ## 6. Still open
 
 | Question | Status |

@@ -1306,7 +1306,7 @@ AudioEngine::Stats AudioEngine::stats() const {
             const std::string why = mUsbOut.fatal();
             LOGI("health usb %s  out=%.4f cb=%.4f voices=%d/%d frames=%lld deficit=%.1fms "
                  "late=%lld starved=%lld errors=%lld fb=%.1fHz ringUnder=%lld "
-                 "inSize=%d..%d/%lld%s%s",
+                 "inSize=%d..%d/%lld fbDrift=%lld fbDrop=%lld fbClamp=%lld%s%s",
                  s.usbRunning ? "ok" : "DOWN",
                  static_cast<double>(s.outputPeak),
                  static_cast<double>(mCallbackPeak.load(std::memory_order_relaxed)),
@@ -1319,6 +1319,9 @@ AudioEngine::Stats AudioEngine::stats() const {
                  static_cast<long long>(mRingUnderruns.load(std::memory_order_relaxed)),
                  u.inSizeMax ? u.inSizeMin : 0, u.inSizeMax,
                  static_cast<long long>(u.inPackets),
+                 static_cast<long long>(u.inFramesTotal - u.frames),
+                 static_cast<long long>(u.fbDrop),
+                 static_cast<long long>(u.fbClamp),
                  why.empty() ? "" : " fatal=", why.c_str());
             logMidiChain();
         }

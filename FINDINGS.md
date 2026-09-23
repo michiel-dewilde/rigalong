@@ -112,6 +112,20 @@ fault on. Measured, both states, side by side. So anything that needs to know
 "is sound reaching the piano" must either make a noise and listen, or give up
 and act on the disturbance instead. See MEASUREMENTS.md §5i.
 
+**Lateness is not what the CP-88 objects to.** A bare transport survived 8654
+late URBs, 996 starved packets and 24,2 s of accumulated deficit with the tone
+unchanged. `late`, `deficit` and `maxGap` therefore measure a CORRELATE of the
+fault, not its cause -- useful as a trigger, worthless as an explanation. The
+strongest lead is the IN (feedback) stream being under-serviced while OUT keeps
+consuming: `starved` is non-zero in every latch observed and zero in every trial
+that stalled OUT alone. It is a correlation on small numbers, and the trigger is
+stochastic. See MEASUREMENTS.md §5j.
+
+**Never invent a packet size under implicit feedback.** Requests that arrive
+late are still honoured later, so a guessed size is sent IN ADDITION to the real
+one and the surplus never comes back. Send a zero-length packet instead: late,
+but never wrong. This did NOT cure the latch and is kept for correctness alone.
+
 **Late URBs are necessary but not sufficient for a latch.** Across eleven
 controlled trials it never latched without them, and it latched on as few as
 four — but two other trials at four, and one at two, survived, while one at 374

@@ -87,6 +87,9 @@ public:
         int32_t inSizeMin = 0;       // IN packet frames, this interval
         int32_t inSizeMax = 0;
         int64_t inPackets = 0;
+        int64_t inFramesTotal = 0;   // what the device ASKED for, cumulative
+        int64_t fbDrop = 0;          // requests discarded on queue overflow
+        int64_t fbClamp = 0;         // requests cut down to the max packet
         float deficitMs = 0.0f;      // wall time minus wire time; GROWTH is a hole
         float maxGapMs = 0.0f;       // worst reap interval since resetPeaks()
         float feedbackRate = 0.0f;   // the device's rate as last measured, Hz
@@ -168,6 +171,31 @@ private:
     mutable std::atomic<int32_t> mInSizeMin{1 << 30};
     mutable std::atomic<int32_t> mInSizeMax{0};
     mutable std::atomic<int64_t> mInPackets{0};
+
+    // IMPLICIT FEEDBACK IS A CONTRACT, and these count the places we break it.
+    //
+    // Michiel's hypothesis, and it survives every test so far: the latch is a
+    // PROTOCOL error, not lateness. "The protocol requires to send message ABC
+    // or nothing at all, but the implementation being late could send AC,
+    // leaving out B." With implicit feedback the device states, packet by
+    // packet, exactly how many frames it wants back; sending a different
+    // number is that error, and the device has no way to complain about it.
+    //
+    // Three places do it, and none of them used to count:
+    //   mFbDrop    -- the size queue overflowed and the OLDEST request was
+    //                 discarded to keep the newest. A frame count the device
+    //                 asked for that is never delivered.
+    //   mFbClamp   -- a request larger than the endpoint's max packet, cut down.
+    //   (mStarved) -- already counted: the queue ran dry and a NOMINAL size was
+    //                 invented in place of one the device asked for.
+    //
+    // And the summary measurement that says whether the contract held at all:
+    // cumulative IN frames against cumulative OUT frames. usbhost tracks these
+    // and they match (221822 vs 222351 over a clean run). Any divergence here
+    // is the host not honouring what the device asked for.
+    std::atomic<int64_t> mInFramesTotal{0};
+    std::atomic<int64_t> mFbDrop{0};
+    std::atomic<int64_t> mFbClamp{0};
 
     // TRIED AND REJECTED, 2026-09-23: measuring the LEVEL of the device's own
     // capture stream on endpoint 0x86, on the theory that a wedged audio
