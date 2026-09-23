@@ -133,6 +133,8 @@ class MainActivity : Activity() {
             // round, every frame would describe the previous one.
             watchAudioDevice()
             updateStats()
+            if (++altTick % 4 == 0) watchUsbAltSetting()
+            watchForLatch()
             // Surge comes up asynchronously and its patch loads are asynchronous
             // too, so the panel is re-read rather than being told. Cheap: it is a
             // handful of reads of values the node already holds, and it means the
@@ -200,6 +202,11 @@ class MainActivity : Activity() {
         filter.addAction("be.mdw.bagosynths.INSTRUMENT")
         filter.addAction("be.mdw.bagosynths.OUTPUT")
         filter.addAction("be.mdw.bagosynths.RESET")
+        filter.addAction("be.mdw.bagosynths.PART")
+        filter.addAction("be.mdw.bagosynths.MEASURE")
+        filter.addAction("be.mdw.bagosynths.WATCHDOG")
+        filter.addAction("be.mdw.bagosynths.DEVHEALTH")
+        filter.addAction("be.mdw.bagosynths.PANIC")
         filter.addAction("be.mdw.bagosynths.ROUTE")
         if (Build.VERSION.SDK_INT >= 33) {
             registerReceiver(debugReceiver, filter, Context.RECEIVER_EXPORTED)
@@ -1152,6 +1159,167 @@ class MainActivity : Activity() {
         }
     }
 
+    // --- THE LATCH WATCHDOG ---------------------------------------------------
+    //
+    // What was established by measurement, and it is a negative result:
+    // **a latched CP-88 is indistinguishable from a healthy one, from here.**
+    // Captured live during a latch, against a healthy baseline:
+    //
+    //     frames advancing at exactly 44100/s      as healthy
+    //     deficit FROZEN, late FROZEN, starved FROZEN
+    //     errors = 0                               as healthy
+    //     altsetting 1=1 2=1                       as healthy, and GET_INTERFACE
+    //                                              still answers, so the device's
+    //                                              control endpoint is alive
+    //     IN packet sizes 44..45                   as healthy -- the device's own
+    //                                              clock is still running true
+    //
+    // Isochronous OUT has no handshake. The controller reports what it put on
+    // the wire and nothing reports what the device did with it, so "playing"
+    // and "acknowledging and discarding" are the same picture. Three separate
+    // hypotheses were tested and killed here: the interface dropping to alt 0,
+    // the control endpoint wedging, and the device's clock free-running.
+    //
+    // SO THE TRIGGER IS THE DISTURBANCE, NOT THE STATE. Every latch observed
+    // was preceded by late URBs. It is not sufficient -- a run with late +374
+    // and 880 ms of deficit survived, while Michiel's real latch took only
+    // late +13 -- but it is NECESSARY, and in ordinary playing `late` stays at
+    // exactly 0. A hole is genuinely exceptional, which is what makes it usable
+    // as a trigger despite the false positives.
+    //
+    // WHICH LEAVES THE COST OF BEING WRONG, and that is the real design. A
+    // reset takes about 2,7 s of silence. Firing one the instant a hole appears
+    // would put that silence in the middle of whatever caused the hole -- which
+    // is to say, in the middle of the loudest thing being played. So instead:
+    // remember that a hole happened, and take the reset at the next MUSICAL
+    // GAP, where 2,7 s costs nothing. If no gap comes, take it anyway after a
+    // while, because a dead rig is worse than a gap.
+    private var holeSeenLate = -1
+    @Volatile private var holeSettleUntil = 0L
+    /** How long after a reset the watchdog ignores holes: the stream's own. */
+    private val kResetSettleMs = 6000L
+    private var holePendingSince = 0L
+    private var quietSince = 0L
+    private var lastAutoResetAt = 0L
+
+    /** A gap long enough to hide a reset in: nothing sounding, nothing ringing. */
+    private val kGapMs = 1500L
+    /**
+     * Waiting for a gap that never comes is how the rig stays dead.
+     *
+     * 10 s, and the asymmetry is the whole argument. If it really did latch,
+     * there is NO SOUND while we wait -- the wait costs everything and buys
+     * nothing. If it did not, the reset interrupts real playing for 2,7 s. So
+     * the gap is worth a short wait and no more.
+     *
+     * Measured at 45 s first, and the end-to-end test showed why that is wrong:
+     * a provoked latch left sfizz tails ringing, no gap ever came, and the rig
+     * stayed silent for the full 45 s before recovering on the fallback.
+     */
+    private val kResetAnywayMs = 10_000L
+    /**
+     * One automatic reset per this, so a stuck condition cannot turn into a
+     * reset loop that is worse than the fault.
+     *
+     * 30 s. It was 60, and back-to-back testing showed that being the binding
+     * constraint rather than the gap: a second hole 35 s after the first
+     * waited on the rate limiter, not on the music. Long enough to prevent a
+     * loop, short enough that a real latch following a spurious reset is not
+     * left standing.
+     */
+    private val kAutoResetEveryMs = 30_000L
+
+    private var watchdogOn = true
+
+    private fun watchForLatch() {
+        if (!watchdogOn) return
+        val st = NativeBridge.stats()
+        if (!st.usbRunning) { holePendingSince = 0L; return }
+        val now = android.os.SystemClock.uptimeMillis()
+        // Deaf while the stream settles after a reset. See resetDirectUsb.
+        if (now < holeSettleUntil) { holeSeenLate = st.usbLate; return }
+
+        // A hole appeared since the last look.
+        if (holeSeenLate >= 0 && st.usbLate > holeSeenLate && holePendingSince == 0L) {
+            holePendingSince = now
+            android.util.Log.i("bos-ui",
+                "latch watchdog: hole (late ${st.usbLate}), reset queued for the next gap")
+            status("USB hole seen — resetting at the next gap")
+        }
+        holeSeenLate = st.usbLate
+        if (holePendingSince == 0L) return
+
+        // Track how long it has been quiet. Voices AND peak, because a released
+        // note still rings: resetting into a decaying chord would be audible.
+        if (st.activeVoices == 0 && st.outputPeak < 0.002f) {
+            if (quietSince == 0L) quietSince = now
+        } else {
+            quietSince = 0L
+        }
+
+        val gap = quietSince != 0L && now - quietSince > kGapMs
+        val waited = now - holePendingSince > kResetAnywayMs
+        if (!gap && !waited) return
+        if (now - lastAutoResetAt < kAutoResetEveryMs) return
+
+        lastAutoResetAt = now
+        holePendingSince = 0L
+        quietSince = 0L
+        android.util.Log.i("bos-ui",
+            "latch watchdog: resetting (" +
+                (if (gap) "gap" else "no gap in ${kResetAnywayMs / 1000} s") + ")")
+        resetDirectUsb()
+    }
+
+    private var altTick = 0
+    private var lastAltReport: String? = null
+    private var altReads = 0
+
+    /**
+     * Asks the DEVICE, once a second, what altsetting its streaming interfaces
+     * are on.
+     *
+     * This is a hypothesis under test, not a settled diagnostic. THE LATCH has
+     * no host-visible signature: during one, the transport's own counters say
+     * everything is fine -- `errors=0`, `starved=0`, frames advancing at
+     * exactly 44100/s, the controller reporting every packet as put on the
+     * wire. Isochronous OUT has no handshake, so a device that has stopped
+     * listening looks identical to one that is playing.
+     *
+     * GET_INTERFACE is the one question that goes to the device and comes back
+     * with an answer. Two things could show up in it:
+     *
+     *   * the streaming interface sitting at alt 0, the zero-bandwidth
+     *     setting, which would mean the device stopped streaming and said so
+     *     in the only place we never looked;
+     *   * the control transfer itself failing (-1), which would mean the
+     *     device's function is wedged rather than merely quiet.
+     *
+     * If neither ever moves during a latch, that is worth knowing too: it
+     * would rule out the endpoint configuration and point at the device's
+     * internal audio path, which nothing on this end can see.
+     *
+     * Cheap enough to leave running: one control transfer a second is a
+     * rounding error on the bus, and it runs on the usb thread rather than the
+     * caller's, because `sessions` belongs to that thread.
+     */
+    private fun watchUsbAltSetting() {
+        if (!::usbHandler.isInitialized || routingBusy) return
+        usbHandler.post {
+            val s = directAudioOn?.let { sessions[it] } ?: return@post
+            if (!s.isOpen) return@post
+            val plan = s.plan ?: return@post
+            val report = plan.streamingInterfaces.joinToString(" ") { "$it=${s.altSetting(it)}" }
+            // Every 30th read as well as on change: "no log" has to mean
+            // "still being asked and still the same", not "the probe died".
+            if (report != lastAltReport || altReads % 30 == 0) {
+                android.util.Log.i("bos-usb", "altsetting: $report")
+                lastAltReport = report
+            }
+            ++altReads
+        }
+    }
+
     private fun status(s: String) {
         routingStatus = s
         if (s.isNotEmpty()) android.util.Log.i("bos-ui", "routing: $s")
@@ -1438,6 +1606,18 @@ class MainActivity : Activity() {
 
             route("reset: back to ${audioMode.label}")
             status("reset done -- play something")
+
+            // A RESET IS ITSELF A DISTURBANCE, and the watchdog must not see
+            // its own footprints. Tearing the stream down and building it back
+            // up produces late URBs every time -- measured at `late 77` within
+            // 400 ms of a reset completing -- so without this the sequence is:
+            // reset, detect the reset's own hole, queue another reset, and
+            // round again forever at the rate limiter's period. The end-to-end
+            // test caught it doing exactly that.
+            holeSettleUntil = android.os.SystemClock.uptimeMillis() + kResetSettleMs
+            holePendingSince = 0L
+            holeSeenLate = -1      // re-baseline rather than compare across the reset
+            quietSince = 0L
         }
     }
 
@@ -1578,8 +1758,64 @@ class MainActivity : Activity() {
                 // Driven by name rather than by tapping a coordinate: fixed
                 // screen positions went stale silently three times.
                 "be.mdw.bagosynths.PANIC" -> NativeBridge.nativePanic()
+                // Select a part from a script. Added while hunting THE LATCH:
+                // every stress test until then had been silently landing on
+                // whatever part was last tapped, and the tell was voices=0/0 in
+                // the health line -- the cluster was playing, but not through
+                // sfizz, which is the engine the fault needs.
+                //   adb shell am broadcast -a be.mdw.bagosynths.PART --es name piano
+                "be.mdw.bagosynths.PART" -> {
+                    val want = intent.getStringExtra("name").orEmpty()
+                    val hit = Part.values().firstOrNull { it.name.equals(want, true) }
+                    if (hit == null) {
+                        android.util.Log.i("bos-ui",
+                            "parts: " + Part.values().joinToString { it.name })
+                    } else {
+                        runOnUiThread { showPart(hit, solo = true) }
+                    }
+                }
+                // The acoustic oracle. THE LATCH has no host-visible signature
+                // -- measured -- so the only way to answer "is sound actually
+                // reaching the piano" is to make a noise and listen for it with
+                // the tablet's microphone. Scriptable, so a latch hunt can run
+                // as a loop instead of as a person tapping and listening.
+                //   adb shell am broadcast -a be.mdw.bagosynths.MEASURE
+                "be.mdw.bagosynths.MEASURE" -> runOnUiThread {
+                    // Open the input FIRST and let it run before arming. A
+                    // capture stream that has just been opened delivers zeros
+                    // for the best part of a second, and the probe gives up
+                    // after half a second of frames -- so arming in the same
+                    // breath measures the warm-up, not the room.
+                    enableInputIfPermitted()
+                    handler.postDelayed({ NativeBridge.nativeStartLatencyProbe() }, 1200)
+                }
+                // Turns the latch watchdog off, so an experiment that is
+                // deliberately provoking holes is not reset out from under
+                // itself half way through.
+                //   adb shell am broadcast -a be.mdw.bagosynths.WATCHDOG --ei on 0
+                // Ask the device itself, over the control pipe, in the hope
+                // that something in the CLASS protocol can see a latch that
+                // the data path cannot.
+                //   adb shell am broadcast -a be.mdw.bagosynths.DEVHEALTH
+                "be.mdw.bagosynths.DEVHEALTH" -> usbHandler.post {
+                    val s2 = directAudioOn?.let { sessions[it] }
+                    if (s2 == null || !s2.isOpen) {
+                        android.util.Log.i("bos-usb", "device health: no direct session")
+                    } else {
+                        NativeBridge.nativeUsbHealthProbe(s2.fd, s2.raw)
+                    }
+                }
+                "be.mdw.bagosynths.WATCHDOG" -> {
+                    watchdogOn = intent.getIntExtra("on", 1) != 0
+                    android.util.Log.i("bos-ui", "latch watchdog: " +
+                        if (watchdogOn) "on" else "OFF (experiment)")
+                }
                 "be.mdw.bagosynths.STRESS" -> NativeBridge.nativeStressChord(
                     intent.getIntExtra("count", 30))
+                // Because a stress test that ends leaves 64 voices ringing, and
+                // whoever is in the room did not ask for that.
+                //   adb shell am broadcast -a be.mdw.bagosynths.PANIC
+                "be.mdw.bagosynths.PANIC" -> NativeBridge.nativePanic()
                 "be.mdw.bagosynths.RESETPEAKS" -> NativeBridge.nativeResetPeaks()
                 // The sampler's level, so a test can make a measurable sound
                 // without tapping a fader: a restored patch may have left the

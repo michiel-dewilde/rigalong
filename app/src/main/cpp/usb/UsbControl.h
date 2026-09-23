@@ -28,6 +28,24 @@ std::vector<uint32_t> uac2Rates(int fd, int controlInterface, int clockId);
 bool uac2SetRate(int fd, int controlInterface, int clockId, uint32_t rate);
 uint32_t uac2GetRate(int fd, int controlInterface, int clockId);   // 0 on failure
 
+// --- latch diagnostics ------------------------------------------------------
+//
+// THE LATCH leaves no trace in the data path: isochronous OUT has no
+// handshake, so a device that has stopped rendering looks exactly like one
+// that is playing. These three ask the DEVICE directly, over the control pipe,
+// which is the only channel that answers back.
+//
+// Each returns -1 when the transfer itself failed, which is a finding in its
+// own right: a wedged audio function might stop answering at all.
+
+// Standard GET_STATUS on an endpoint. Bit 0 is the halt (STALL) condition.
+int endpointHalted(int fd, int endpointAddress);
+
+// UAC2 Clock Source, CS_CLOCK_VALID_CONTROL. 1 = the device considers its
+// clock locked and valid, 0 = it does not. The closest thing the class has to
+// "is your audio function healthy".
+int uac2ClockValid(int fd, int controlInterface, int clockId);
+
 // UAC1 SET CUR on the endpoint's sampling frequency control.
 bool uac1SetRate(int fd, int endpoint, uint32_t rate);
 

@@ -104,6 +104,36 @@ The adaptive reserve settles at 5,3 ms either way, so the 4 ms is really saved
 rather than handed back. Layers should do *different* jobs rather than all
 hedging against the same worst case.
 
+**A latched CP-88 cannot be recognised, only suspected.** Its entire USB
+protocol surface reads identically latched and healthy — iso OUT has no
+handshake, the implicit-feedback sizes stay 44..45, the control pipe answers
+normally, and its AudioControl has no status interrupt endpoint to report a
+fault on. Measured, both states, side by side. So anything that needs to know
+"is sound reaching the piano" must either make a noise and listen, or give up
+and act on the disturbance instead. See MEASUREMENTS.md §5i.
+
+**Late URBs are necessary but not sufficient for a latch.** Across eleven
+controlled trials it never latched without them, and it latched on as few as
+four — but two other trials at four, and one at two, survived, while one at 374
+survived as well. The magnitude carries no information. What matters is the
+INCREASE, not the total: a trial starting at `late=31` that did not move stayed
+healthy.
+
+**Act on a hole, but pay for it in timing rather than accuracy.** Because the
+trigger over-fires by design, the recovery is scheduled for the next musical gap
+rather than taken at once — and goes anyway after a short wait, because a rig
+that really has latched is silent while you wait, so waiting costs everything
+and buys nothing.
+
+**A recovery is itself a disturbance, and a watchdog must be deaf to its own.**
+The USB reset produced `late 77` within 400 ms of completing, which re-armed the
+watchdog and would have looped forever.
+
+**Never add per-sample work to the reap thread.** A reap thread that runs late
+is the one thing known to precede a latch, so instrumentation there can cause
+the fault it is looking for. A level meter on the incoming packets was written,
+measured, found useless, and removed for this reason.
+
 **Sweep under load or do not sweep at all.** An empty graph survives any buffer,
 so a buffer sweep of a silent engine measures nothing. Every figure above comes
 from a note a second plus a chord every fourth, 30 s per setting.

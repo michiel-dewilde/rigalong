@@ -219,6 +219,13 @@ object NativeBridge {
     /** USBDEVFS_RESET: the fallback when reconnecting does not bring ALSA back. */
     external fun nativeUsbReset(fd: Int): Boolean
 
+    /**
+     * Asks the device itself how it is: [halted, clockValid, rate, alt].
+     * -1 means the control transfer failed. See the native side for why this
+     * exists at all -- nothing in the data path can see THE LATCH.
+     */
+    external fun nativeUsbHealthProbe(fd: Int, raw: ByteArray): IntArray
+
     /** snd-usb-audio's card short name, by the rule tested in engine/. */
     external fun nativeAlsaCardName(product: String?, vid: Int, pid: Int): String
 

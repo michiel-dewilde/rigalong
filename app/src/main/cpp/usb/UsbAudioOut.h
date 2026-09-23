@@ -84,6 +84,9 @@ public:
         int64_t inErrors = 0;        // per-packet errors, feedback stream
         int64_t starved = 0;         // implicit: packets sized from the nominal rate
         int64_t late = 0;            // URBs in flight far longer than the ring
+        int32_t inSizeMin = 0;       // IN packet frames, this interval
+        int32_t inSizeMax = 0;
+        int64_t inPackets = 0;
         float deficitMs = 0.0f;      // wall time minus wire time; GROWTH is a hole
         float maxGapMs = 0.0f;       // worst reap interval since resetPeaks()
         float feedbackRate = 0.0f;   // the device's rate as last measured, Hz
@@ -144,6 +147,36 @@ private:
     Dither mDither;
 
     std::atomic<int64_t> mFrames{0}, mOutBytes{0}, mOutErr{0}, mInErr{0};
+
+    // The IN stream's packet sizes, summarised.
+    //
+    // THIS IS A LATCH PROBE, and the reasoning is worth keeping even if it
+    // comes to nothing. With implicit feedback the device tells us how many
+    // frames it wants by how many it DELIVERS on its own IN stream, and those
+    // sizes come from the device's own audio clock: at 44100 Hz over 1 ms
+    // frames the nominal is 44.1, so a device running a real converter has to
+    // alternate 44 and 45 to make up the fraction. A device whose audio engine
+    // has wedged might free-run at a constant size, or drift, and that would be
+    // the only host-visible difference between "playing" and "acknowledging and
+    // discarding" -- every other counter is identical across a latch, measured.
+    //
+    // Min/max rather than a histogram: it is the SPREAD that carries the
+    // signal, and two ints cost nothing on the reap thread. Reset on read, so
+    // each sample describes its own interval rather than all of history.
+    // mutable: stats() is const and RESETS these, because each sample has to
+    // describe its own interval rather than all of history.
+    mutable std::atomic<int32_t> mInSizeMin{1 << 30};
+    mutable std::atomic<int32_t> mInSizeMax{0};
+    mutable std::atomic<int64_t> mInPackets{0};
+
+    // TRIED AND REJECTED, 2026-09-23: measuring the LEVEL of the device's own
+    // capture stream on endpoint 0x86, on the theory that a wedged audio
+    // function might go silent in both directions, or that the CP-88's capture
+    // might carry a mix including what we send it. It reads 0.0000 in BOTH
+    // states -- the piano sends digital silence up the wire -- so it cannot
+    // discriminate. Removed rather than left in: it scanned every sample of
+    // every packet ON THE REAP THREAD, and a reap thread that runs late is the
+    // one thing known to precede a latch. Do not add work here.
     std::atomic<int64_t> mStarved{0}, mLate{0};
     std::atomic<int64_t> mMaxGapUs{0};
     std::atomic<int64_t> mStartNs{0};

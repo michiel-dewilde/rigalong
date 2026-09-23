@@ -352,6 +352,17 @@ int AudioEngine::pullForUsb(void* ctx, float* dst, int frames) {
 }
 
 bool AudioEngine::openInput(int32_t deviceId) {
+    // Already up on this device? Then leave it ALONE.
+    //
+    // Reopening was not harmless, which is how this was found. The probe times
+    // out after half a second of INPUT frames, and a freshly opened AAudio
+    // capture stream needs about that long before it delivers anything but
+    // zeros -- so every measurement that reopened the stream first measured a
+    // stream that was not yet running, and reported "PROBE FAILED maxPeak=
+    // 0.0000". Tapping MEASURE twice in a row did it; so did every scripted
+    // probe, since each one enabled the input again on its way in.
+    if (mInputStream != nullptr && mInputDeviceId == deviceId) return true;
+
     // Try progressively more relaxed configurations. The output side can demand
     // exclusive/44100/I16 because the CP-88 grants it; the capture side turns out
     // to be fussier, and for a measurement stream correctness matters far more
@@ -419,6 +430,7 @@ bool AudioEngine::openInput(int32_t deviceId) {
         mInputBuffer.assign(
                 static_cast<size_t>(frames) * std::max(1, mInputChannels), 0);
         mNoiseFloor = 0.0f;
+        mInputDeviceId = deviceId;
         mProbeState.store(ProbeState::Idle, std::memory_order_relaxed);
 
         LOGI("input open [%s]: rate=%d ch=%d burst=%d sharing=%d perf=%d",
@@ -434,19 +446,38 @@ bool AudioEngine::openInput(int32_t deviceId) {
     return false;
 }
 
+// mEnvelope MUST be cleared when arming, and forgetting it produced a false
+// POSITIVE rather than a miss, which is the dangerous direction.
+//
+// The envelope is a member that decays at 0.9995 per sample -- about 90 ms to
+// fall by half at 44,1 kHz. Arming a second probe while the previous click's
+// envelope was still above the threshold made the detector fire on the first
+// sample it looked at, and the result was reported as a perfectly good
+// measurement: "PROBE roundTrip=0.00 ms peak=0.0000". A success line carrying
+// no sound at all.
+//
+// Found while building an acoustic oracle for THE LATCH, where it mattered
+// more than usual: the probe was the only way to tell a latched rig from a
+// healthy one, and it was scoring silence as OK on every second run.
+static void armProbeState(float& envelope, int64_t& candidate, int32_t& above) {
+    envelope = 0.0f;
+    candidate = -1;
+    above = 0;
+}
+
 void AudioEngine::startLatencyProbe() {
     if (!mInputStream) return;
     mProbeIsNote = false;
-    mCandidateFrame = -1;
-    mAboveCount = 0;
+    armProbeState(mEnvelope, mCandidateFrame, mAboveCount);
+    mMaxPeakSinceTrigger = 0.0f;
     mProbeState.store(ProbeState::Armed, std::memory_order_release);
 }
 
 void AudioEngine::startNoteProbe() {
     if (!mInputStream) return;
     mProbeIsNote = true;
-    mCandidateFrame = -1;
-    mAboveCount = 0;
+    armProbeState(mEnvelope, mCandidateFrame, mAboveCount);
+    mMaxPeakSinceTrigger = 0.0f;
     mProbeState.store(ProbeState::ArmedForNote, std::memory_order_release);
 }
 
@@ -1240,12 +1271,42 @@ AudioEngine::Stats AudioEngine::stats() const {
         s.usbFeedbackRate = u.feedbackRate;
         s.usbMaxGapMs = u.maxGapMs;
 
+        // THE HOLE LOG. A latch is an EVENT -- a burst of late URBs inside a
+        // few tens of milliseconds -- and the 10 s heartbeat below averages it
+        // into invisibility: by the time it prints, `late` has stopped moving
+        // and all that is left is a number that has always been there. This
+        // fires on the TRANSITION instead, at whatever rate stats() is polled
+        // (4 Hz from the UI), which is what makes the moment of the latch
+        // visible at all.
+        //
+        // Costs nothing when nothing is wrong: three comparisons.
+        {
+            const int64_t lastLate = mUsbLastLate.exchange(u.late, std::memory_order_relaxed);
+            const int64_t lastErr = mUsbLastErrors.exchange(
+                    u.outErrors + u.inErrors, std::memory_order_relaxed);
+            const float lastDef = mUsbLastDeficitMs.exchange(u.deficitMs, std::memory_order_relaxed);
+            const float jump = u.deficitMs - lastDef;
+            if (u.late != lastLate || (u.outErrors + u.inErrors) != lastErr || jump > 2.0f) {
+                LOGI("usb hole: late %lld (+%lld) errors %lld (+%lld) deficit %.1f ms (%+.1f) "
+                     "maxGap %.1f ms starved %lld frames %lld voices %d",
+                     static_cast<long long>(u.late),
+                     static_cast<long long>(u.late - lastLate),
+                     static_cast<long long>(u.outErrors + u.inErrors),
+                     static_cast<long long>((u.outErrors + u.inErrors) - lastErr),
+                     static_cast<double>(u.deficitMs), static_cast<double>(jump),
+                     static_cast<double>(u.maxGapMs),
+                     static_cast<long long>(u.starved),
+                     static_cast<long long>(u.frames), s.activeVoices);
+            }
+        }
+
         const double now = nowSeconds();
         if (now - mLastHealthLogAt.load(std::memory_order_relaxed) > 10.0) {
             mLastHealthLogAt.store(now, std::memory_order_relaxed);
             const std::string why = mUsbOut.fatal();
             LOGI("health usb %s  out=%.4f cb=%.4f voices=%d/%d frames=%lld deficit=%.1fms "
-                 "late=%lld starved=%lld errors=%lld fb=%.1fHz ringUnder=%lld%s%s",
+                 "late=%lld starved=%lld errors=%lld fb=%.1fHz ringUnder=%lld "
+                 "inSize=%d..%d/%lld%s%s",
                  s.usbRunning ? "ok" : "DOWN",
                  static_cast<double>(s.outputPeak),
                  static_cast<double>(mCallbackPeak.load(std::memory_order_relaxed)),
@@ -1256,6 +1317,8 @@ AudioEngine::Stats AudioEngine::stats() const {
                  static_cast<long long>(u.outErrors + u.inErrors),
                  static_cast<double>(u.feedbackRate),
                  static_cast<long long>(mRingUnderruns.load(std::memory_order_relaxed)),
+                 u.inSizeMax ? u.inSizeMin : 0, u.inSizeMax,
+                 static_cast<long long>(u.inPackets),
                  why.empty() ? "" : " fatal=", why.c_str());
             logMidiChain();
         }

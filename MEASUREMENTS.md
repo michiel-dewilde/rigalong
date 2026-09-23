@@ -606,6 +606,110 @@ the path in question. Not taken: it needs the cold-load worst case measured
 first, and 128-frame sub-blocks inside the callback, or MIDI timing coarsens
 from 2,7 ms to the full callback.
 
+## 5i. THE LATCH: what it is, and why nothing can see it (2026-09-23)
+
+Michiel can now provoke it on demand -- "play piano with my whole arms, 4 full
+octaves hammered at the same time" -- and it was reproduced here with 45 rounds
+of a 64-note sweep against eight CPU spinners. **A latched CP-88 keeps taking
+audio and stops making any.**
+
+**The oracle.** None of this was measurable until the app could tell sound from
+silence by itself. The latency probe clicks through the direct-USB path and
+listens on the tablet microphone, which separates the two states by 140x:
+
+```
+healthy   PROBE roundTrip=18,44 ms  peak=0,4259
+latched   PROBE FAILED              maxPeak=0,0030
+```
+
+It had to be repaired first, and the bug was in the dangerous direction. The
+detection envelope is a member that decays over ~90 ms and was never cleared on
+arming, so a second probe fired on the previous click's leftover and reported
+`roundTrip=0.00 ms peak=0.0000` -- **a success line carrying no sound**. On top
+of that, every probe re-opened the capture stream, and a freshly opened AAudio
+input delivers zeros for about a second while the probe gives up after half of
+one. Both fixed; the second also gets the input EXCLUSIVE (`burst=96
+sharing=0 perf=12`) instead of reopening it into shared mode.
+
+### Nothing in the protocol can see it
+
+Measured live, latched against healthy, with the acoustic oracle confirming the
+state each time:
+
+| asked | healthy | latched |
+|---|---|---|
+| frames advancing | 44100/s | **44100/s** |
+| `deficit` | frozen | **frozen** |
+| `late`, `starved` | frozen | **frozen** |
+| `errors` | 0 | **0** |
+| implicit feedback packet sizes | 44..45 | **44..45** |
+| GET_INTERFACE (altsetting) | 1 | **1** |
+| GET_STATUS on EP 0x07 (halt) | 0 | **0** |
+| UAC2 sample rate | 44100 | **44100** |
+| UAC2 clock validity | not implemented | not implemented |
+| level on the device's capture stream | 0,0000 | 0,0000 |
+
+That is the device's ENTIRE protocol surface, and the descriptors say so:
+
+```
+INTERFACE 0 alt 0  class=01 sub=01  eps=0     <- AudioControl: NO interrupt endpoint
+INTERFACE 1 alt 1  ENDPOINT 0x07 iso  attr=0x05   <- OUT, data
+INTERFACE 2 alt 1  ENDPOINT 0x86 iso  attr=0x25   <- IN, implicit feedback
+```
+
+`eps=0` on AudioControl is the decisive line: UAC2 allows a status interrupt
+endpoint -- the device's own asynchronous error channel -- and the CP-88 does
+not have one. Isochronous OUT has no handshake by design, so `actual_length` is
+the host controller's account of what it transmitted and says nothing about what
+the device did with it. There is no question left to ask.
+
+### So the trigger is the disturbance
+
+Eleven controlled trials, each one reset to a clean start, disturbed, then
+judged acoustically:
+
+| `late` delta | trials | latched |
+|---|---|---|
+| 0 | 5 | **0** |
+| +2 … +4 | 4 | 1 |
+| +2074, +3102 | 2 | 2 |
+
+**Necessary but not sufficient.** It never latched without late URBs, and a
+single trial at +4 latched while two others at +4 and one at +2 did not. Note
+also that the ACCUMULATED total is irrelevant -- a trial that began at `late=31`
+and did not move stayed healthy. It is the increase that matters.
+
+Michiel's own latch fits: `late=13`, a deficit step of ~23 ms. And the
+magnitude carries no information -- a run at +374 survived while one at +4 did
+not.
+
+### The watchdog
+
+Trigger on the hole, because nothing else exists to trigger on; then pay for the
+false positives with timing rather than with accuracy. A hole queues a reset,
+and the reset is taken at the next MUSICAL GAP -- no voices, output below
+-54 dBFS, for 1,5 s -- where 2,7 s of silence costs nothing. If no gap comes
+within 10 s it goes anyway: **if it really latched there is no sound while we
+wait, so the wait costs everything and buys nothing.**
+
+Two things the end-to-end test caught that reasoning had missed:
+
+* the first fallback was 45 s, and a provoked latch left sfizz tails ringing so
+  no gap ever came -- the rig sat silent for the full 45 s;
+* **a reset is itself a disturbance.** `late 77` within 400 ms of a reset
+  completing, which queued another reset, which would have looped forever at
+  the rate limiter's period. The watchdog is now deaf for 6 s after its own
+  reset.
+
+Verified end to end, hands off: provoke, wait, sound returns by itself.
+
+```
+latch watchdog: hole (late 4), reset queued for the next gap
+latch watchdog: resetting (no gap in 10 s)
+reset: USB reset of "CP88/CP73"
+probe: OK 0,4405
+```
+
 ## 6. Still open
 
 | Question | Status |
@@ -615,4 +719,4 @@ from 2,7 ms to the full callback.
 | Does `xRun#` miss stalls in MMAP mode? | untested |
 | Behaviour after an hour warm | untested; thermal throttling is what bites live |
 | Survives screen-off, re-plug, notifications | untested |
-| **THE LATCH** — direct USB mode goes silent while still acknowledging URBs, and only an ALSA round trip clears it | **open.** Reproduced in ~25 s at a 4 ms buffer at the instant of a part switch; a 37-minute run at 8 ms never latched, but was SILENT, so the comparison is not controlled. MIDI is exonerated — per-stage counters ran clean across a whole latch (`on=157 off=159` in and out). Two suspects: the level step discontinuity, now fixed by `SmoothedGain`; and the 4 ms buffer, which is the default as of 2026-09-23 precisely so the first one gets tested. No detector exists yet: nothing distinguishes "presenting" from "acknowledging and discarding". **RESET USB clears it, and which part does the work is now known.** The button shipped as a ladder — 1) disown and re-own, 2) plus a real ALSA stream on the card, 3) plus a USB reset — and Michiel met a latch and reported *"only rung 3 worked"*. So neither giving the interfaces back to the kernel nor letting ALSA stream on the card clears it; only USBDEVFS_RESET, unbinding and rebinding every driver, does. **That places the stuck state in the device or its endpoint configuration, not in which process owns the interfaces** — and it explains why USB-interface mode never helped. The ladder is gone; the button now always does the reset (~2,7 s). Still open: a detector, and why it latches at all |
+| **THE LATCH** — direct USB goes silent while still acknowledging URBs | **cause still unknown; recovery automatic.** No host-visible signature exists — the device's whole protocol surface was tested latched vs healthy and is identical (§5h/5i), and its AudioControl has no status interrupt endpoint. Late URBs are NECESSARY but not sufficient (11 trials), so the watchdog triggers on those and resets at the next musical gap. What remains open is WHY a hole wedges the device at all, and why only USBDEVFS_RESET clears it |

@@ -958,6 +958,50 @@ Java_be_mdw_bagosynths_NativeBridge_nativeUsbReconnectKernel(JNIEnv*, jobject, j
     return usbctl::reconnectKernelDriver(fd, iface) ? JNI_TRUE : JNI_FALSE;
 }
 
+// Asks the DEVICE how it is, over the control pipe.
+//
+// Everything in the data path is blind to THE LATCH -- measured, repeatedly:
+// frames advancing at exactly 44100/s, deficit frozen, errors 0, altsetting
+// still 1, implicit feedback still alternating 44/45. Isochronous OUT has no
+// handshake, so "playing" and "acknowledging and discarding" are the same
+// picture from here.
+//
+// These three questions go to the device and come back with an answer:
+//   endpoint halt   -- did the OUT endpoint STALL
+//   clock valid     -- UAC2's own "is my clock locked" bit
+//   sample rate     -- did the device quietly move off 44100
+//
+// -1 anywhere means the control transfer itself failed, which would be the
+// loudest finding of all: it would mean the function is wedged rather than
+// merely quiet.
+JNIEXPORT jintArray JNICALL
+Java_be_mdw_bagosynths_NativeBridge_nativeUsbHealthProbe(JNIEnv* env, jobject, jint fd,
+                                                       jbyteArray raw) {
+    jint out[4] = {-1, -1, -1, -1};
+    usb::Device d;
+    std::string why;
+    if (parseRaw(env, raw, d, &why)) {
+        if (const usb::Config* c = pickConfig(d, true, true)) {
+            const usb::AudioOutPlan a = usb::planAudioOut(*c);
+            if (a.ok) {
+                out[0] = usbctl::endpointHalted(fd, a.out.address);
+                if (a.uac2 && a.controlInterface >= 0 && a.clockSource >= 0) {
+                    out[1] = usbctl::uac2ClockValid(fd, a.controlInterface, a.clockSource);
+                    out[2] = static_cast<jint>(
+                            usbctl::uac2GetRate(fd, a.controlInterface, a.clockSource));
+                }
+                out[3] = usbctl::currentAltSetting(fd, a.interfaceNumber);
+            }
+        }
+    }
+    __android_log_print(ANDROID_LOG_INFO, "bos-usb",
+                        "device health: epHalted=%d clockValid=%d rate=%d alt=%d",
+                        out[0], out[1], out[2], out[3]);
+    jintArray arr = env->NewIntArray(4);
+    if (arr != nullptr) env->SetIntArrayRegion(arr, 0, 4, out);
+    return arr;
+}
+
 JNIEXPORT jboolean JNICALL
 Java_be_mdw_bagosynths_NativeBridge_nativeUsbReset(JNIEnv*, jobject, jint fd) {
     return usbctl::resetDevice(fd) ? JNI_TRUE : JNI_FALSE;

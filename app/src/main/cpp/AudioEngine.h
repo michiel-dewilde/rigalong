@@ -402,6 +402,9 @@ private:
     // Input stream for the loopback probe. Entirely optional: if it fails to
     // open, or permission is denied, the instrument works exactly as before.
     std::shared_ptr<oboe::AudioStream> mInputStream;
+    // Which device mInputStream is on, so openInput can tell "already up on the
+    // right device" from "up on the wrong one". See openInput.
+    int32_t mInputDeviceId = -1;
     std::vector<int16_t> mInputBuffer;
     int32_t mInputChannels = 2;
 
@@ -630,6 +633,14 @@ private:
     // Highest sfizz voice count seen. Mutable because stats() is const and is
     // the only place the count is sampled. See stats().
     mutable std::atomic<int> mPeakVoices{0};
+
+    // Previous sample of the USB transport's error counters, so stats() can log
+    // the TRANSITION rather than the running total. See the hole log in
+    // stats(): a latch is an event, and a total that stopped moving looks
+    // exactly like one that never moved.
+    mutable std::atomic<int64_t> mUsbLastLate{0};
+    mutable std::atomic<int64_t> mUsbLastErrors{0};
+    mutable std::atomic<float> mUsbLastDeficitMs{0.0f};
 
     std::atomic<bool> mRunning{false};
     std::atomic<bool> mFlushDenormalsDone{false};

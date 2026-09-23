@@ -303,6 +303,8 @@ void UsbAudioOut::completeIn(Urb& b) {
         // What the device delivered is what it wants back: the whole of the
         // implicit feedback loop.
         const int frames = static_cast<int>(d.actual_length) / mCfg.fbFrameBytes;
+        // Latch probe: the spread of these is the device's clock talking.
+        mInPackets.fetch_add(1, std::memory_order_relaxed);
         if (mSizeCount == kSizeCap) {          // keep the newest
             mSizeHead = (mSizeHead + 1) % kSizeCap;
             --mSizeCount;
@@ -405,6 +407,10 @@ UsbAudioOut::Stats UsbAudioOut::stats() const {
     s.inErrors = mInErr.load(std::memory_order_relaxed);
     s.starved = mStarved.load(std::memory_order_relaxed);
     s.late = mLate.load(std::memory_order_relaxed);
+    // Reset on read: each sample describes its own interval.
+    s.inSizeMin = mInSizeMin.exchange(1 << 30, std::memory_order_relaxed);
+    s.inSizeMax = mInSizeMax.exchange(0, std::memory_order_relaxed);
+    s.inPackets = mInPackets.exchange(0, std::memory_order_relaxed);
     s.maxGapMs = mMaxGapUs.load(std::memory_order_relaxed) / 1000.0f;
     s.feedbackRate = mFbRate.load(std::memory_order_relaxed);
     const int64_t start = mStartNs.load(std::memory_order_relaxed);

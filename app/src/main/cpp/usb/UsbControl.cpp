@@ -135,4 +135,27 @@ bool resetDevice(int fd) {
     return r >= 0;
 }
 
+int endpointHalted(int fd, int endpointAddress) {
+    uint8_t st[2] = {0, 0};
+    // 0x82: device-to-host, standard, recipient endpoint.
+    const int r = control(fd, 0x82, 0x00 /* GET_STATUS */, 0,
+                          static_cast<uint16_t>(endpointAddress), st, 2);
+    if (r < 2) return -1;
+    return (st[0] & 0x01) ? 1 : 0;
+}
+
+int uac2ClockValid(int fd, int controlInterface, int clockId) {
+    uint8_t valid = 0;
+    // 0xA1: device-to-host, class, recipient interface. wValue is the control
+    // selector in the high byte; wIndex is entity in the high byte and the
+    // AudioControl interface in the low.
+    constexpr uint8_t kCsClockValidControl = 0x02;
+    const int r = control(fd, 0xA1, kUac2Cur,
+                          static_cast<uint16_t>(kCsClockValidControl << 8),
+                          static_cast<uint16_t>((clockId << 8) | controlInterface),
+                          &valid, 1);
+    if (r < 1) return -1;
+    return valid ? 1 : 0;
+}
+
 }  // namespace usbctl
