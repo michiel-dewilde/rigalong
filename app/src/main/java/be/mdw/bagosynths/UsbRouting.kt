@@ -93,19 +93,15 @@ object ModeRule {
  * is actually made of -- unlike the AAudio buffer it is ours end to end, so it
  * is the one knob here worth the smallest value that survives.
  *
- * SAY THE UNCOMFORTABLE PART: 4 ms is also one of the two standing suspects for
- * THE LATCH -- the fault where the CP-88 keeps acknowledging URBs while going
- * silent, and only an ALSA round trip brings it back. The run that latched in
- * ~25 s was at 4 ms; the clean 37-minute run the same day was at 8 ms. That was
- * never a controlled comparison (the latched run was being PLAYED, the clean one
- * was silent), and the other suspect -- the bare multiply that made muting a
- * sounding instrument a step discontinuity -- has since been fixed by
- * SmoothedGain's 15 ms ramp.
+ * IT WAS ALSO A LATCH EXPERIMENT, AND THAT QUESTION IS NOW CLOSED. 4 ms was one
+ * of two suspects for THE LATCH, the other being the unsmoothed gain step. Both
+ * have since been tested directly: the depth was swept against the fault and it
+ * latches 3 of 3 at 8 ms as readily as at 4, with one of those trials at
+ * `starved=0 late=33 deficit=70 ms` -- an essentially undisturbed transport.
+ * Depth shifts how often a disturbance appears; it is not what the device
+ * objects to. See MEASUREMENTS.md 5j-5l.
  *
- * So this default is deliberately the experiment: if part switches at 4 ms stop
- * latching, the click was the cause and the buffer was innocent. If they latch
- * again, the buffer is implicated and 8 is one tap away. Do not quietly restore
- * 8 to make the symptom go away without writing down which of the two it was.
+ * So this value stands on latency alone, which is the reason to want it.
  */
 object UsbBuffers {
     val choicesMs = intArrayOf(4, 8, 16)
