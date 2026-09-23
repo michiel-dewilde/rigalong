@@ -358,6 +358,11 @@ void UsbAudioOut::fillOut(Urb& b) {
                 break;
         }
 
+        // The wire trace: what was ACTUALLY submitted, in order.
+        {
+            const uint32_t at = mTraceAt.fetch_add(1, std::memory_order_relaxed);
+            mTrace[at % kTraceCap] = static_cast<uint8_t>(frames > 255 ? 255 : frames);
+        }
         const int bytes = frames * mFrameBytes;
         b.u->iso_frame_desc[p].length = static_cast<unsigned>(bytes);
         b.u->iso_frame_desc[p].actual_length = 0;
@@ -552,6 +557,17 @@ void UsbAudioOut::reapLoop() {
             fillIn(*b, mPackets, mCfg.fbMaxPacket);
         }
         if (!submit(*b)) break;
+
+        // The injected stall sits HERE, between handing one URB back and
+        // reaping the next, because that is exactly where a descheduled reap
+        // thread stops: the OUT ring drains, the endpoint runs out of queued
+        // packets, and nothing is resubmitted until this thread runs again.
+        if (mStallCount.load(std::memory_order_relaxed) > 0) {
+            mStallCount.fetch_sub(1, std::memory_order_relaxed);
+            const int us = mStallUs.load(std::memory_order_relaxed);
+            timespec ts{us / 1000000, static_cast<long>((us % 1000000) * 1000)};
+            nanosleep(&ts, nullptr);
+        }
     }
     mRunning.store(false, std::memory_order_release);
 }
@@ -595,4 +611,27 @@ UsbAudioOut::Stats UsbAudioOut::stats() const {
         s.inLostPackets = lost > 0 ? lost : 0;
     }
     return s;
+}
+
+void UsbAudioOut::dumpTrace(uint32_t from, uint32_t count) const {
+    // A window, chosen after the fact. The hole log prints traceAt at every
+    // transition, so the moment of a latch can be bracketed precisely instead
+    // of dumping 65536 numbers and hoping one of them is the interesting one.
+    const uint32_t at = mTraceAt.load(std::memory_order_relaxed);
+    const uint32_t have = at < kTraceCap ? at : kTraceCap;
+    const uint32_t oldest = at - have;
+    if (count == 0 || count > have) count = have > 2048 ? 2048 : have;
+    if (from < oldest) from = oldest;
+    if (from + count > at) from = at > count ? at - count : oldest;
+    LOGI("wire trace: %u packets from %u (have %u..%u)", count, from, oldest, at);
+    std::string row;
+    for (uint32_t i = 0; i < count; ++i) {
+        row += std::to_string(mTrace[(from + i) % kTraceCap]);
+        row += ' ';
+        if ((i + 1) % 64 == 0) {
+            LOGI("  [%u] %s", from + i + 1 - 64, row.c_str());
+            row.clear();
+        }
+    }
+    if (!row.empty()) LOGI("  [tail] %s", row.c_str());
 }

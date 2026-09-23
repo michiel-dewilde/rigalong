@@ -198,6 +198,8 @@ class MainActivity : Activity() {
         filter.addAction("be.mdw.bagosynths.PANIC")
         filter.addAction("be.mdw.bagosynths.STRESS")
         filter.addAction("be.mdw.bagosynths.STARVE")
+        filter.addAction("be.mdw.bagosynths.STALL")
+        filter.addAction("be.mdw.bagosynths.TRACE")
         filter.addAction("be.mdw.bagosynths.RESETPEAKS")
         filter.addAction("be.mdw.bagosynths.PROFILE")
         filter.addAction("be.mdw.bagosynths.INSTRUMENT")
@@ -1822,6 +1824,20 @@ class MainActivity : Activity() {
                 // it, so "does inventing a size wedge the device" is asked on
                 // its own.
                 //   adb shell am broadcast -a be.mdw.bagosynths.STARVE --ei packets 200
+                // The second mechanism, isolated: drains the OUT endpoint
+                // with no load at all, while the deep IN queue keeps
+                // starvation out of the result.
+                //   adb shell am broadcast -a be.mdw.bagosynths.STALL --ei us 20000 --ei count 50
+                //   adb shell am broadcast -a be.mdw.bagosynths.TRACE
+                //   ... TRACE --ei from 12345 --ei count 512
+                "be.mdw.bagosynths.TRACE" -> NativeBridge.nativeDumpUsbTrace(
+                    intent.getIntExtra("from", 0), intent.getIntExtra("count", 0))
+                "be.mdw.bagosynths.STALL" -> {
+                    val us = intent.getIntExtra("us", 20000)
+                    val n = intent.getIntExtra("count", 50)
+                    android.util.Log.i("bos-ui", "inject: stall ${us}us x $n")
+                    NativeBridge.nativeInjectStall(us, n)
+                }
                 "be.mdw.bagosynths.STARVE" -> {
                     val n = intent.getIntExtra("packets", 200)
                     android.util.Log.i("bos-ui", "inject: starve $n packets")

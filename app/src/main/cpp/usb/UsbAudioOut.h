@@ -164,6 +164,37 @@ public:
         mInjectStarve.store(packets, std::memory_order_relaxed);
     }
 
+    // THE SECOND MECHANISM, isolated. Stalls the reap thread for `us`
+    // microseconds, `count` times, and changes nothing else.
+    //
+    // Starvation is now proved and closed, yet trials still latch occasionally
+    // with starved=0 and inLost=0 -- no invented packet, no destroyed request.
+    // What is left is the OUT ENDPOINT DRAINING: only 8 ms is queued there,
+    // every URB carries ISO_ASAP, and a drained endpoint does not resume the
+    // stream, it starts a new one at whatever frame the controller has reached.
+    // Explicit start_frame scheduling would avoid that and is unreachable here
+    // (usbfs reports start_frame=0 always), so the drain is the only lever.
+    //
+    // A stall in this thread reproduces exactly that and nothing else: the OUT
+    // queue empties in 8 ms while the 1024 ms IN queue loses NOTHING, so
+    // starvation cannot contaminate the result. No CPU load, no synth, no
+    // contention -- the one variable.
+    // THE WIRE TRACE. Section 20 asked for this and it never got built.
+    //
+    // Every counter in this class is a summary, and a latch has now survived
+    // every summary anyone has thought of. This keeps the last 4096 OUT packet
+    // sizes actually submitted, as bytes, so the SEQUENCE can be read rather
+    // than its mean. If the fault is a pattern -- a run the device cannot take,
+    // a transition, a size that is legal in isolation and wrong in context --
+    // it is here and nowhere else.
+    void dumpTrace(uint32_t from, uint32_t count) const;
+    uint32_t traceAt() const { return mTraceAt.load(std::memory_order_relaxed); }
+
+    void injectStall(int us, int count) {
+        mStallUs.store(us, std::memory_order_relaxed);
+        mStallCount.store(count, std::memory_order_relaxed);
+    }
+
 private:
     struct Urb {
         usbdevfs_urb* u = nullptr;
@@ -292,7 +323,14 @@ private:
     // only notices that the size queue ran dry, this counts requests that are
     // GONE and can never be answered.
     int mFrameLogged = 0;
+    // 65536 packets is 65 seconds at 1 ms, so a whole trial fits and the
+    // window around the transition can be chosen afterwards. 64 kB.
+    static constexpr int kTraceCap = 65536;
+    mutable uint8_t mTrace[kTraceCap] = {};
+    std::atomic<uint32_t> mTraceAt{0};
     std::atomic<int64_t> mInjectStarve{0};
+    std::atomic<int> mStallUs{0};
+    std::atomic<int64_t> mStallCount{0};
     std::atomic<int64_t> mInPacketsTotal{0};
     std::atomic<int64_t> mInFramesTotal{0};
     std::atomic<int64_t> mFbDrop{0};

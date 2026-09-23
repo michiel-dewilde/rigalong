@@ -1300,7 +1300,7 @@ AudioEngine::Stats AudioEngine::stats() const {
                 // full-queue ~7500, with IN delivery collapsed to 54 packets
                 // per 250 ms against ~250, in the same interval.
                 LOGI("usb hole: late %lld (+%lld) errors %lld (+%lld) deficit %.1f ms (%+.1f) "
-                     "maxGap %.1f ms starved %lld flightUs %lld/%lld inPkt %lld inLost %lld "
+                     "maxGap %.1f ms starved %lld flightUs %lld/%lld inPkt %lld inLost %lld traceAt %u "
                      "frames %lld voices %d",
                      static_cast<long long>(u.late),
                      static_cast<long long>(u.late - lastLate),
@@ -1313,6 +1313,9 @@ AudioEngine::Stats AudioEngine::stats() const {
                      static_cast<long long>(u.inMinFlightUs),
                      static_cast<long long>(u.inPackets),
                      static_cast<long long>(u.inLostPackets),
+                     // Index into the wire trace at this hole, so the window
+                     // around a transition can be dumped afterwards.
+                     mUsbOut.traceAt(),
                      static_cast<long long>(u.frames), s.activeVoices);
             }
         }

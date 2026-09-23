@@ -123,6 +123,17 @@ Java_be_mdw_bagosynths_NativeBridge_nativeSetPacketsPerUrb(JNIEnv*, jobject, jin
 }
 
 JNIEXPORT void JNICALL
+Java_be_mdw_bagosynths_NativeBridge_nativeDumpUsbTrace(JNIEnv*, jobject, jint from, jint count) {
+    engine().dumpUsbTrace(static_cast<uint32_t>(from < 0 ? 0 : from),
+                          static_cast<uint32_t>(count < 0 ? 0 : count));
+}
+
+JNIEXPORT void JNICALL
+Java_be_mdw_bagosynths_NativeBridge_nativeInjectStall(JNIEnv*, jobject, jint us, jint count) {
+    engine().injectUsbStall(us, count);
+}
+
+JNIEXPORT void JNICALL
 Java_be_mdw_bagosynths_NativeBridge_nativeInjectStarve(JNIEnv*, jobject, jint packets) {
     engine().injectUsbStarve(packets);
 }

@@ -27,6 +27,12 @@ object NativeBridge {
     /** Packets per OUT URB for the next direct-USB start; total depth stays the same. */
     external fun nativeSetPacketsPerUrb(n: Int)
 
+    /** The last 4096 OUT packet sizes actually submitted, to the log. */
+    external fun nativeDumpUsbTrace(from: Int, count: Int)
+
+    /** Mechanism test: stall the reap thread, draining the OUT endpoint only. */
+    external fun nativeInjectStall(us: Int, count: Int)
+
     /** Mechanism test: size the next N OUT packets as a dry queue would. */
     external fun nativeInjectStarve(packets: Int)
 
