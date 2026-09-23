@@ -126,6 +126,21 @@ public:
     Stats stats() const;
     void resetPeaks() { mMaxGapUs.store(0, std::memory_order_relaxed); }
 
+    // THE MECHANISM TEST, and nothing else uses it.
+    //
+    // The deep IN queue stops the latch, but "it stops latching" does not say
+    // WHY, and the difference matters: if the cause is the hole, this is a
+    // mitigation that will fail on a longer stall; if the cause is inventing a
+    // packet size the device never asked for, it is a fix.
+    //
+    // This forces exactly that one path -- the next `packets` OUT packets are
+    // sized without consulting the feedback queue, as a dry queue would size
+    // them -- with no load, no lateness and no hole anywhere near it. If the
+    // device wedges on this alone, the mechanism is settled.
+    void injectStarve(int packets) {
+        mInjectStarve.store(packets, std::memory_order_relaxed);
+    }
+
 private:
     struct Urb {
         usbdevfs_urb* u = nullptr;
@@ -253,6 +268,7 @@ private:
     // frames it wants, destroyed before they were read. Unlike `starved`, which
     // only notices that the size queue ran dry, this counts requests that are
     // GONE and can never be answered.
+    std::atomic<int64_t> mInjectStarve{0};
     std::atomic<int64_t> mInPacketsTotal{0};
     std::atomic<int64_t> mInFramesTotal{0};
     std::atomic<int64_t> mFbDrop{0};

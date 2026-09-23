@@ -197,6 +197,7 @@ class MainActivity : Activity() {
         filter.addAction("be.mdw.bagosynths.PARAM")
         filter.addAction("be.mdw.bagosynths.PANIC")
         filter.addAction("be.mdw.bagosynths.STRESS")
+        filter.addAction("be.mdw.bagosynths.STARVE")
         filter.addAction("be.mdw.bagosynths.RESETPEAKS")
         filter.addAction("be.mdw.bagosynths.PROFILE")
         filter.addAction("be.mdw.bagosynths.INSTRUMENT")
@@ -1816,6 +1817,16 @@ class MainActivity : Activity() {
                 // whoever is in the room did not ask for that.
                 //   adb shell am broadcast -a be.mdw.bagosynths.PANIC
                 "be.mdw.bagosynths.PANIC" -> NativeBridge.nativePanic()
+                // The mechanism test. Sizes the next N OUT packets as a dry
+                // feedback queue would, with no load and no hole anywhere near
+                // it, so "does inventing a size wedge the device" is asked on
+                // its own.
+                //   adb shell am broadcast -a be.mdw.bagosynths.STARVE --ei packets 200
+                "be.mdw.bagosynths.STARVE" -> {
+                    val n = intent.getIntExtra("packets", 200)
+                    android.util.Log.i("bos-ui", "inject: starve $n packets")
+                    NativeBridge.nativeInjectStarve(n)
+                }
                 "be.mdw.bagosynths.RESETPEAKS" -> NativeBridge.nativeResetPeaks()
                 // The sampler's level, so a test can make a measurable sound
                 // without tapping a fader: a restored patch may have left the

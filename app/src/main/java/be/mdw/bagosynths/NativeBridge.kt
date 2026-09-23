@@ -24,6 +24,9 @@ object NativeBridge {
     /** Whether the native AMidi port is actually open. False after an unplug. */
     external fun nativeMidiOpen(): Boolean
     external fun nativePanic()
+    /** Mechanism test: size the next N OUT packets as a dry queue would. */
+    external fun nativeInjectStarve(packets: Int)
+
     external fun nativeResetPeaks()
     external fun nativeTestNote(note: Int, velocity: Int)
     external fun nativeGetStats(): FloatArray

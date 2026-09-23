@@ -260,6 +260,8 @@ public:
 
     Stats stats() const;
     void resetPeaks();
+    // Mechanism test: see UsbAudioOut::injectStarve.
+    void injectUsbStarve(int packets) { mUsbOut.injectStarve(packets); }
 
     /// The rate the CHOSEN DEVICE declares, from AudioDeviceInfo. 0 = let
     /// AAudio decide. Takes effect on the next openStream().

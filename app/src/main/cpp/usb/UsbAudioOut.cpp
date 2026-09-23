@@ -254,6 +254,13 @@ bool UsbAudioOut::submit(Urb& b) {
 
 int UsbAudioOut::nextFrames() {
     if (mCfg.feedback == kImplicit) {
+        // Deliberate starvation, for the mechanism test only. Takes the dry
+        // queue path below while the queue is in fact full.
+        if (mInjectStarve.load(std::memory_order_relaxed) > 0) {
+            mInjectStarve.fetch_sub(1, std::memory_order_relaxed);
+            mStarved.fetch_add(1, std::memory_order_relaxed);
+            return 0;
+        }
         if (mSizeCount > 0) {
             const int n = mSizes[mSizeHead];
             mSizeHead = (mSizeHead + 1) % kSizeCap;
