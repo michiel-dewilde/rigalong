@@ -1440,7 +1440,7 @@ AudioEngine::Stats AudioEngine::stats() const {
             LOGI("health usb %s  out=%.4f cb=%.4f voices=%d/%d frames=%lld deficit=%.1fms "
                  "late=%lld starved=%lld errors=%lld fb=%.1fHz ringUnder=%lld ringTarget=%.1fms "
                  "inSize=%d..%d/%lld fbDrift=%lld fbDrop=%lld fbClamp=%lld "
-                 "inLost=%lld zeroAvoided=%lld shaped=%lld bal=%lld/%lld rise=%lld fifo=%lld held=%lld%s%s",
+                 "inLost=%lld zeroAvoided=%lld shaped=%lld bal=%lld/%lld rise=%lld fifo=%lld held=%lld outShort=%lld outOdd=%lld%s%s",
                  s.usbRunning ? "ok" : "DOWN",
                  static_cast<double>(s.outputPeak),
                  static_cast<double>(mCallbackPeak.load(std::memory_order_relaxed)),
@@ -1492,6 +1492,12 @@ AudioEngine::Stats AudioEngine::stats() const {
                  // transport tried to overfeed and was stopped -- interesting
                  // every single time, because normal sizing cannot do it.
                  static_cast<long long>(u.balanceHeld),
+                 // What the controller says it PUT ON THE WIRE against what it
+                 // was asked for. Both must stay 0. A short packet, or one
+                 // that is not a whole number of frames, is the one fault no
+                 // other counter here can see.
+                 static_cast<long long>(u.outShort),
+                 static_cast<long long>(u.outOdd),
                  why.empty() ? "" : " fatal=", why.c_str());
             logMidiChain();
         }

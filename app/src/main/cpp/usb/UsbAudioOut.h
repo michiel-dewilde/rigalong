@@ -183,6 +183,8 @@ public:
         int64_t balPeak = 0;     // worst (highest) balance this interval
         int64_t balRise = 0;     // furthest the balance climbed off its own floor
         int64_t fifoPeak = 0;    // modelled device FIFO, worst this interval
+        int64_t outShort = 0;    // OUT packets the controller cut short; MUST stay 0
+        int64_t outOdd = 0;      // OUT packets not a whole number of frames; MUST stay 0
         int64_t balanceHeld = 0; // packets the ceiling cut down; should stay 0
         int64_t fbDrop = 0;          // requests discarded on queue overflow
         int64_t fbClamp = 0;         // requests cut down to the max packet
@@ -423,6 +425,8 @@ private:
     // Reap thread only: fillOut adds, completeIn subtracts, floor at zero.
     int64_t mFifoFrames = 0;
     mutable std::atomic<int64_t> mFifoPeak{0};
+    std::atomic<int64_t> mOutShort{0};
+    std::atomic<int64_t> mOutOdd{0};
     std::atomic<int64_t> mHoldOutUs{0};
     std::atomic<int64_t> mHoldOutLeft{0};
     std::atomic<int64_t> mInjectStarve{0};

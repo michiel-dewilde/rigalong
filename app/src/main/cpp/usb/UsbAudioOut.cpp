@@ -106,6 +106,7 @@ bool UsbAudioOut::start(const Config& config, PullFn pull, void* ctx, std::strin
     mBalMin = std::numeric_limits<int64_t>::max();
     mBalPeak = std::numeric_limits<int64_t>::min();
     mBalRise = 0;
+    mOutShort = 0; mOutOdd = 0;
     mFifoFrames = 0;
     mFifoPeak = 0;
     mFifoCeiling = static_cast<int64_t>(mUrbs) * mPackets * mCfg.rate / 1000 +
@@ -552,10 +553,26 @@ void UsbAudioOut::completeOut(Urb& b) {
         // wire, which is what deficitMs is built from.
         //
         //
-        // The controller was also checked for emitting empty or truncated
-        // packets of its own accord -- a zero-length packet arriving from the
-        // far side of the ioctl would be the same fatal event. It never does:
-        // measured 0 across every run, so that counter is gone again.
+        // AND WHAT WENT OUT IS COMPARED WITH WHAT WAS ASKED, which it never
+        // was. Michiel's question: can a pre-empted reap thread put half a
+        // frame on the wire? Not from here -- the URB is a snapshot, the
+        // length is always a whole number of frames, and nothing touches the
+        // buffer after submit. But this device is full speed, so behind a
+        // high-speed hub every 270-byte packet goes as split transactions,
+        // 188 bytes and then 82, and a transaction translator that runs out of
+        // time delivers what it has. That is 31 and a third frames: a literal
+        // half frame, produced by hardware, invisible to every counter we
+        // print. `outShort` counts a packet the controller says it cut, and
+        // `outOdd` counts one whose length is not a whole number of frames.
+        // An earlier pair of counters like these read 0 throughout and were
+        // removed as answered -- but that was before there was a reproducer
+        // that latches three times in three, so the question is open again.
+        if (d.actual_length != d.length) {
+            mOutShort.fetch_add(1, std::memory_order_relaxed);
+        }
+        if (d.actual_length % static_cast<unsigned>(mFrameBytes) != 0) {
+            mOutOdd.fetch_add(1, std::memory_order_relaxed);
+        }
         mOutBytes.fetch_add(d.actual_length, std::memory_order_relaxed);
     }
 }
@@ -688,6 +705,8 @@ UsbAudioOut::Stats UsbAudioOut::stats() const {
                                   std::memory_order_relaxed);
     s.balRise = mBalRise.exchange(0, std::memory_order_relaxed);
     s.fifoPeak = mFifoPeak.exchange(0, std::memory_order_relaxed);
+    s.outShort = mOutShort.load(std::memory_order_relaxed);
+    s.outOdd = mOutOdd.load(std::memory_order_relaxed);
     s.balanceHeld = mBalanceHeld.load(std::memory_order_relaxed);
     s.maxGapMs = mMaxGapUs.load(std::memory_order_relaxed) / 1000.0f;
     s.feedbackRate = mFbRate.load(std::memory_order_relaxed);
