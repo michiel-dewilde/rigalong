@@ -202,6 +202,8 @@ class MainActivity : Activity() {
         filter.addAction("be.mdw.bagosynths.STARVE")
         filter.addAction("be.mdw.bagosynths.GUARD")
         filter.addAction("be.mdw.bagosynths.TONE")
+        filter.addAction("be.mdw.bagosynths.INDEPTH")
+        filter.addAction("be.mdw.bagosynths.DUMP")
         filter.addAction("be.mdw.bagosynths.HOLD")
         filter.addAction("be.mdw.bagosynths.CONCEAL")
         filter.addAction("be.mdw.bagosynths.REINIT")
@@ -1123,8 +1125,18 @@ class MainActivity : Activity() {
      * is applied across uses of one device.
      */
     private fun effectiveModes(a: OutputChoice?, m: MidiChoice?): Pair<IoMode, IoMode> {
-        val am = if (a?.usb != null && a.usb.deviceName !in deniedDevices) audioMode else IoMode.ALSA
-        val mm = if (m?.usb != null && m.usb.deviceName !in deniedDevices) midiMode else IoMode.ALSA
+        // NONE survives everything: it is a decision not to open the use at all,
+        // so it does not fall back to ALSA when the device is not USB.
+        val am = when {
+            audioMode.off -> IoMode.NONE
+            a?.usb != null && a.usb.deviceName !in deniedDevices -> audioMode
+            else -> IoMode.ALSA
+        }
+        val mm = when {
+            midiMode.off -> IoMode.NONE
+            m?.usb != null && m.usb.deviceName !in deniedDevices -> midiMode
+            else -> IoMode.ALSA
+        }
         return ModeRule.normalize(am, mm, sameDevice(a, m))
     }
 
@@ -1361,6 +1373,9 @@ class MainActivity : Activity() {
             } else {
                 status("direct audio failed: $err")
             }
+        } else if (aMode.off) {
+            // Nothing to start. stopAudioSinks() has already run.
+            audioDeviceLabel = "none"
         } else {
             startEngine()
         }
@@ -1372,6 +1387,9 @@ class MainActivity : Activity() {
                 midiView.text = if (err == null) "MIDI: ${midi.name}  [${mMode.label}]"
                                 else "MIDI: $err"
             }
+        } else if (mMode.off) {
+            // nativeCloseMidi() and the device close have already run.
+            runOnUiThread { midiView.text = "MIDI: none" }
         } else {
             runOnUiThread { lastMidiAttempt = 0L; openMidi() }
         }
@@ -1536,7 +1554,12 @@ class MainActivity : Activity() {
 
     /** RESET USB, dispatched to whatever the audio path actually is. */
     private fun resetAudioPath() {
-        if (effectiveMode(Use.AUDIO).direct) resetDirectUsb() else recycleAlsaOutput()
+        val mode = effectiveMode(Use.AUDIO)
+        when {
+            mode.direct -> resetDirectUsb()
+            mode.off -> status("audio is None: nothing to reset")
+            else -> recycleAlsaOutput()
+        }
     }
 
     private fun resetDirectUsb() {
@@ -1676,6 +1699,8 @@ class MainActivity : Activity() {
                     "  -- fragile: Android can still route system sounds here"
                 m == IoMode.USB_DEVICE && same -> "  -- owns the whole device: MIDI too"
                 m == IoMode.USB_DEVICE -> "  -- owns the whole device"
+                m == IoMode.NONE && use == Use.MIDI -> "  -- not opened by anyone"
+                m == IoMode.NONE -> "  -- silent: nothing is opened"
                 else -> ""
             }
             items += (if (m == current) "(o)  " else "( )  ") + m.label + note
@@ -1850,6 +1875,19 @@ class MainActivity : Activity() {
                     val k = intent.getIntExtra("times", 1)
                     android.util.Log.i("bos-ui", "inject: $k OUT holds of $ms ms")
                     NativeBridge.nativeHoldOut(ms * 1000, k, intent.getIntExtra("every", 1))
+                }
+                //   ... .DUMP    the last ~65 s of packets, to a file
+                "be.mdw.bagosynths.DUMP" -> {
+                    val f = java.io.File(getExternalFilesDir(null), "wire.txt")
+                    NativeBridge.nativeDumpUsbTrace(f.absolutePath)
+                    android.util.Log.i("bos-ui", "wire trace: ${f.absolutePath} (${f.length()} bytes)")
+                }
+                //   ... .INDEPTH --ei ms 16   usbhost's feedback depth
+                "be.mdw.bagosynths.INDEPTH" -> {
+                    val ms = intent.getIntExtra("ms", 1024)
+                    NativeBridge.nativeSetInDepthMs(ms)
+                    android.util.Log.i("bos-ui", "feedback capture depth: $ms ms (restarting)")
+                    resetAudioPath()
                 }
                 //   ... .TONE --ef hz 440   usbhost's payload, this app's transport
                 "be.mdw.bagosynths.TONE" -> {

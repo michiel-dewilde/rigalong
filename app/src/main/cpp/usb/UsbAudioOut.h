@@ -264,6 +264,20 @@ public:
     // stays exactly as it is. 0 turns it off. TEST ONLY.
     void setTone(float hz) { mToneHz.store(hz, std::memory_order_relaxed); }
 
+    // THE WIRE, RECORDED. One entry per isochronous packet in either
+    // direction, in a ring that holds about a minute.
+    //
+    // This exists because the latch rate drifts from 0 of 4 to 3 of 3 between
+    // blocks minutes apart, which makes every A/B expensive and most of them
+    // underpowered. A trace needs ONE latch, not sixteen trials: stress in
+    // short bursts, probe after each, and dump the moment a probe comes back
+    // silent -- the ring then covers the burst the device died in.
+    //
+    // An earlier wire trace was removed as answered. It was answering a
+    // different question (the submitted cadence through a hole, which is
+    // flawless) and it did answer it.
+    void dumpTrace(const char* path) const;
+
     void injectStarve(int count) {
         mInjectStarve.store(count, std::memory_order_relaxed);
     }
@@ -441,6 +455,15 @@ private:
     std::atomic<int64_t> mOutOdd{0};
     std::atomic<int64_t> mOutDry{0};
     int64_t mOutRingUs = 0;
+    struct TraceEntry {
+        int32_t tUs;      // since the stream started
+        int16_t frames;   // packet size, or -1 for a packet the device lost
+        int16_t kind;     // 0 = OUT submitted, 1 = IN completed
+    };
+    static constexpr int kTraceCap = 65536;   // ~65 s at 1000 packets/s
+    std::vector<TraceEntry> mTrace;
+    int64_t mTraceAt = 0;                     // reap thread only
+    int64_t mTraceT0 = 0;
     std::atomic<float> mToneHz{0.0f};
     double mTonePhase = 0.0;
     std::atomic<int64_t> mHoldOutUs{0};

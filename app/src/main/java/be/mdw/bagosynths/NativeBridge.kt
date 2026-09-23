@@ -49,6 +49,12 @@ object NativeBridge {
     /** Replaces the USB payload with a tone, load and sizes unchanged. TEST ONLY. */
     external fun nativeSetUsbTone(hz: Float)
 
+    /** Feedback capture depth in ms, applied at the next transport start. */
+    external fun nativeSetInDepthMs(ms: Int)
+
+    /** Writes the per-packet wire trace to [path]. TEST ONLY. */
+    external fun nativeDumpUsbTrace(path: String)
+
     /** Delays OUT resubmission only, [count] times, [us] each. TEST ONLY. */
     external fun nativeHoldOut(us: Int, count: Int, every: Int)
 

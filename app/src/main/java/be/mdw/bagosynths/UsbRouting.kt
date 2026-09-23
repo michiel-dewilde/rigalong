@@ -32,9 +32,25 @@ import java.io.File
 enum class IoMode(val label: String, val short: String) {
     ALSA("ALSA", "ALSA"),
     USB_INTERFACE("USB interface", "USB if"),
-    USB_DEVICE("USB device", "USB dev");
+    USB_DEVICE("USB device", "USB dev"),
 
-    val direct get() = this != ALSA
+    /**
+     * NOT OPENED AT ALL. Neither this process nor the kernel's driver is asked
+     * for anything: no stream, no reader, no claim.
+     *
+     * For MIDI it is the honest way to ask "is the MIDI interface involved in
+     * this?", which routing it to ALSA does not -- that only moves the claim to
+     * snd-usb-audio, which still binds the interface and still polls it. For
+     * audio it is there for symmetry, and to silence the instrument without
+     * unplugging it.
+     */
+    NONE("None", "none");
+
+    /** A usbfs path owned by this process. */
+    val direct get() = this == USB_INTERFACE || this == USB_DEVICE
+
+    /** Not opened by anyone: the use is switched off, not moved. */
+    val off get() = this == NONE
 
     companion object {
         fun parse(s: String?): IoMode = values().firstOrNull { it.name == s } ?: ALSA
@@ -80,6 +96,10 @@ object ModeRule {
      */
     fun normalize(audio: IoMode, midi: IoMode, sameDevice: Boolean): Pair<IoMode, IoMode> {
         if (!sameDevice) return audio to midi
+        // NONE is never dragged anywhere. Owning the whole device does claim the
+        // other interface as well, but claiming it and READING it are different
+        // things, and "off" has to survive the rule or it cannot be tested.
+        if (audio.off || midi.off) return audio to midi
         return if (audio == IoMode.USB_DEVICE || midi == IoMode.USB_DEVICE)
             IoMode.USB_DEVICE to IoMode.USB_DEVICE
         else audio to midi

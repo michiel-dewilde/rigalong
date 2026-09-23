@@ -10,6 +10,7 @@
 #include <unistd.h>
 
 #include <algorithm>
+#include <cstdio>
 #include <limits>
 #include <cerrno>
 #include <cmath>
@@ -108,6 +109,9 @@ bool UsbAudioOut::start(const Config& config, PullFn pull, void* ctx, std::strin
     mBalRise = 0;
     mOutShort = 0; mOutOdd = 0;
     mOutDry = 0;
+    mTrace.assign(kTraceCap, TraceEntry{});
+    mTraceAt = 0;
+    mTraceT0 = nowNs();
     mFifoFrames = 0;
     mFifoPeak = 0;
     mFifoCeiling = static_cast<int64_t>(mUrbs) * mPackets * mCfg.rate / 1000 +
@@ -472,6 +476,10 @@ void UsbAudioOut::fillOut(Urb& b) {
             }
         }
 
+        mTrace[mTraceAt++ & (kTraceCap - 1)] = {
+                static_cast<int32_t>((nowNs() - mTraceT0) / 1000),
+                static_cast<int16_t>(frames), 0};
+
         const int bytes = frames * mFrameBytes;
         b.u->iso_frame_desc[p].length = static_cast<unsigned>(bytes);
         b.u->iso_frame_desc[p].actual_length = 0;
@@ -530,6 +538,9 @@ void UsbAudioOut::completeIn(Urb& b) {
         // statement of its drain we get. Saturating at empty: it cannot owe us.
         mFifoFrames -= frames;
         if (mFifoFrames < 0) mFifoFrames = 0;
+        mTrace[mTraceAt++ & (kTraceCap - 1)] = {
+                static_cast<int32_t>((nowNs() - mTraceT0) / 1000),
+                static_cast<int16_t>(frames), 1};
         mInPackets.fetch_add(1, std::memory_order_relaxed);
         mInPacketsTotal.fetch_add(1, std::memory_order_relaxed);
         mInFramesTotal.fetch_add(frames, std::memory_order_relaxed);
@@ -781,3 +792,19 @@ UsbAudioOut::Stats UsbAudioOut::stats() const {
     return s;
 }
 
+// Oldest first, so the end of the file is the end of the stream. Written from
+// the UI thread while the reap thread is still running, which is deliberate: a
+// few torn entries at the write cursor cost nothing and stopping the stream to
+// read it would destroy the state being examined.
+void UsbAudioOut::dumpTrace(const char* path) const {
+    FILE* f = std::fopen(path, "w");
+    if (f == nullptr) return;
+    std::fprintf(f, "# us kind frames   (kind 0 = OUT submitted, 1 = IN completed)\n");
+    const int64_t n = std::min<int64_t>(mTraceAt, kTraceCap);
+    const int64_t start = mTraceAt - n;
+    for (int64_t i = start; i < mTraceAt; ++i) {
+        const TraceEntry& e = mTrace[i & (kTraceCap - 1)];
+        std::fprintf(f, "%d %d %d\n", e.tUs, e.kind, e.frames);
+    }
+    std::fclose(f);
+}

@@ -148,9 +148,25 @@ Java_be_mdw_bagosynths_NativeBridge_nativeSetBalanceGuard(JNIEnv*, jobject, jboo
     engine().setUsbBalanceGuard(on == JNI_TRUE);
 }
 
+std::atomic<int> gInDepthMs{1024};
+
+JNIEXPORT void JNICALL
+Java_be_mdw_bagosynths_NativeBridge_nativeSetInDepthMs(JNIEnv*, jobject, jint ms) {
+    gInDepthMs.store(ms > 0 ? ms : 1024, std::memory_order_relaxed);
+}
+
 JNIEXPORT void JNICALL
 Java_be_mdw_bagosynths_NativeBridge_nativeSetUsbTone(JNIEnv*, jobject, jfloat hz) {
     engine().setUsbTone(hz);
+}
+
+JNIEXPORT void JNICALL
+Java_be_mdw_bagosynths_NativeBridge_nativeDumpUsbTrace(JNIEnv* env, jobject, jstring path) {
+    const char* p = env->GetStringUTFChars(path, nullptr);
+    if (p != nullptr) {
+        engine().dumpUsbTrace(p);
+        env->ReleaseStringUTFChars(path, p);
+    }
 }
 
 JNIEXPORT void JNICALL
@@ -930,6 +946,12 @@ Java_be_mdw_bagosynths_NativeBridge_nativeStartUsbAudio(JNIEnv* env, jobject, ji
     cfg.subslotBytes = p.subslotBytes;
     cfg.rate = static_cast<int>(rate);
     cfg.bufferMs = bufferMs;
+    // THE LAST BIG STRUCTURAL DIFFERENCE FROM usbhost, and it has never been
+    // varied. usbhost queues 8 IN URBs, 16 ms; this queues 512, 1024 ms. That
+    // is 64x the isochronous IN ring for the controller to walk every frame,
+    // on the same device as the OUT endpoint that must not miss its deadline.
+    // Settable so it can be A/B'd against usbhost's own depth.
+    cfg.inBufferMs = gInDepthMs.load(std::memory_order_relaxed);
     cfg.packetsPerUrb = 2;   // measured: 1 ms URBs are worse, 4 no better
 
     std::string startErr;

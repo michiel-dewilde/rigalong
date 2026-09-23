@@ -280,6 +280,7 @@ public:
     void injectUsbStarve(int count) { mUsbOut.injectStarve(count); }
     void setUsbBalanceGuard(bool on) { mUsbOut.setBalanceGuard(on); }
     void setUsbTone(float hz) { mUsbOut.setTone(hz); }
+    void dumpUsbTrace(const char* path) { mUsbOut.dumpTrace(path); }
     void holdUsbOut(int us, int count, int every) { mUsbOut.holdOut(us, count, every); }
 
     /// The rate the CHOSEN DEVICE declares, from AudioDeviceInfo. 0 = let
