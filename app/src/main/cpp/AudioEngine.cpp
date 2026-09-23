@@ -1301,7 +1301,7 @@ AudioEngine::Stats AudioEngine::stats() const {
                 // full-queue ~7500, with IN delivery collapsed to 54 packets
                 // per 250 ms against ~250, in the same interval.
                 LOGI("usb hole: late %lld (+%lld) errors %lld (+%lld) deficit %.1f ms (%+.1f) "
-                     "maxGap %.1f ms starved %lld flightUs %lld/%lld inPkt %lld "
+                     "maxGap %.1f ms starved %lld flightUs %lld/%lld inPkt %lld inLost %lld "
                      "frames %lld voices %d",
                      static_cast<long long>(u.late),
                      static_cast<long long>(u.late - lastLate),
@@ -1313,6 +1313,7 @@ AudioEngine::Stats AudioEngine::stats() const {
                      static_cast<long long>(u.outMinFlightUs),
                      static_cast<long long>(u.inMinFlightUs),
                      static_cast<long long>(u.inPackets),
+                     static_cast<long long>(u.inLostPackets),
                      static_cast<long long>(u.frames), s.activeVoices);
             }
         }
@@ -1324,7 +1325,7 @@ AudioEngine::Stats AudioEngine::stats() const {
             LOGI("health usb %s  out=%.4f cb=%.4f voices=%d/%d frames=%lld deficit=%.1fms "
                  "late=%lld starved=%lld errors=%lld fb=%.1fHz ringUnder=%lld "
                  "inSize=%d..%d/%lld fbDrift=%lld fbDrop=%lld fbClamp=%lld "
-                 "flightUs=%lld/%lld%s%s",
+                 "flightUs=%lld/%lld inLost=%lld%s%s",
                  s.usbRunning ? "ok" : "DOWN",
                  static_cast<double>(s.outputPeak),
                  static_cast<double>(mCallbackPeak.load(std::memory_order_relaxed)),
@@ -1352,6 +1353,9 @@ AudioEngine::Stats AudioEngine::stats() const {
                  // means the endpoint had nothing queued behind it.
                  static_cast<long long>(u.outMinFlightUs),
                  static_cast<long long>(u.inMinFlightUs),
+                 // IN packets the device sent that no URB was queued to catch:
+                 // requests destroyed before they were read. Should be zero.
+                 static_cast<long long>(u.inLostPackets),
                  why.empty() ? "" : " fatal=", why.c_str());
             logMidiChain();
         }

@@ -73,6 +73,10 @@ bool UsbAudioOut::start(const Config& config, PullFn pull, void* ctx, std::strin
     mPackets = std::max(1, static_cast<int>(std::lround(2000.0 / mPeriodUs)));
     const double urbMs = mPackets * mPeriodUs / 1000.0;
     mUrbs = std::clamp(static_cast<int>(std::lround(mCfg.bufferMs / urbMs)), 2, 32);
+    // Separately, and far deeper: see Config::inBufferMs. Never fewer than the
+    // OUT count, because the feedback stream must never be the shallower one.
+    mInUrbs = std::clamp(static_cast<int>(std::lround(mCfg.inBufferMs / urbMs)),
+                         mUrbs, 256);
 
     mFrameBytes = mCfg.channels * mCfg.subslotBytes;
     const int maxFramesPerPacket = mCfg.outMaxPacket / mFrameBytes;
@@ -90,6 +94,7 @@ bool UsbAudioOut::start(const Config& config, PullFn pull, void* ctx, std::strin
     mFrames = 0; mOutBytes = 0; mOutErr = 0; mInErr = 0;
     mStarved = 0; mLate = 0; mMaxGapUs = 0;
     mOutMinFlightUs = INT64_MAX; mInMinFlightUs = INT64_MAX;
+    mInPacketsTotal = 0;
     mFbRate = static_cast<float>(mCfg.rate);
 
     if (!allocStream(mOut, mUrbs, mPackets, mCfg.outEp, true, mCfg.outMaxPacket)) {
@@ -98,7 +103,7 @@ bool UsbAudioOut::start(const Config& config, PullFn pull, void* ctx, std::strin
     }
     if (mCfg.feedback == kImplicit) {
         if (mCfg.fbFrameBytes <= 0) { freeStream(mOut); return fail("implicit feedback without a frame size"); }
-        if (!allocStream(mIn, mUrbs, mPackets, mCfg.fbEp, false, mCfg.fbMaxPacket)) {
+        if (!allocStream(mIn, mInUrbs, mPackets, mCfg.fbEp, false, mCfg.fbMaxPacket)) {
             freeStream(mOut); freeStream(mIn);
             return fail("out of memory for feedback URBs");
         }
@@ -120,18 +125,57 @@ bool UsbAudioOut::start(const Config& config, PullFn pull, void* ctx, std::strin
         fillIn(b, mCfg.feedback == kExplicit ? 1 : mPackets, mCfg.fbMaxPacket);
         if (!submit(b)) { stop(); if (error) *error = fatal(); return false; }
     }
-    mThread = std::thread([this] { reapLoop(); });
-    if (!mIn.empty()) usleep(20 * 1000);
+    // PRIME THE SIZE QUEUE ON THIS THREAD, before the reap thread exists.
+    //
+    // This used to start the reap thread here and then fill the OUT URBs, which
+    // is a data race and always was: completeIn() on the reap thread pushes to
+    // mSizes while nextFrames() on this thread pops from it, and mSizeHead and
+    // mSizeCount are plain ints. Every stream start ran it. A corrupted count
+    // yields packet sizes the device never asked for, which is exactly the
+    // class of fault -- a late implementation putting something unreasonable on
+    // the wire -- that this investigation is chasing. Michiel's hunch, and he
+    // was right that the shape exists even though the OUT data buffer itself is
+    // safe: fillOut() only touches a URB between its reap and its resubmit, and
+    // it writes the samples BEFORE setting iso_frame_desc[].length, so a length
+    // never advertises bytes that are not there yet.
+    //
+    // Harvesting the first completions here keeps the whole priming sequence
+    // single-threaded. The guard bounds the loop; REAPURBNDELAY returns EAGAIN
+    // once nothing more is ready.
+    if (!mIn.empty()) {
+        usleep(20 * 1000);
+        for (int guard = 0; guard < 4 * mInUrbs; ++guard) {
+            void* p = nullptr;
+            if (ioctl(mCfg.fd, USBDEVFS_REAPURBNDELAY, &p) < 0) break;
+            auto* u = static_cast<usbdevfs_urb*>(p);
+            auto* b = static_cast<Urb*>(u->usercontext);
+            if (b == nullptr || b->out) continue;
+            if (mCfg.feedback == kExplicit) {
+                completeFeedback(*b);
+                fillIn(*b, 1, mCfg.fbMaxPacket);
+            } else {
+                completeIn(*b);
+                fillIn(*b, mPackets, mCfg.fbMaxPacket);
+            }
+            if (!submit(*b)) { stop(); if (error) *error = fatal(); return false; }
+        }
+    }
 
     for (Urb& b : mOut) {
         fillOut(b);
         if (!submit(b)) { stop(); if (error) *error = fatal(); return false; }
     }
 
+    // Only now does a second thread exist, and from here on mSizes is touched
+    // by that thread alone.
+    mThread = std::thread([this] { reapLoop(); });
+
     LOGI("usb out: ep 0x%02x %s, %d ch x %d B @ %d Hz, period %.0f us, "
-         "%d URBs x %d packets = %.1f ms, feedback %s",
+         "%d URBs x %d packets = %.1f ms out / %d URBs = %.0f ms in, feedback %s",
          mCfg.outEp, mCfg.highSpeed ? "high speed" : "full speed", mCfg.channels,
          mCfg.subslotBytes, mCfg.rate, mPeriodUs, mUrbs, mPackets, mUrbs * urbMs,
+         mCfg.feedback == kImplicit ? mInUrbs : 0,
+         mCfg.feedback == kImplicit ? mInUrbs * urbMs : 0.0,
          mCfg.feedback == kImplicit ? "implicit" : mCfg.feedback == kExplicit ? "explicit" : "none");
     return true;
 }
@@ -352,6 +396,7 @@ void UsbAudioOut::completeIn(Urb& b) {
                                                      std::memory_order_relaxed)) {}
         }
         mInPackets.fetch_add(1, std::memory_order_relaxed);
+        mInPacketsTotal.fetch_add(1, std::memory_order_relaxed);
         mInFramesTotal.fetch_add(frames, std::memory_order_relaxed);
         if (mSizeCount == kSizeCap) {
             // THE QUEUE IS FULL AND SOMETHING MUST GIVE. Dropping the oldest
@@ -498,6 +543,17 @@ UsbAudioOut::Stats UsbAudioOut::stats() const {
         const double wallMs = (nowNs() - start) / 1e6;
         const double wireMs = (static_cast<double>(s.outBytes) / mFrameBytes) * 1000.0 / mCfg.rate;
         s.deficitMs = static_cast<float>(wallMs - wireMs);
+
+        // The device emits one IN packet per service interval on its own clock,
+        // so what it has sent since the stream started is the elapsed time in
+        // periods. The shortfall against what we actually received is packets
+        // that landed with no URB queued to catch them -- requests destroyed
+        // before they were read. The first URBs are primed before the clock
+        // starts, so a small negative is possible; floor it.
+        const double expected = wallMs * 1000.0 / mPeriodUs;
+        const int64_t got = mInPacketsTotal.load(std::memory_order_relaxed);
+        const int64_t lost = static_cast<int64_t>(expected) - got;
+        s.inLostPackets = lost > 0 ? lost : 0;
     }
     return s;
 }

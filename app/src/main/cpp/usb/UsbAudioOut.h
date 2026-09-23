@@ -57,6 +57,32 @@ public:
         int rate = 44100;
 
         int bufferMs = 8;            // total OUT depth in flight
+
+        // IN DEPTH IS FREE, AND IT IS NOT THE SAME NUMBER AS OUT DEPTH.
+        //
+        // These were one value until 2026-09-23, which is an arbitrary symmetry
+        // that quietly caps how long this process may be descheduled before it
+        // breaks the implicit-feedback contract.
+        //
+        // OUT depth IS latency: a URB queued now carries audio rendered now and
+        // reaches the device `bufferMs` later, so it stays small and a live
+        // instrument pays for every millisecond of it.
+        //
+        // IN depth is not latency. An IN URB is an empty receive buffer; the
+        // device fills it on its own clock whenever it likes. Queueing 256 ms
+        // of them costs 128 URBs x 2 packets x 270 bytes -- about 70 kB -- and
+        // nothing else. No added delay, in either direction.
+        //
+        // What it buys is the whole contract. Every IN packet IS the device
+        // stating how many frames it wants back. When the reap thread is
+        // descheduled for 172 ms (measured, repeatedly) the device goes on
+        // sending IN packets on its own clock, and any packet with no URB
+        // queued to catch it is LOST -- a request that can never be answered,
+        // and a permanent frame debt rather than a transient one. With OUT and
+        // IN both at 8 ms, a 172 ms stall loses ~164 ms of the device's
+        // requests. With IN at 256 ms it loses none, and the OUT gap becomes an
+        // ordinary latency blip that drains off.
+        int inBufferMs = 256;        // feedback capture depth; NOT latency
     };
 
     // Fills `frames` interleaved stereo floats; returns how many were really
@@ -88,6 +114,7 @@ public:
         int32_t inSizeMax = 0;
         int64_t inPackets = 0;
         int64_t inFramesTotal = 0;   // what the device ASKED for, cumulative
+    int64_t inLostPackets = 0;   // IN packets the device sent with no URB waiting
         int64_t fbDrop = 0;          // requests discarded on queue overflow
         int64_t fbClamp = 0;         // requests cut down to the max packet
         float deficitMs = 0.0f;      // wall time minus wire time; GROWTH is a hole
@@ -124,7 +151,7 @@ private:
     PullFn mPull = nullptr;
     void* mCtx = nullptr;
 
-    int mUrbs = 4, mPackets = 2, mFramesPerUrb = 0;
+    int mUrbs = 4, mInUrbs = 4, mPackets = 2, mFramesPerUrb = 0;
     double mPeriodUs = 1000.0;
     int mFrameBytes = 6;
 
@@ -195,6 +222,18 @@ private:
     // cumulative IN frames against cumulative OUT frames. usbhost tracks these
     // and they match (221822 vs 222351 over a clean run). Any divergence here
     // is the host not honouring what the device asked for.
+    // Cumulative IN packets, never reset -- mInPackets is reset on read for the
+    // per-interval spread, and the loss estimate needs the running total.
+    //
+    // THE ONE COUNTER THAT SEES A BROKEN CONTRACT. The device emits one IN
+    // packet per service interval on its own clock, so the number it has sent
+    // since the stream started is simply the elapsed time in periods. Anything
+    // that number exceeds what we actually received is packets that arrived
+    // with no URB queued to catch them: the device's own statements of how many
+    // frames it wants, destroyed before they were read. Unlike `starved`, which
+    // only notices that the size queue ran dry, this counts requests that are
+    // GONE and can never be answered.
+    std::atomic<int64_t> mInPacketsTotal{0};
     std::atomic<int64_t> mInFramesTotal{0};
     std::atomic<int64_t> mFbDrop{0};
     std::atomic<int64_t> mFbClamp{0};
