@@ -465,7 +465,14 @@ void UsbAudioOut::reapLoop() {
     bos::pinToTransportCore("usb reap thread");
 
     int64_t lastReap = nowNs();
-    const int64_t ringNs = static_cast<int64_t>(mUrbs * mPackets * mPeriodUs * 1000.0);
+    // Per direction, because the two queues are deliberately different depths
+    // now. Measuring IN URBs against the OUT ring made `late` meaningless the
+    // moment the feedback stream went deep -- every IN URB legitimately sits
+    // queued for its whole 256 ms, and the counter read 119582 in one trial.
+    const int64_t outRingNs =
+            static_cast<int64_t>(mUrbs * mPackets * mPeriodUs * 1000.0);
+    const int64_t inRingNs =
+            static_cast<int64_t>(mInUrbs * mPackets * mPeriodUs * 1000.0);
 
     while (mRunning.load(std::memory_order_acquire)) {
         void* p = nullptr;
@@ -487,7 +494,9 @@ void UsbAudioOut::reapLoop() {
         auto* u = static_cast<usbdevfs_urb*>(p);
         auto* b = static_cast<Urb*>(u->usercontext);
         if (b == nullptr || !mRunning.load(std::memory_order_acquire)) continue;
-        if (t - b->submittedNs > 2 * ringNs) mLate.fetch_add(1, std::memory_order_relaxed);
+        if (t - b->submittedNs > 2 * (b->out ? outRingNs : inRingNs)) {
+            mLate.fetch_add(1, std::memory_order_relaxed);
+        }
 
         // How long this URB was in flight. A URB cannot come back before the
         // ones queued ahead of it have been transmitted, and reaping can only

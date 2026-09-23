@@ -168,7 +168,27 @@ private:
     uint32_t mFbQ16 = 0;
     uint32_t mFbAcc = 0;
     // Implicit feedback: packet sizes seen on the IN stream, oldest first.
-    static constexpr int kSizeCap = 512;
+    // SHALLOW ON PURPOSE, and it works with the deep IN URB queue rather than
+    // against it. The two solve different halves of the same problem.
+    //
+    // The arithmetic first. The device asks for ~44,1 frames per millisecond
+    // and one OUT packet can carry at most 45, so the headroom for catching up
+    // is about 2%: a 140 ms backlog needs ~7 SECONDS to drain, and holes arrive
+    // far more often than that. Frame debt is therefore permanent, and any
+    // design that tries to answer every request eventually just overflows --
+    // measured, fbDrop climbing 468 -> 1278 -> 2178 with a 512-deep queue.
+    //
+    // So the rule is not "answer every request". It is:
+    //   never INVENT a size  -- that is what wedges the device;
+    //   never use a STALE one -- a size from 512 ms ago describes a cadence the
+    //                            device has long since moved on from.
+    // The deep IN URB queue buys the first: packets are always caught, so a
+    // recent size is always available and nextFrames() never has to guess. This
+    // cap buys the second: once the backlog exceeds ~64 ms the oldest entries
+    // are dropped, resynchronising to what the device is asking for NOW. The
+    // frames in them are a debt that is acknowledged, bounded and counted in
+    // fbDrop rather than pretended away.
+    static constexpr int kSizeCap = 64;
     int mSizes[kSizeCap] = {};
     int mSizeHead = 0, mSizeCount = 0;
 
