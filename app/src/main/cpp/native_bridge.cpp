@@ -1,4 +1,5 @@
 #include <jni.h>
+#include <atomic>
 #include <android/log.h>
 
 #include <algorithm>
@@ -22,6 +23,12 @@ AudioEngine& engine() {
     return instance;
 }
 }  // namespace
+
+// Packets per OUT URB, for the depth-shape sweep. Total depth is latency; how
+// it divides between URB count and packets per URB is free, and 2026-09-23
+// showed the division matters on its own -- 8 ms survives as 4 URBs x 2 packets
+// and latches as 8 URBs x 1 packet.
+static std::atomic<int> gPacketsPerUrb{2};
 
 extern "C" {
 
@@ -108,6 +115,11 @@ Java_be_mdw_bagosynths_NativeBridge_nativeRecordedSeconds(JNIEnv*, jobject) {
 JNIEXPORT jboolean JNICALL
 Java_be_mdw_bagosynths_NativeBridge_nativeIsRecording(JNIEnv*, jobject) {
     return engine().isRecording() ? JNI_TRUE : JNI_FALSE;
+}
+
+JNIEXPORT void JNICALL
+Java_be_mdw_bagosynths_NativeBridge_nativeSetPacketsPerUrb(JNIEnv*, jobject, jint n) {
+    gPacketsPerUrb.store(n, std::memory_order_relaxed);
 }
 
 JNIEXPORT void JNICALL
@@ -886,6 +898,7 @@ Java_be_mdw_bagosynths_NativeBridge_nativeStartUsbAudio(JNIEnv* env, jobject, ji
     cfg.subslotBytes = p.subslotBytes;
     cfg.rate = static_cast<int>(rate);
     cfg.bufferMs = bufferMs;
+    cfg.packetsPerUrb = gPacketsPerUrb.load(std::memory_order_relaxed);
 
     std::string startErr;
     if (!engine().startUsb(cfg, &startErr)) {

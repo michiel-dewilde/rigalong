@@ -70,13 +70,15 @@ bool UsbAudioOut::start(const Config& config, PullFn pull, void* ctx, std::strin
     // exactly the configuration that measured cleanest in the sweep. Packets
     // per URB is held at 2 ms rather than grown with depth because 4-packet
     // URBs measured feedback starvation at 32 ms.
-    mPackets = std::max(1, static_cast<int>(std::lround(2000.0 / mPeriodUs)));
+    mPackets = mCfg.packetsPerUrb > 0
+                       ? std::clamp(mCfg.packetsPerUrb, 1, 8)
+                       : std::max(1, static_cast<int>(std::lround(2000.0 / mPeriodUs)));
     const double urbMs = mPackets * mPeriodUs / 1000.0;
-    mUrbs = std::clamp(static_cast<int>(std::lround(mCfg.bufferMs / urbMs)), 2, 32);
+    mUrbs = std::clamp(static_cast<int>(std::lround(mCfg.bufferMs / urbMs)), 2, 64);
     // Separately, and far deeper: see Config::inBufferMs. Never fewer than the
     // OUT count, because the feedback stream must never be the shallower one.
     mInUrbs = std::clamp(static_cast<int>(std::lround(mCfg.inBufferMs / urbMs)),
-                         mUrbs, 256);
+                         mUrbs, 1024);
 
     mFrameBytes = mCfg.channels * mCfg.subslotBytes;
     const int maxFramesPerPacket = mCfg.outMaxPacket / mFrameBytes;
@@ -469,7 +471,6 @@ void UsbAudioOut::reapLoop() {
     // The highest band an app is given, and above the render thread: this is
     // the thread that actually puts audio on the wire.
     bos::raiseRenderPriority("usb reap thread", bos::kTransportNice);
-    bos::pinToTransportCore("usb reap thread");
 
     int64_t lastReap = nowNs();
     // Per direction, because the two queues are deliberately different depths
@@ -501,6 +502,28 @@ void UsbAudioOut::reapLoop() {
         auto* u = static_cast<usbdevfs_urb*>(p);
         auto* b = static_cast<Urb*>(u->usercontext);
         if (b == nullptr || !mRunning.load(std::memory_order_acquire)) continue;
+
+        // CAN WE SCHEDULE EXPLICITLY? This decides whether the last structural
+        // difference from snd-usb-audio is fixable at all.
+        //
+        // Every URB here carries USBDEVFS_URB_ISO_ASAP, so a drained endpoint
+        // does not RESUME the stream, it starts a new one at whatever frame the
+        // controller has reached. The kernel driver sets ASAP only on the first
+        // URB and schedules the rest by explicit start_frame, which keeps the
+        // stream contiguous across a late submission. Doing the same needs the
+        // controller to tell us frame numbers; usbhost recorded start_frame as
+        // 0 for every URB on this tablet, which would make it impossible.
+        // Logged for the first few of each direction, with USBDEVFS_GETFRAME
+        // alongside as the other possible source.
+        // usbfs has no frame-number ioctl -- there is no USBDEVFS_GETFRAME in
+        // mainline -- so a completed URB's start_frame is the ONLY source, and
+        // if the controller leaves it at zero then explicit scheduling is
+        // simply not reachable from userspace on this tablet.
+        if (mFrameLogged < 8) {
+            ++mFrameLogged;
+            LOGI("frame probe %s: start_frame=%d error_count=%d",
+                 b->out ? "OUT" : "IN", u->start_frame, u->error_count);
+        }
         if (t - b->submittedNs > 2 * (b->out ? outRingNs : inRingNs)) {
             mLate.fetch_add(1, std::memory_order_relaxed);
         }

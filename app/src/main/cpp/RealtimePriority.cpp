@@ -42,50 +42,6 @@ void raiseRenderPriority(const char* what, int niceValue) {
          std::strerror(fifoErr), niceValue, std::strerror(errno));
 }
 
-namespace {
-
-// The mask that was actually granted, read back rather than assumed: a
-// setaffinity that succeeds can still be narrowed by the cpuset the app is in.
-std::string allowedList() {
-    cpu_set_t got;
-    CPU_ZERO(&got);
-    if (sched_getaffinity(0, sizeof(got), &got) != 0) return "unknown";
-    std::string out;
-    for (int i = 0; i < CPU_SETSIZE && i < 64; ++i) {
-        if (!CPU_ISSET(i, &got)) continue;
-        if (!out.empty()) out += ",";
-        out += std::to_string(i);
-    }
-    return out.empty() ? "none" : out;
-}
-
-void applyAffinity(const char* what, bool onlyTransportCore) {
-    const long cores = sysconf(_SC_NPROCESSORS_CONF);
-    if (cores < kMinCoresToPin) {
-        LOGI("%s: not pinning, only %ld cores", what, cores);
-        return;
-    }
-    cpu_set_t set;
-    CPU_ZERO(&set);
-    if (onlyTransportCore) {
-        CPU_SET(kTransportCore, &set);
-    } else {
-        for (long i = 0; i < cores; ++i) {
-            if (i != kTransportCore) CPU_SET(static_cast<int>(i), &set);
-        }
-    }
-    if (sched_setaffinity(0, sizeof(set), &set) != 0) {
-        LOGE("%s: affinity refused: %s", what, std::strerror(errno));
-        return;
-    }
-    LOGI("%s: cpus %s", what, allowedList().c_str());
-}
-
-}  // namespace
-
-void pinToTransportCore(const char* what) { applyAffinity(what, true); }
-void pinOffTransportCore(const char* what) { applyAffinity(what, false); }
-
 // --------------------------------------------------------------------- ADPF
 //
 // Resolved with dlsym rather than called directly.

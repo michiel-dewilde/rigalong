@@ -122,3 +122,37 @@ Already gone. Listed so it is not rebuilt.
 `mInSizeMin`/`mInSizeMax` were never assigned. Not on probation: a counter that
 is printed must be written, and this one was cited as evidence while reading an
 untouched variable. It stays.
+
+---
+
+## Settled 2026-09-23, third round
+
+### cpu6 affinity pinning - DELETED
+
+Gone from the tree, along with `pinToTransportCore`, `pinOffTransportCore`,
+`applyAffinity`, `allowedList`, `kTransportCore` and `kMinCoresToPin`.
+
+The measurement that settled it: with the feedback capture depth raised to
+1024 ms, three trials survived with the pinning removed entirely and `inLost=0`.
+With only 256 ms of capture, removing it latched 3 of 3 and `inLost` jumped to
+567 packets - so what the pin was really doing was keeping stalls inside an
+under-sized budget, not preventing latches. A hard-coded core number for one SoC
+layout was always the most arbitrary thing here; it is also now unnecessary.
+
+### Split nice bands (-19 transport, -16 render) - KEPT, off probation
+
+Not arbitrary. The ordering follows from the design rather than a measurement:
+the render ring exists so that a late render is inaudible, and nothing absorbs a
+late URB. The endpoint drain is still a live mechanism, so fewer holes is fewer
+chances to hit it. Keep.
+
+### Deep IN capture (1024 ms) and the 64-entry size queue - THE FIX, not a hack
+
+Not on probation. They remove a real protocol violation, are justified by a
+proved mechanism, and cost nothing in latency. See LOG.md.
+
+### Packets per OUT URB - a real variable, default 2
+
+8 ms as 8 URBs x 1 packet latched 0 for 6; as 4 URBs x 2 packets it is 7 of 9.
+Same latency. One-millisecond URBs double the syscall rate on the thread that
+must not fall behind. Default 2, sweepable with `ROUTE --ei pkts N`.

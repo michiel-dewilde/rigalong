@@ -879,7 +879,6 @@ void AudioEngine::renderLoop() {
     // render block is absorbed and inaudible; nothing absorbs a late URB. See
     // RealtimePriority.h.
     bos::raiseRenderPriority("render thread", bos::kRenderNice);
-    bos::pinOffTransportCore("render thread");
     enableFlushToZero();
 
     // And the part that actually moves the needle on this tablet: a

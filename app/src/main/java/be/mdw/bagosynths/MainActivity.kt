@@ -1925,6 +1925,14 @@ class MainActivity : Activity() {
                 "be.mdw.bagosynths.ROUTE" -> {
                     intent.getStringExtra("audio")?.let { setModeQuiet(Use.AUDIO, IoMode.parse(it)) }
                     intent.getStringExtra("midi")?.let { setModeQuiet(Use.MIDI, IoMode.parse(it)) }
+                    // Packets per OUT URB, same total depth. See the sweep in
+                    // LOG.md: the division is a variable in its own right.
+                    //   ... --ei pkts 2
+                    if (intent.hasExtra("pkts")) {
+                        val n = intent.getIntExtra("pkts", 2).coerceIn(1, 8)
+                        NativeBridge.nativeSetPacketsPerUrb(n)
+                        android.util.Log.i("bos-ui", "packets per URB: $n")
+                    }
                     if (intent.hasExtra("buffer")) {
                         val ms = intent.getIntExtra("buffer", UsbBuffers.DEFAULT_MS)
                         if (ms in UsbBuffers.choicesMs) usbBufferMs = ms

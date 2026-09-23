@@ -24,6 +24,9 @@ object NativeBridge {
     /** Whether the native AMidi port is actually open. False after an unplug. */
     external fun nativeMidiOpen(): Boolean
     external fun nativePanic()
+    /** Packets per OUT URB for the next direct-USB start; total depth stays the same. */
+    external fun nativeSetPacketsPerUrb(n: Int)
+
     /** Mechanism test: size the next N OUT packets as a dry queue would. */
     external fun nativeInjectStarve(packets: Int)
 

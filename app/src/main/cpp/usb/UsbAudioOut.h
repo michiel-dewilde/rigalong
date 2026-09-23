@@ -82,7 +82,30 @@ public:
         // IN both at 8 ms, a 172 ms stall loses ~164 ms of the device's
         // requests. With IN at 256 ms it loses none, and the OUT gap becomes an
         // ordinary latency blip that drains off.
-        int inBufferMs = 256;        // feedback capture depth; NOT latency
+        // Sized against the WORST stall this process can suffer, not against
+        // anything musical. 2026-09-23: 256 ms was not enough once the cpu6
+        // pinning came out -- inLost jumped from 0-2 to 567 packets and the
+        // latch came back 3 of 3. The budget, not the principle, was wrong.
+        // 1024 ms is 512 URBs x 2 packets x 270 bytes, about 276 kB, and still
+        // costs exactly nothing in latency.
+        int inBufferMs = 1024;       // feedback capture depth; NOT latency
+
+        // PACKETS PER URB, which is NOT the same knob as latency and was
+        // hardcoded to 2 ms until 2026-09-23.
+        //
+        // Total OUT depth -- urbs x packets x period -- is the latency. How it
+        // is DIVIDED between those first two is free, and it decides how many
+        // URBs remain queued on the endpoint while the reap thread refills one.
+        // At 4 ms with 2 packets per URB that is 2 URBs, so exactly ONE is
+        // queued during a refill and any refill over 2 ms empties the endpoint.
+        // At 4 ms with 1 packet per URB it is 4 URBs and three stay queued, for
+        // identical latency.
+        //
+        // That matters because 4 ms latched 3 of 3 with starved=0 and
+        // inLost=0 -- no invented packet and no lost request, so the
+        // starvation mechanism cannot explain it and a second one exists.
+        // Costs one submit and one reap per millisecond instead of per two.
+        int packetsPerUrb = 2;
     };
 
     // Fills `frames` interleaved stereo floats; returns how many were really
@@ -268,6 +291,7 @@ private:
     // frames it wants, destroyed before they were read. Unlike `starved`, which
     // only notices that the size queue ran dry, this counts requests that are
     // GONE and can never be answered.
+    int mFrameLogged = 0;
     std::atomic<int64_t> mInjectStarve{0};
     std::atomic<int64_t> mInPacketsTotal{0};
     std::atomic<int64_t> mInFramesTotal{0};

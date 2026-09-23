@@ -61,40 +61,6 @@ constexpr int kRenderNice = -16;
  * `what` names the thread in the log.
  */
 void raiseRenderPriority(const char* what, int niceValue = kTransportNice);
-
-// --- CPU affinity ------------------------------------------------------------
-//
-// A nice value biases WHEN a thread runs. Affinity decides WHERE, and on this
-// SoC that is the larger effect, because the cores are not equal:
-//
-//   cpu0-2   2,016 GHz   little
-//   cpu3-6   2,803 GHz   mid
-//   cpu7     3,360 GHz   prime
-//
-// The reap thread gets a core of its own and the threads that feed it are kept
-// off it. Splitting the nice bands already cut late URBs 8-11x under load,
-// which says the render thread was the competition; this removes the contest
-// rather than settling it.
-//
-// cpu6 rather than cpu7: the prime core is where the top app's UI work lands
-// and where thermal throttling bites first, and the reap thread does not need
-// speed -- it wakes about a thousand times a second and does almost nothing.
-// What it needs is to be scheduled PROMPTLY, and an uncontended mid core gives
-// that more reliably than a fast contended one.
-//
-// BE HONEST ABOUT WHAT THIS IS NOT. Android gives an app no cpuset control, so
-// cpu6 is not reserved -- other processes still run there. This only guarantees
-// that OUR threads stay off it, which is exactly the contention that was
-// measured to matter, and nothing more.
-constexpr int kTransportCore = 6;
-constexpr int kMinCoresToPin = 8;
-
-/** Pins the calling thread to [kTransportCore] alone. Logs what happened. */
-void pinToTransportCore(const char* what);
-
-/** Restricts the calling thread to every core EXCEPT [kTransportCore]. */
-void pinOffTransportCore(const char* what);
-
 /**
  * Android's Performance Hint session (ADPF), the supported way to tell the
  * scheduler that a set of threads has a deadline.
