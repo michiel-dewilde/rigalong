@@ -1480,6 +1480,59 @@ class MainActivity : Activity() {
      * it -- so dropping it now would be trading a procedure known to work for
      * an untested shorter one. It costs about two seconds.
      */
+    /**
+     * How long the ALSA recycle stays silent. Three to four seconds, and the
+     * reason is in the device's own behaviour rather than taste.
+     *
+     * AudioFlinger holds the output open for a two second standby delay
+     * (`Standby delay ns=2000000000`), so an immediate reopen never tears the
+     * USB substream down and the budget is not reset. Four seconds clears that
+     * with margin. Measured in cp88-usb-audio-halt: recycling every eight
+     * minutes WITH this gap survived 105 683 968 frames across two 40-minute
+     * runs agreeing to 0,04 %, where the same recycle WITHOUT the gap failed
+     * normally at 39 365 632 frames. The silence is the entire mechanism.
+     */
+    private val kAlsaRecycleGapMs = 4000L
+
+    /**
+     * The ALSA path halts at a FRAME BUDGET, not a fault, and this resets it.
+     *
+     * Michiel, after living with both paths: "still the alsa flow is much more
+     * stable if it would just not have latched deterministically at 13-14
+     * minutes." That halt is not the latch this app has been chasing -- it is
+     * reproducible to 0,04 % and it is cleared by a teardown plus silence,
+     * where the latch is stochastic and needs USBDEVFS_RESET.
+     *
+     * So the RESET USB button does the right thing for whichever path is live:
+     * a USB reset in a direct mode, and this recycle on ALSA. Taken BEFORE the
+     * budget runs out it prevents the halt rather than recovering from it,
+     * which is the whole point -- roughly every eight minutes, between pieces.
+     *
+     * The gap is audible and unavoidable here. Covering it by bridging the
+     * audio through this app's own usbfs transport while ALSA is torn down is
+     * the obvious next step, and it is not this function.
+     */
+    private fun recycleAlsaOutput() {
+        if (!::usbHandler.isInitialized) return
+        usbHandler.post {
+            android.util.Log.i("bos-ui", "alsa recycle: releasing the output stream")
+            status("recycle: silent for ${kAlsaRecycleGapMs / 1000} s -- resetting the ADSP budget")
+            NativeBridge.nativeStop()
+            android.os.SystemClock.sleep(kAlsaRecycleGapMs)
+            runOnUiThread {
+                NativeBridge.nativeStart(findOutputDeviceId(), bufferBursts)
+                NativeBridge.nativeResetPeaks()
+                status("recycle: done")
+                android.util.Log.i("bos-ui", "alsa recycle: output restarted")
+            }
+        }
+    }
+
+    /** RESET USB, dispatched to whatever the audio path actually is. */
+    private fun resetAudioPath() {
+        if (effectiveMode(Use.AUDIO).direct) resetDirectUsb() else recycleAlsaOutput()
+    }
+
     private fun resetDirectUsb() {
         if (!::usbHandler.isInitialized) return
         usbHandler.post {
@@ -1815,7 +1868,7 @@ class MainActivity : Activity() {
                 "be.mdw.bagosynths.PROFILE" -> NativeBridge.nativeLogProfile()
                 // The latch recovery, scriptable so a soak test can drive it.
                 //   adb shell am broadcast -a be.mdw.bagosynths.RESET
-                "be.mdw.bagosynths.RESET" -> resetDirectUsb()
+                "be.mdw.bagosynths.RESET" -> resetAudioPath()
                 // Pick the output device by name, for the same reason the rest
                 // of these exist: a tap coordinate read from a screenshot goes
                 // stale silently. Empty name means "automatic".
@@ -2368,7 +2421,7 @@ class MainActivity : Activity() {
         // Next to Panic on purpose: both are things reached for mid-song, with
         // no time to read, and both do one thing with no options to weigh.
         buttonRow.addView(makeButton("RESET USB") {
-            resetDirectUsb()
+            resetAudioPath()
         })
 
         buttonRow.addView(makeButton("MEASURE") {
