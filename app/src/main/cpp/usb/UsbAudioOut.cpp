@@ -12,6 +12,7 @@
 #include <cerrno>
 #include <cmath>
 #include <cstdlib>
+#include <cstdint>
 #include <cstring>
 #include <ctime>
 
@@ -88,6 +89,7 @@ bool UsbAudioOut::start(const Config& config, PullFn pull, void* ctx, std::strin
     mSizeHead = mSizeCount = 0;
     mFrames = 0; mOutBytes = 0; mOutErr = 0; mInErr = 0;
     mStarved = 0; mLate = 0; mMaxGapUs = 0;
+    mOutMinFlightUs = INT64_MAX; mInMinFlightUs = INT64_MAX;
     mFbRate = static_cast<float>(mCfg.rate);
 
     if (!allocStream(mOut, mUrbs, mPackets, mCfg.outEp, true, mCfg.outMaxPacket)) {
@@ -332,6 +334,23 @@ void UsbAudioOut::completeIn(Urb& b) {
         // implicit feedback loop.
         const int frames = static_cast<int>(d.actual_length) / mCfg.fbFrameBytes;
         // Latch probe: the spread of these is the device's clock talking.
+        //
+        // These two were declared, reset on read and printed in the health line
+        // from the day the probe was written, and NEVER ASSIGNED -- so the field
+        // read `inSize=0..0` on every run and nobody noticed, because the health
+        // line's guard prints 0..0 for an empty interval too. It was reported as
+        // evidence that the IN sizes are identical latched and healthy. It was
+        // evidence of nothing. Assigned here, which is what was always meant.
+        {
+            int seen = mInSizeMin.load(std::memory_order_relaxed);
+            while (frames < seen &&
+                   !mInSizeMin.compare_exchange_weak(seen, frames,
+                                                     std::memory_order_relaxed)) {}
+            seen = mInSizeMax.load(std::memory_order_relaxed);
+            while (frames > seen &&
+                   !mInSizeMax.compare_exchange_weak(seen, frames,
+                                                     std::memory_order_relaxed)) {}
+        }
         mInPackets.fetch_add(1, std::memory_order_relaxed);
         mInFramesTotal.fetch_add(frames, std::memory_order_relaxed);
         if (mSizeCount == kSizeCap) {
@@ -425,6 +444,19 @@ void UsbAudioOut::reapLoop() {
         if (b == nullptr || !mRunning.load(std::memory_order_acquire)) continue;
         if (t - b->submittedNs > 2 * ringNs) mLate.fetch_add(1, std::memory_order_relaxed);
 
+        // How long this URB was in flight. A URB cannot come back before the
+        // ones queued ahead of it have been transmitted, and reaping can only
+        // be late, never early -- so a SHORT flight proves the endpoint queue
+        // was shallow when it went in. See the header for why counting URBs
+        // instead does not work. Per direction: OUT and IN drain separately.
+        {
+            const int64_t flightUs = (t - b->submittedNs) / 1000;
+            auto& minF = b->out ? mOutMinFlightUs : mInMinFlightUs;
+            int64_t seen = minF.load(std::memory_order_relaxed);
+            while (flightUs < seen &&
+                   !minF.compare_exchange_weak(seen, flightUs, std::memory_order_relaxed)) {}
+        }
+
         if (b->out) {
             completeOut(*b);
             fillOut(*b);
@@ -455,6 +487,10 @@ UsbAudioOut::Stats UsbAudioOut::stats() const {
     s.inFramesTotal = mInFramesTotal.load(std::memory_order_relaxed);
     s.fbDrop = mFbDrop.load(std::memory_order_relaxed);
     s.fbClamp = mFbClamp.load(std::memory_order_relaxed);
+    s.outMinFlightUs = mOutMinFlightUs.exchange(INT64_MAX, std::memory_order_relaxed);
+    s.inMinFlightUs = mInMinFlightUs.exchange(INT64_MAX, std::memory_order_relaxed);
+    if (s.outMinFlightUs == INT64_MAX) s.outMinFlightUs = -1;
+    if (s.inMinFlightUs == INT64_MAX) s.inMinFlightUs = -1;
     s.maxGapMs = mMaxGapUs.load(std::memory_order_relaxed) / 1000.0f;
     s.feedbackRate = mFbRate.load(std::memory_order_relaxed);
     const int64_t start = mStartNs.load(std::memory_order_relaxed);

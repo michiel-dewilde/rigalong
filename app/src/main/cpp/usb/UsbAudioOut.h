@@ -93,6 +93,8 @@ public:
         float deficitMs = 0.0f;      // wall time minus wire time; GROWTH is a hole
         float maxGapMs = 0.0f;       // worst reap interval since resetPeaks()
         float feedbackRate = 0.0f;   // the device's rate as last measured, Hz
+        int64_t outMinFlightUs = 0;  // shortest submit->reap seen, OUT, this interval
+        int64_t inMinFlightUs = 0;   // and IN
     };
     Stats stats() const;
     void resetPeaks() { mMaxGapUs.store(0, std::memory_order_relaxed); }
@@ -196,6 +198,38 @@ private:
     std::atomic<int64_t> mInFramesTotal{0};
     std::atomic<int64_t> mFbDrop{0};
     std::atomic<int64_t> mFbClamp{0};
+
+    // DID THE ENDPOINT QUEUE RUN SHALLOW? Measured by flight time, because
+    // counting URBs cannot answer it.
+    //
+    // The question is real: usbhost runs 8 URBs per stream, this runs 4 at 8 ms
+    // and 2 at the 4 ms default. That is not the depth argument again -- what
+    // matters is how many URBs the endpoint still has to TRANSMIT while the
+    // reap thread is off refilling one. usbhost leaves 7, this leaves 1. At
+    // zero the endpoint goes quiet, and since every URB carries ISO_ASAP the
+    // next submission does not resume the stream, it starts one at whatever
+    // frame the controller has reached.
+    //
+    // The obvious instrument -- submitted minus reaped -- WAS BUILT AND IS
+    // WRONG, and it is worth saying why so nobody builds it again. The kernel
+    // completes URBs whether or not anyone reaps them; a completed URB simply
+    // waits on the completion queue. So that counter measures URBs I have not
+    // COLLECTED, not URBs the endpoint has yet to SEND, and the two move in
+    // opposite directions: a reap thread that is 300 ms late has a completion
+    // queue that is full, not empty. Measured, 2026-09-23: it sat at its
+    // healthy floor (3 of 4 queued, zero drains) through a run that reached
+    // maxGap 323,9 ms and 1337 ms of deficit. Reassuring and meaningless.
+    //
+    // Flight time answers it one-sidedly, which is enough. A URB cannot come
+    // back before the ones queued ahead of it have gone out, so with a full
+    // queue submit->reap is about (urbs-1) x packets x period -- roughly 6 ms
+    // here, 14 ms in usbhost. Reaping can only ever be LATE, never early, so a
+    // SHORT flight time proves the queue was shallow; a long one proves
+    // nothing. Short is the direction that matters.
+    //
+    // Reset on read, so each sample describes its own interval.
+    mutable std::atomic<int64_t> mOutMinFlightUs{INT64_MAX};
+    mutable std::atomic<int64_t> mInMinFlightUs{INT64_MAX};
 
     // TRIED AND REJECTED, 2026-09-23: measuring the LEVEL of the device's own
     // capture stream on endpoint 0x86, on the theory that a wedged audio

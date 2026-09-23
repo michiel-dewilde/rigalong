@@ -85,3 +85,40 @@ The **4 ms direct-USB buffer** was introduced as a latch experiment and is no
 longer one: depth has since been tested directly and latches 3 of 3 at 8 ms as
 well. It stays on its own merits — it halves the latency of the path we play
 through — and its comment has been corrected to say so.
+
+---
+
+## Added 2026-09-23, second round
+
+### URB flight time (`flightUs` in the health line) — INSTRUMENTATION, keep for now
+
+`UsbAudioOut` records the shortest submit-to-reap interval per direction, reset
+on read. It exists to answer one question: does the endpoint queue ever run
+shallow enough that ISO_ASAP restarts the stream instead of resuming it.
+
+**What it measurably did:** answered the question, in the negative. The queue
+does not drain — minimum 6819 us under `late=158 starved=68 deficit=638 ms`
+against a full-queue ~7500. It also showed ~7,6 ms identically in a confirmed
+latched and a confirmed healthy state, so it is one more thing the latch does
+not disturb.
+
+**Condition for deletion:** it has already answered its question, so it is kept
+only as a cheap continuity check — two atomics on the reap thread. Delete it
+with the rest of the latch instrumentation when the fault is understood. It does
+NOT get to stay on the grounds that it is harmless.
+
+### Submitted-minus-reaped URB counting — DELETED THE SAME DAY
+
+Recorded because the reasoning was good and the instrument was not, and someone
+will think of it again. It cannot measure endpoint queue depth: the kernel
+completes URBs whether or not they are reaped, so the counter tracks the
+completion backlog, which is HIGHEST when the transport is worst. It read its
+healthy floor through a run with maxGap 323,9 ms and 1337 ms of deficit.
+
+Already gone. Listed so it is not rebuilt.
+
+### `inSize` min/max — a fix, not a hack
+
+`mInSizeMin`/`mInSizeMax` were never assigned. Not on probation: a counter that
+is printed must be written, and this one was cited as evidence while reading an
+untouched variable. It stays.

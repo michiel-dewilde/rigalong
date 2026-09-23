@@ -1310,7 +1310,8 @@ AudioEngine::Stats AudioEngine::stats() const {
             const std::string why = mUsbOut.fatal();
             LOGI("health usb %s  out=%.4f cb=%.4f voices=%d/%d frames=%lld deficit=%.1fms "
                  "late=%lld starved=%lld errors=%lld fb=%.1fHz ringUnder=%lld "
-                 "inSize=%d..%d/%lld fbDrift=%lld fbDrop=%lld fbClamp=%lld%s%s",
+                 "inSize=%d..%d/%lld fbDrift=%lld fbDrop=%lld fbClamp=%lld "
+                 "flightUs=%lld/%lld%s%s",
                  s.usbRunning ? "ok" : "DOWN",
                  static_cast<double>(s.outputPeak),
                  static_cast<double>(mCallbackPeak.load(std::memory_order_relaxed)),
@@ -1321,11 +1322,23 @@ AudioEngine::Stats AudioEngine::stats() const {
                  static_cast<long long>(u.outErrors + u.inErrors),
                  static_cast<double>(u.feedbackRate),
                  static_cast<long long>(mRingUnderruns.load(std::memory_order_relaxed)),
-                 u.inSizeMax ? u.inSizeMin : 0, u.inSizeMax,
+                 // -1..-1 means NO IN packets arrived in this interval. The
+                 // old guard keyed off inSizeMax and so printed 0..0 for that
+                 // -- indistinguishable from a device delivering nothing but
+                 // zero-length packets, which is precisely the signature this
+                 // probe exists to catch.
+                 u.inPackets ? u.inSizeMin : -1,
+                 u.inPackets ? u.inSizeMax : -1,
                  static_cast<long long>(u.inPackets),
                  static_cast<long long>(u.inFramesTotal - u.frames),
                  static_cast<long long>(u.fbDrop),
                  static_cast<long long>(u.fbClamp),
+                 // Shortest time any OUT / IN URB spent in flight this
+                 // interval. With the queue full this sits near
+                 // (urbs-1) x packets x period; a value near ONE packet period
+                 // means the endpoint had nothing queued behind it.
+                 static_cast<long long>(u.outMinFlightUs),
+                 static_cast<long long>(u.inMinFlightUs),
                  why.empty() ? "" : " fatal=", why.c_str());
             logMidiChain();
         }
