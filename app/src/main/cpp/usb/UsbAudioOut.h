@@ -32,6 +32,8 @@
 
 #include <bagosynths/Dither.h>
 
+#include "../RealtimePriority.h"
+
 struct usbdevfs_urb;
 
 class UsbAudioOut {
@@ -163,6 +165,18 @@ public:
     // sized without consulting the feedback queue, as a dry queue would size
     // them -- with no load, no lateness and no hole anywhere near it. If the
     // device wedges on this alone, the mechanism is settled.
+    // TEST ONLY, and it deliberately breaks the invariant below.
+    //
+    // Once fillOut refuses to emit a zero-length packet there is no way left to
+    // produce a latch on purpose, which makes every recovery path untestable --
+    // the fault would have to be waited for. This forces `count` genuinely
+    // zero-length packets onto the wire, bypassing the guard, so that recovery
+    // can be measured against a deterministic stimulus instead of a rare one.
+    // Nothing in normal operation calls it.
+    void injectRawZero(int count) {
+        mInjectRawZero.store(count, std::memory_order_relaxed);
+    }
+
     void injectStarve(int packets, int frames) {
         mInjectFrames.store(frames, std::memory_order_relaxed);
         mInjectStarve.store(packets, std::memory_order_relaxed);
@@ -230,6 +244,21 @@ private:
 
     std::vector<Urb> mOut, mIn;
     std::thread mThread;
+
+    // ADPF for the REAP THREAD, which is the one with a hard deadline.
+    //
+    // Michiel's idea, and the gap was real: a hint session already existed but
+    // only the render thread was in it. Nice values merely order threads
+    // against one another -- they cannot ask the governor for clock, and they
+    // cannot keep a thread off a little core. A hint session states a DEADLINE
+    // and reports what the work actually cost, which is the supported
+    // substitute for SCHED_FIFO that an ordinary app is allowed to use.
+    //
+    // This thread's deadline is exactly one URB: miss it and the endpoint has
+    // nothing to transmit. It gets its own session rather than joining the
+    // render one, because the two deadlines differ by an order of magnitude and
+    // a session describes a single unit of work.
+    bos::PerfHint mHint;
     std::atomic<bool> mRunning{false};
     mutable std::atomic<int> mFatalSet{0};
     std::string mFatal;
@@ -334,6 +363,7 @@ private:
     std::atomic<uint32_t> mTraceAt{0};
     std::atomic<int64_t> mInjectStarve{0};
     std::atomic<int> mInjectFrames{0};
+    std::atomic<int64_t> mInjectRawZero{0};
     std::atomic<int> mStallUs{0};
     std::atomic<int64_t> mStallCount{0};
     std::atomic<int64_t> mInPacketsTotal{0};

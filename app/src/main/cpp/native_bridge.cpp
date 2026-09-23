@@ -129,6 +129,11 @@ Java_be_mdw_bagosynths_NativeBridge_nativeDumpUsbTrace(JNIEnv*, jobject, jint fr
 }
 
 JNIEXPORT void JNICALL
+Java_be_mdw_bagosynths_NativeBridge_nativeInjectRawZero(JNIEnv*, jobject, jint count) {
+    engine().injectUsbRawZero(count);
+}
+
+JNIEXPORT void JNICALL
 Java_be_mdw_bagosynths_NativeBridge_nativeInjectStall(JNIEnv*, jobject, jint us, jint count) {
     engine().injectUsbStall(us, count);
 }
@@ -919,6 +924,37 @@ Java_be_mdw_bagosynths_NativeBridge_nativeStartUsbAudio(JNIEnv* env, jobject, ji
         return errString(env, startErr.empty() ? "direct USB start failed" : startErr);
     }
     return nullptr;
+}
+
+// CLEAR_FEATURE(ENDPOINT_HALT) on both streaming endpoints.
+//
+// A rung on the recovery ladder. THE LATCH -- one zero-length OUT packet is
+// enough to cause it, proved by injection -- survives the UAC teardown: alt 0,
+// re-establish the clock, alt 1, restart the stream, all of it, and the device
+// stays silent. So the wedge is below the streaming interface, and this asks
+// whether it is endpoint state. GET_STATUS says the endpoint is not halted, but
+// clearing it also resets the data toggle and the host controller's endpoint
+// context, which is the cheapest thing left that is not a reset.
+JNIEXPORT jboolean JNICALL
+Java_be_mdw_bagosynths_NativeBridge_nativeUsbClearHalt(JNIEnv* env, jobject, jint fd,
+                                                      jbyteArray raw) {
+    usb::Device d;
+    if (fd < 0 || !parseRaw(env, raw, d, nullptr)) return JNI_FALSE;
+    const usb::Config* c = pickConfig(d, true, false);
+    if (c == nullptr) return JNI_FALSE;
+    const usb::AudioOutPlan p = usb::planAudioOut(*c);
+    if (!p.ok) return JNI_FALSE;
+    bool all = true;
+    unsigned ep = p.out.address;
+    if (ioctl(fd, USBDEVFS_CLEAR_HALT, &ep) != 0) all = false;
+    if (p.feedback == usb::Feedback::Implicit) {
+        unsigned fb = p.feedbackEp.address;
+        if (ioctl(fd, USBDEVFS_CLEAR_HALT, &fb) != 0) all = false;
+    }
+    __android_log_print(ANDROID_LOG_INFO, "bos-usb",
+                        "clear halt: out 0x%02x fb 0x%02x -> %s", p.out.address,
+                        p.feedbackEp.address, all ? "ok" : "at least one refused");
+    return all ? JNI_TRUE : JNI_FALSE;
 }
 
 // Stops the direct-USB output and puts the streaming interfaces back to alt 0,

@@ -198,7 +198,9 @@ class MainActivity : Activity() {
         filter.addAction("be.mdw.bagosynths.STRESS")
         filter.addAction("be.mdw.bagosynths.STARVE")
         filter.addAction("be.mdw.bagosynths.STALL")
+        filter.addAction("be.mdw.bagosynths.ZLP")
         filter.addAction("be.mdw.bagosynths.TRACE")
+        filter.addAction("be.mdw.bagosynths.REINIT")
         filter.addAction("be.mdw.bagosynths.RESETPEAKS")
         filter.addAction("be.mdw.bagosynths.PROFILE")
         filter.addAction("be.mdw.bagosynths.INSTRUMENT")
@@ -1732,10 +1734,63 @@ class MainActivity : Activity() {
                 // with no load at all, while the deep IN queue keeps
                 // starvation out of the result.
                 //   adb shell am broadcast -a be.mdw.bagosynths.STALL --ei us 20000 --ei count 50
+                // REINIT: the cheap recovery candidate.
+                //
+                // Michiel: "if routing to alsa and back fixes it, surely you
+                // can somehow send some sequence to reinit the stream without
+                // closing?" Routing to ALSA releases the interfaces, lets
+                // snd-usb-audio rebind and re-SET_INTERFACE them, then takes
+                // them back -- about 2,7 s and a full teardown. The USB-level
+                // part of that is just the UAC teardown: drop the streaming
+                // interfaces to alt 0, the zero-bandwidth setting, and put them
+                // back. usbfs can do that WITHOUT releasing anything.
+                //
+                // nativeStopUsbAudio already sets both interfaces to alt 0, and
+                // nativeStartUsbAudio sets alt 0, re-establishes the sample
+                // rate and sets the altsettings again -- so this needs no new
+                // native code, only a path that skips the release, the reclaim,
+                // the ALSA dwell and the MIDI teardown.
+                //   adb shell am broadcast -a be.mdw.bagosynths.REINIT
+                "be.mdw.bagosynths.REINIT" -> usbHandler.post {
+                    val key = directAudioOn
+                    val s2 = key?.let { sessions[it] }
+                    if (s2 == null || !s2.isOpen) {
+                        android.util.Log.i("bos-ui", "reinit: no direct session")
+                    } else {
+                        // The recovery ladder, measured against a deterministic
+                        // latch (ZLP). Level 1 is the UAC teardown and is known
+                        // NOT to be enough; the higher rungs are what a route
+                        // to ALSA and back does on the way past.
+                        val level = intent.getIntExtra("level", 1)
+                        val t0 = android.os.SystemClock.uptimeMillis()
+                        NativeBridge.nativeStopUsbAudio(s2.fd, s2.raw)
+                        if (level >= 2) NativeBridge.nativeUsbClearHalt(s2.fd, s2.raw)
+                        if (level >= 3) {
+                            // Hand the interfaces back so the kernel driver
+                            // rebinds, then take them again -- the ALSA
+                            // round-trip minus ALSA actually streaming.
+                            val claimed = s2.claimedInterfaces()
+                            s2.release(claimed)
+                            android.os.SystemClock.sleep(300)
+                            s2.claim(claimed)
+                        }
+                        val err = NativeBridge.nativeStartUsbAudio(s2.fd, s2.raw, usbBufferMs, 0)
+                        val ms = android.os.SystemClock.uptimeMillis() - t0
+                        android.util.Log.i("bos-ui",
+                            "reinit level $level in $ms ms" + (err?.let { " FAILED: $it" } ?: ""))
+                    }
+                }
                 //   adb shell am broadcast -a be.mdw.bagosynths.TRACE
                 //   ... TRACE --ei from 12345 --ei count 512
                 "be.mdw.bagosynths.TRACE" -> NativeBridge.nativeDumpUsbTrace(
                     intent.getIntExtra("from", 0), intent.getIntExtra("count", 0))
+                // TEST ONLY: the deterministic latch. One is enough.
+                //   adb shell am broadcast -a be.mdw.bagosynths.ZLP --ei count 1
+                "be.mdw.bagosynths.ZLP" -> {
+                    val n = intent.getIntExtra("count", 1)
+                    android.util.Log.i("bos-ui", "inject: $n RAW zero-length packet(s)")
+                    NativeBridge.nativeInjectRawZero(n)
+                }
                 "be.mdw.bagosynths.STALL" -> {
                     val us = intent.getIntExtra("us", 20000)
                     val n = intent.getIntExtra("count", 50)

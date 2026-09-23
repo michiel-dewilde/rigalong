@@ -30,6 +30,12 @@ object NativeBridge {
     /** The last 4096 OUT packet sizes actually submitted, to the log. */
     external fun nativeDumpUsbTrace(from: Int, count: Int)
 
+    /** CLEAR_FEATURE(ENDPOINT_HALT) on both streaming endpoints. */
+    external fun nativeUsbClearHalt(fd: Int, raw: ByteArray): Boolean
+
+    /** TEST ONLY: emit N genuinely zero-length OUT packets, bypassing the invariant. */
+    external fun nativeInjectRawZero(count: Int)
+
     /** Mechanism test: stall the reap thread, draining the OUT endpoint only. */
     external fun nativeInjectStall(us: Int, count: Int)
 
