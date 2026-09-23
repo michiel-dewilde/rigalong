@@ -1291,8 +1291,18 @@ AudioEngine::Stats AudioEngine::stats() const {
             const float lastDef = mUsbLastDeficitMs.exchange(u.deficitMs, std::memory_order_relaxed);
             const float jump = u.deficitMs - lastDef;
             if (u.late != lastLate || (u.outErrors + u.inErrors) != lastErr || jump > 2.0f) {
+                // flightUs and inPkt belong HERE and not only in the health
+                // line, which prints every 10 s while both of these reset on
+                // every stats() call a quarter of a second apart -- so the
+                // health line shows one arbitrary 250 ms window and the
+                // interesting one is almost always missed. A hole fires AT the
+                // transition, which is the window that matters: on 2026-09-23
+                // the run that latched showed flightUs 2057/2025 against a
+                // full-queue ~7500, with IN delivery collapsed to 54 packets
+                // per 250 ms against ~250, in the same interval.
                 LOGI("usb hole: late %lld (+%lld) errors %lld (+%lld) deficit %.1f ms (%+.1f) "
-                     "maxGap %.1f ms starved %lld frames %lld voices %d",
+                     "maxGap %.1f ms starved %lld flightUs %lld/%lld inPkt %lld "
+                     "frames %lld voices %d",
                      static_cast<long long>(u.late),
                      static_cast<long long>(u.late - lastLate),
                      static_cast<long long>(u.outErrors + u.inErrors),
@@ -1300,6 +1310,9 @@ AudioEngine::Stats AudioEngine::stats() const {
                      static_cast<double>(u.deficitMs), static_cast<double>(jump),
                      static_cast<double>(u.maxGapMs),
                      static_cast<long long>(u.starved),
+                     static_cast<long long>(u.outMinFlightUs),
+                     static_cast<long long>(u.inMinFlightUs),
+                     static_cast<long long>(u.inPackets),
                      static_cast<long long>(u.frames), s.activeVoices);
             }
         }
