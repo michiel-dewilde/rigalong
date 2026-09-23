@@ -1311,7 +1311,8 @@ class MainActivity : Activity() {
      * device". snd-usb-audio creates the ALSA card when it probes interface 0,
      * so the card appearing in AudioManager is proof that the probe ran and
      * completed -- which a fixed sleep after USBDEVFS_CONNECT would only assume.
-     * That distinction is the whole of reset level 1: see resetDirectUsb.
+     * A fixed sleep after USBDEVFS_CONNECT would only assume it. See
+     * resetDirectUsb, which waits on this before taking the device back.
      *
      * Deliberately does NOT reset the device on failure; the caller decides
      * whether to escalate.
@@ -1339,7 +1340,7 @@ class MainActivity : Activity() {
     }
 
     /**
-     * Recovery from THE LATCH, escalating.
+     * Recovery from THE LATCH.
      *
      * The fault: in a direct USB mode the CP-88 goes silent while the transport
      * keeps running -- URBs are acknowledged, the feedback endpoint still
@@ -1348,36 +1349,43 @@ class MainActivity : Activity() {
      * yet, so there is no automatic recovery either. This is the button to
      * press when it happens.
      *
-     * WHAT IS KNOWN, from Michiel playing it rather than from theory:
+     * WHAT IT DOES, and why exactly this:
      *
-     *   * putting the CP-88's AUDIO on ALSA and back on USB device CLEARS it;
-     *   * switching to USB interface mode does NOT;
-     *   * round-tripping the output elsewhere -- even across the tablet's own
-     *     speaker on its own -- does NOT.
+     *   1. stop both sinks and give every interface back to the kernel;
+     *   2. **USB reset** -- USBDEVFS_RESET, every driver on the device unbound
+     *      and rebound;
+     *   3. wait until Android can see the card again;
+     *   4. route the device to ALSA and hold, so a stream really opens on it;
+     *   5. take it back into the direct mode it was in.
      *
-     * So what fixes it is something about this device being given back to the
-     * kernel and taken again, not about the audio stream being rebuilt. What is
-     * NOT known is how much of that round trip is load-bearing: whether ALSA has
-     * to actually open the card, or whether merely disowning and re-owning is
-     * enough. Hence a LADDER, cheapest first, with each rung adding exactly one
-     * thing so that whichever one works is also the answer:
+     * THIS WAS NOT GUESSED. It shipped first as a ladder -- three rungs,
+     * cheapest first, each adding one thing, so that whichever rung cleared a
+     * real latch would also say which part was load-bearing. Michiel then met a
+     * latch and reported: "only rung 3 worked."
      *
-     *   1. Disown and re-own, CONFIRMED. Release every interface back to the
-     *      kernel, wait until the ALSA card reappears -- proof that
-     *      snd-usb-audio really probed and re-initialised the device, which a
-     *      sleep after USBDEVFS_CONNECT would only assume -- then claim it
-     *      again. No ALSA stream is ever opened.
-     *   2. Plus letting ALSA actually STREAM. Route the CP-88 to ALSA, hold
-     *      long enough for a stream to open on the card, then come back. This
-     *      is Michiel's manual fix, automated.
-     *   3. Plus a USB reset: every driver on the device unbound and rebound.
+     * That is a genuine result and it kills the cheap theories:
      *
-     * The button starts at 1 and escalates on repeated presses, so the cheapest
-     * fix is always tried first and the expensive one is still two taps away
-     * mid-song. Each level logs what it did, because the point is to end up
-     * knowing which rung was needed -- not merely to get the sound back.
+     *   * Disowning and re-owning the device is NOT enough. Releasing every
+     *     interface with USBDEVFS_CONNECT, and waiting until snd-usb-audio has
+     *     rebuilt the card, still left it latched.
+     *   * Nor is letting ALSA actually STREAM on the card. That was rung 2, and
+     *     it is the closest automation of the manual fix, and it did not clear
+     *     it either.
+     *   * Only unbinding and rebinding the drivers -- a port-level reset the
+     *     device itself sees -- brings the sound back. So the stuck state lives
+     *     in the DEVICE or in its endpoint configuration, not in which process
+     *     happens to own the interfaces.
+     *
+     * The ladder is gone because it has done its job; keeping it would only
+     * make the player try two things that are now known not to work, at the one
+     * moment there is no time for it.
+     *
+     * The ALSA dwell in step 4 is KEPT even though the reset is what does the
+     * work. It has never been tested apart from the reset -- rung 3 included
+     * it -- so dropping it now would be trading a procedure known to work for
+     * an untested shorter one. It costs about two seconds.
      */
-    private fun resetDirectUsb(level: Int) {
+    private fun resetDirectUsb() {
         if (!::usbHandler.isInitialized) return
         usbHandler.post {
             val key = directAudioOn
@@ -1387,9 +1395,8 @@ class MainActivity : Activity() {
                 return@post
             }
             val card = s.cardName
-            android.util.Log.i("bos-ui", "RESET level $level on \"$card\" " +
-                "(claimed ${s.claimedInterfaces()})")
-            status("reset level $level on \"$card\"")
+            android.util.Log.i("bos-ui", "RESET on \"$card\" (claimed ${s.claimedInterfaces()})")
+            status("reset: \"$card\"")
 
             // Stop everything this app is doing to the device, then give every
             // interface back. release() reconnects each one to its kernel
@@ -1399,75 +1406,48 @@ class MainActivity : Activity() {
             NativeBridge.nativeCloseMidi()
             runOnUiThread { midiDevice?.close(); midiDevice = null }
             s.release(s.claimedInterfaces())
-            if (level >= 3) {
-                android.util.Log.i("bos-ui", "reset: USB reset of \"$card\"")
-                s.reset()
-            }
 
-            // The confirmation that levels 1 and up all rest on.
+            // The step that actually clears it.
+            android.util.Log.i("bos-ui", "reset: USB reset of \"$card\"")
+            if (!s.reset()) android.util.Log.e("bos-ui", "reset: USB reset of \"$card\" FAILED")
+
             val back = awaitAndroidSees(s)
             android.util.Log.i("bos-ui", "reset: \"$card\" " +
                 (if (back) "re-owned by the kernel" else "did NOT come back within 4 s"))
             s.close()
             sessions.remove(key)
 
-            if (level >= 2) {
-                // Let ALSA really open the card. Routing to ALSA with this
-                // device chosen puts the engine on its ALSA output, which is
-                // exactly what the manual fix does; the dwell is there so a
-                // stream genuinely starts rather than being torn down again
-                // while AudioFlinger is still opening it.
-                //
-                // BOTH modes, not just the audio one. Setting audio alone did
-                // nothing and the first test caught it: UsbRouting.normalize
-                // pulls audio straight back to USB device while MIDI is still
-                // there, because one device cannot be half owned by this app
-                // and half by the kernel. The log said it plainly -- "route
-                // (reset level 2: out to ALSA): audio=CP88/CP73 USB device".
-                // Michiel's manual fix moves both for the same reason.
-                val savedAudio = audioMode
-                val savedMidi = midiMode
-                audioMode = IoMode.ALSA
-                midiMode = IoMode.ALSA
-                route("reset level $level: out to ALSA")
-                status("reset level $level: streaming on ALSA for $kResetAlsaDwellMs ms")
-                android.os.SystemClock.sleep(kResetAlsaDwellMs)
-                audioMode = savedAudio
-                midiMode = savedMidi
-            }
+            // Let ALSA really open the card before taking it back.
+            //
+            // BOTH modes, not just the audio one. Setting audio alone did
+            // nothing and testing caught it: UsbRouting.normalize pulls audio
+            // straight back to USB device while MIDI is still there, because
+            // one device cannot be half owned by this app and half by the
+            // kernel. The log said it plainly -- "route (out to ALSA):
+            // audio=CP88/CP73 USB device". Michiel's manual fix moves both for
+            // the same reason.
+            val savedAudio = audioMode
+            val savedMidi = midiMode
+            audioMode = IoMode.ALSA
+            midiMode = IoMode.ALSA
+            route("reset: out to ALSA")
+            status("reset: streaming on ALSA for $kResetAlsaDwellMs ms")
+            android.os.SystemClock.sleep(kResetAlsaDwellMs)
+            audioMode = savedAudio
+            midiMode = savedMidi
 
-            route("reset level $level: back to ${audioMode.label}")
-            status("reset level $level done -- play something")
+            route("reset: back to ${audioMode.label}")
+            status("reset done -- play something")
         }
     }
 
     /**
-     * How long level 2 leaves the card streaming on ALSA. 2 s: long enough that
-     * AudioFlinger has certainly opened the stream and pushed frames rather
-     * than being interrupted mid-open, short enough to do between two songs.
+     * How long the reset leaves the card streaming on ALSA. 2 s: long enough
+     * that AudioFlinger has certainly opened the stream and pushed frames
+     * rather than being interrupted mid-open, short enough to do between two
+     * songs.
      */
     private val kResetAlsaDwellMs = 2000L
-
-    /** Escalation state for the RESET button. See resetDirectUsb. */
-    private var resetLevel = 0
-    private var lastResetAt = 0L
-
-    /**
-     * The level the next press should use. Consecutive presses escalate,
-     * because a press that did not bring the sound back is the only evidence
-     * available that the rung was too cheap. A press after a gap starts again
-     * at 1 -- by then it is a new incident, and the cheapest fix deserves
-     * another chance at it.
-     */
-    private fun nextResetLevel(): Int {
-        val now = android.os.SystemClock.uptimeMillis()
-        resetLevel = if (now - lastResetAt < kResetEscalateWithinMs)
-            (resetLevel + 1).coerceAtMost(3) else 1
-        lastResetAt = now
-        return resetLevel
-    }
-
-    private val kResetEscalateWithinMs = 45_000L
 
     private fun requestUsbPermission(d: UsbDevice) {
         if (permissionPendingFor == d.deviceName) return
@@ -1631,13 +1611,9 @@ class MainActivity : Activity() {
                 // thing to do by hand.
                 //   adb shell am broadcast -a be.mdw.bagosynths.PROFILE
                 "be.mdw.bagosynths.PROFILE" -> NativeBridge.nativeLogProfile()
-                // The latch recovery, so a level can be pinned instead of
-                // arrived at by pressing the button the right number of times.
-                // Without `level` it escalates exactly as the button does.
-                //   adb shell am broadcast -a be.mdw.bagosynths.RESET --ei level 1
-                "be.mdw.bagosynths.RESET" -> resetDirectUsb(
-                    if (intent.hasExtra("level")) intent.getIntExtra("level", 1).coerceIn(1, 3)
-                    else nextResetLevel())
+                // The latch recovery, scriptable so a soak test can drive it.
+                //   adb shell am broadcast -a be.mdw.bagosynths.RESET
+                "be.mdw.bagosynths.RESET" -> resetDirectUsb()
                 // Pick the output device by name, for the same reason the rest
                 // of these exist: a tap coordinate read from a screenshot goes
                 // stale silently. Empty name means "automatic".
@@ -2173,12 +2149,9 @@ class MainActivity : Activity() {
         })
 
         // Next to Panic on purpose: both are things reached for mid-song, with
-        // no time to read. Shows the level it just ran, so a second press
-        // escalating is visible rather than merely hoped for.
-        buttonRow.addView(makeButton("RESET USB") { button ->
-            val level = nextResetLevel()
-            button.text = "RESET USB ($level)"
-            resetDirectUsb(level)
+        // no time to read, and both do one thing with no options to weigh.
+        buttonRow.addView(makeButton("RESET USB") {
+            resetDirectUsb()
         })
 
         buttonRow.addView(makeButton("MEASURE") {

@@ -1,0 +1,61 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Bag-O-Synths, the app icon. THIS FILE IS THE SOURCE OF TRUTH.
+
+  The Android drawables under app/src/main/res are GENERATED from it by
+  tools/svg2vd.py. Edit here, run the script, rebuild. Never edit the generated
+  XML by hand: it carries a header saying so, and the next run would drop it.
+
+  Drawn on Android's adaptive-icon grid so that no conversion is needed:
+  108x108, of which the launcher may mask away everything outside the central
+  72x72 (18..90) and, on some launchers, more. All content therefore lives
+  inside x 27..81, y 26.5..81.5 — comfortably inside the safe circle, which is
+  why the icon survives a circular mask, a squircle and a rounded square alike.
+
+  Flat by intent: solid fills, no gradients, no strokes, no filters. That is
+  partly a style and partly a constraint — VectorDrawable is a subset of SVG,
+  and staying inside the subset is what keeps the conversion honest rather than
+  approximate. Every shape is a <path>, including the circles, for the same
+  reason.
+
+  The picture: a tote bag, its handle a little deeper in colour so it reads as
+  a separate thing at 48px, carrying three piano keys and two knobs. The bag is
+  the whole joke — synths in a bag — so the bag has to win the silhouette and
+  the keys only have to be legible enough to say "instrument".
+
+  data-mono says what each shape becomes in the THEMED icon, where Android
+  tints everything one colour and overlapping shapes would merge into a blob:
+  "solid" is filled, "hole" is punched out of it (even-odd), "skip" is dropped.
+  The black keys are dropped rather than punched — they sit across the white
+  keys' edges, and even-odd on overlapping subpaths gives slivers rather than
+  keys. Three holes in a bag already read as a keyboard.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" width="108" height="108" viewBox="0 0 108 108">
+
+  <g id="background">
+    <path d="M0 0 H108 V108 H0 Z" fill="#1C1B2A"/>
+  </g>
+
+  <g id="foreground">
+    <!-- Handle, a 4-wide band: outer arc r15, inner arc r11, centre (54,41.5). -->
+    <path d="M39 41.5 A15 15 0 0 1 69 41.5 L65 41.5 A11 11 0 0 0 43 41.5 Z" fill="#D98C2B" data-mono="solid"/>
+
+    <!-- Bag body. Soft shoulders, generous bottom radius: a tote, not a box. -->
+    <path d="M31 41.5 H77 A4 4 0 0 1 81 45.5 V72.5 A9 9 0 0 1 72 81.5 H36 A9 9 0 0 1 27 72.5 V45.5 A4 4 0 0 1 31 41.5 Z" fill="#F0A93B" data-mono="solid"/>
+
+    <!-- Two knobs. At 48px these are just dots, which is all they need to be. -->
+    <path d="M37.6 47.5 A3.4 3.4 0 1 0 44.4 47.5 A3.4 3.4 0 1 0 37.6 47.5 Z" fill="#FFF6E8" data-mono="hole"/>
+    <path d="M63.6 47.5 A3.4 3.4 0 1 0 70.4 47.5 A3.4 3.4 0 1 0 63.6 47.5 Z" fill="#FFF6E8" data-mono="hole"/>
+
+    <!-- Three white keys. THREE, not five: at icon size five keys collapse into
+         a striped smear, and three read as a keyboard. The gaps are bag colour
+         showing through rather than drawn lines, which keeps it flat. -->
+    <path d="M36 53.5 H45.4 A1.5 1.5 0 0 1 46.9 55 V72 A1.5 1.5 0 0 1 45.4 73.5 H36 A1.5 1.5 0 0 1 34.5 72 V55 A1.5 1.5 0 0 1 36 53.5 Z" fill="#FFF6E8" data-mono="hole"/>
+    <path d="M49.3 53.5 H58.7 A1.5 1.5 0 0 1 60.2 55 V72 A1.5 1.5 0 0 1 58.7 73.5 H49.3 A1.5 1.5 0 0 1 47.8 72 V55 A1.5 1.5 0 0 1 49.3 53.5 Z" fill="#FFF6E8" data-mono="hole"/>
+    <path d="M62.6 53.5 H72 A1.5 1.5 0 0 1 73.5 55 V72 A1.5 1.5 0 0 1 72 73.5 H62.6 A1.5 1.5 0 0 1 61.1 72 V55 A1.5 1.5 0 0 1 62.6 53.5 Z" fill="#FFF6E8" data-mono="hole"/>
+
+    <!-- Two black keys, square at the top where they meet the keyboard edge. -->
+    <path d="M44.55 53.5 H50.15 V64.3 A1.2 1.2 0 0 1 48.95 65.5 H45.75 A1.2 1.2 0 0 1 44.55 64.3 Z" fill="#24222F" data-mono="skip"/>
+    <path d="M57.85 53.5 H63.45 V64.3 A1.2 1.2 0 0 1 62.25 65.5 H59.05 A1.2 1.2 0 0 1 57.85 64.3 Z" fill="#24222F" data-mono="skip"/>
+  </g>
+</svg>
