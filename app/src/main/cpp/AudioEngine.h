@@ -261,7 +261,7 @@ public:
     Stats stats() const;
     void resetPeaks();
     // Mechanism test: see UsbAudioOut::injectStarve.
-    void injectUsbStarve(int packets) { mUsbOut.injectStarve(packets); }
+    void injectUsbStarve(int packets, int frames) { mUsbOut.injectStarve(packets, frames); }
     void injectUsbStall(int us, int count) { mUsbOut.injectStall(us, count); }
     void dumpUsbTrace(uint32_t from, uint32_t count) const { mUsbOut.dumpTrace(from, count); }
 

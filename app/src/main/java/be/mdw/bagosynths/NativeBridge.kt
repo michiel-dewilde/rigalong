@@ -34,7 +34,7 @@ object NativeBridge {
     external fun nativeInjectStall(us: Int, count: Int)
 
     /** Mechanism test: size the next N OUT packets as a dry queue would. */
-    external fun nativeInjectStarve(packets: Int)
+    external fun nativeInjectStarve(packets: Int, frames: Int)
 
     external fun nativeResetPeaks()
     external fun nativeTestNote(note: Int, velocity: Int)

@@ -1327,7 +1327,7 @@ AudioEngine::Stats AudioEngine::stats() const {
             LOGI("health usb %s  out=%.4f cb=%.4f voices=%d/%d frames=%lld deficit=%.1fms "
                  "late=%lld starved=%lld errors=%lld fb=%.1fHz ringUnder=%lld "
                  "inSize=%d..%d/%lld fbDrift=%lld fbDrop=%lld fbClamp=%lld "
-                 "flightUs=%lld/%lld inLost=%lld%s%s",
+                 "flightUs=%lld/%lld inLost=%lld zeroAvoided=%lld outEmpty=%lld/%lld%s%s",
                  s.usbRunning ? "ok" : "DOWN",
                  static_cast<double>(s.outputPeak),
                  static_cast<double>(mCallbackPeak.load(std::memory_order_relaxed)),
@@ -1358,6 +1358,14 @@ AudioEngine::Stats AudioEngine::stats() const {
                  // IN packets the device sent that no URB was queued to catch:
                  // requests destroyed before they were read. Should be zero.
                  static_cast<long long>(u.inLostPackets),
+                 // MUST be 0. A single zero-length OUT packet wedges the
+                 // device permanently, so this counts near misses.
+                 static_cast<long long>(u.zeroAvoided),
+                 // Packets we filled that the controller sent as empty, and
+                 // ones it truncated. An empty one is the fatal event arriving
+                 // from the far side of the ioctl.
+                 static_cast<long long>(u.outEmpty),
+                 static_cast<long long>(u.outShort),
                  why.empty() ? "" : " fatal=", why.c_str());
             logMidiChain();
         }

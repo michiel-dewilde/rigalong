@@ -138,6 +138,9 @@ public:
         int64_t inPackets = 0;
         int64_t inFramesTotal = 0;   // what the device ASKED for, cumulative
     int64_t inLostPackets = 0;   // IN packets the device sent with no URB waiting
+    int64_t zeroAvoided = 0;     // zero-length OUT packets prevented; MUST stay 0
+    int64_t outEmpty = 0;        // packets we filled that the controller sent as EMPTY
+    int64_t outShort = 0;        // packets the controller truncated
         int64_t fbDrop = 0;          // requests discarded on queue overflow
         int64_t fbClamp = 0;         // requests cut down to the max packet
         float deficitMs = 0.0f;      // wall time minus wire time; GROWTH is a hole
@@ -160,7 +163,8 @@ public:
     // sized without consulting the feedback queue, as a dry queue would size
     // them -- with no load, no lateness and no hole anywhere near it. If the
     // device wedges on this alone, the mechanism is settled.
-    void injectStarve(int packets) {
+    void injectStarve(int packets, int frames) {
+        mInjectFrames.store(frames, std::memory_order_relaxed);
         mInjectStarve.store(packets, std::memory_order_relaxed);
     }
 
@@ -329,12 +333,26 @@ private:
     mutable uint8_t mTrace[kTraceCap] = {};
     std::atomic<uint32_t> mTraceAt{0};
     std::atomic<int64_t> mInjectStarve{0};
+    std::atomic<int> mInjectFrames{0};
     std::atomic<int> mStallUs{0};
     std::atomic<int64_t> mStallCount{0};
     std::atomic<int64_t> mInPacketsTotal{0};
     std::atomic<int64_t> mInFramesTotal{0};
     std::atomic<int64_t> mFbDrop{0};
     std::atomic<int64_t> mFbClamp{0};
+
+    // Times a zero-length OUT packet was about to go out and was stopped. ONE
+    // of those wedges the CP-88 permanently -- measured, 11 trials of 11, with
+    // a full queue and no load. Anything but 0 here means the rig came within a
+    // single packet of needing a USB reset.
+    std::atomic<int64_t> mZeroAvoided{0};
+
+    // What the CONTROLLER did with a packet we filled. A submitted length of N
+    // completing with actual_length 0 means a zero-length packet went out --
+    // the one event proved fatal to this device -- without anything in this
+    // process having asked for it.
+    std::atomic<int64_t> mOutEmpty{0};
+    std::atomic<int64_t> mOutShort{0};
 
     // DID THE ENDPOINT QUEUE RUN SHALLOW? Measured by flight time, because
     // counting URBs cannot answer it.

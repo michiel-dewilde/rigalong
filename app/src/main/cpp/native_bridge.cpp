@@ -134,8 +134,9 @@ Java_be_mdw_bagosynths_NativeBridge_nativeInjectStall(JNIEnv*, jobject, jint us,
 }
 
 JNIEXPORT void JNICALL
-Java_be_mdw_bagosynths_NativeBridge_nativeInjectStarve(JNIEnv*, jobject, jint packets) {
-    engine().injectUsbStarve(packets);
+Java_be_mdw_bagosynths_NativeBridge_nativeInjectStarve(JNIEnv*, jobject, jint packets,
+                                                      jint frames) {
+    engine().injectUsbStarve(packets, frames);
 }
 
 JNIEXPORT void JNICALL

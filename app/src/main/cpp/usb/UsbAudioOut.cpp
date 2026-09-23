@@ -261,7 +261,11 @@ int UsbAudioOut::nextFrames() {
         if (mInjectStarve.load(std::memory_order_relaxed) > 0) {
             mInjectStarve.fetch_sub(1, std::memory_order_relaxed);
             mStarved.fetch_add(1, std::memory_order_relaxed);
-            return 0;
+            // 0 = a zero-length packet, which is what the dry-queue path sends.
+            // Anything else is a PLAUSIBLE but unrequested size, which
+            // separates "the device hates a zero-length packet" from "the
+            // device hates any packet it did not ask for".
+            return mInjectFrames.load(std::memory_order_relaxed);
         }
         if (mSizeCount > 0) {
             const int n = mSizes[mSizeHead];
@@ -269,33 +273,38 @@ int UsbAudioOut::nextFrames() {
             --mSizeCount;
             return n;
         }
-        // DRY QUEUE: SEND NOTHING, never a guess.
+        // DRY QUEUE: SEND A NOMINAL SIZE. NEVER A ZERO-LENGTH PACKET.
         //
-        // Implicit feedback is a contract. The device states, packet by packet
-        // and by how much it delivers on its own IN stream, exactly how many
-        // frames it wants back. When that information has not arrived yet, the
-        // host does not know the answer, and there are only two things it can
-        // do: send nothing, or invent a number.
+        // This said the opposite until 2026-09-23, and the reasoning was sound
+        // and the conclusion was wrong. A zero-length packet is legal on an
+        // isochronous OUT endpoint and it preserves the cumulative frame count
+        // exactly, where an invented size is a permanent surplus. On the
+        // principle, sending nothing is the honest choice.
         //
-        // This used to invent one -- the nominal rate -- and that is a
-        // permanent surplus, not a temporary error. The requests we could not
-        // answer are not discarded: they arrive late, sit in the queue, and are
-        // honoured on later packets. So every invented frame is sent IN
-        // ADDITION to every frame the device actually asked for, and the
-        // overshoot never comes back.
+        // Measured: **a single zero-length OUT packet wedges the CP-88
+        // permanently.** One. It takes a USB reset to clear, and the device
+        // gives no indication of it anywhere. Injected deliberately with a full
+        // queue, no load and no lateness: 11 trials of 11 silent, against a
+        // control of 3 of 3 audible. A wrong-but-plausible size does NOT do it
+        // -- 1x44, 1x45 and 20x44 unrequested frames all played on happily.
+        // So it is the zero length specifically, not the guess.
         //
-        // A zero-length packet is legal on an isochronous OUT endpoint and
-        // costs one packet interval of the device's buffer, which the very next
-        // packets refill because the queued requests are still there. Late, but
-        // never wrong. As Michiel put it: the protocol requires ABC or nothing
-        // at all, and AC is the thing that must not happen.
+        // That also settles an A/B from earlier in this hunt that came back
+        // false -> audible, true -> silent and was dismissed as noise. It was
+        // the right answer.
         //
-        // Honesty about what this is: a latch has NOT been reproduced in the
-        // bare transport, by any means tried (see usbhost/latchgap.sh), so this
-        // is not a demonstrated cure. It removes a real protocol violation,
-        // which is worth doing on its own terms.
+        // So: the surplus is real, it is counted in fbDrift, and it is the
+        // lesser evil by a wide margin. In practice this path should never run
+        // at all -- the 1024 ms feedback capture means the queue has a recent
+        // size waiting even after a 300 ms deschedule -- and `starved` counting
+        // up says it did.
         mStarved.fetch_add(1, std::memory_order_relaxed);
-        return 0;
+        mNominalAcc += static_cast<int64_t>(mCfg.rate) * static_cast<int64_t>(mPeriodUs);
+        {
+            const int n = static_cast<int>(mNominalAcc / 1000000);
+            mNominalAcc -= static_cast<int64_t>(n) * 1000000;
+            return n > 0 ? n : 1;
+        }
     } else if (mCfg.feedback == kExplicit && mFbQ16 != 0) {
         const uint32_t unitsPerPacket = 1u << (std::clamp(mCfg.outInterval, 1, 16) - 1);
         mFbAcc += mFbQ16 * unitsPerPacket;
@@ -315,8 +324,19 @@ void UsbAudioOut::fillOut(Urb& b) {
     int offset = 0;
     for (int p = 0; p < mPackets; ++p) {
         const int want = nextFrames();
-        const int frames = std::clamp(want, 0, maxFrames);
+        int frames = std::clamp(want, 0, maxFrames);
         if (want != frames) mFbClamp.fetch_add(1, std::memory_order_relaxed);
+        // THE INVARIANT, enforced at the only place that can enforce it: no OUT
+        // packet is ever submitted with zero length. One of those is fatal to
+        // this device and recoverable only by USBDEVFS_RESET, so no path above
+        // -- dry queue, a zero-length IN packet echoed back, a clamp, or
+        // anything added later -- gets to produce one. If this ever fires, the
+        // rig came within a single packet of wedging and something above is
+        // wrong; `zeroAvoided` is in the health line for exactly that.
+        if (frames <= 0) {
+            mZeroAvoided.fetch_add(1, std::memory_order_relaxed);
+            frames = 1;
+        }
 
         // Pull stereo float from the engine's ring; whatever it cannot supply
         // is silence. The engine counts that as a ring underrun itself.
@@ -391,6 +411,14 @@ void UsbAudioOut::completeIn(Urb& b) {
         // What the device delivered is what it wants back: the whole of the
         // implicit feedback loop.
         const int frames = static_cast<int>(d.actual_length) / mCfg.fbFrameBytes;
+        // A zero-length IN packet would be echoed as a zero-length OUT packet,
+        // and one of those wedges the device for good. This path does not touch
+        // `starved`, so it is the one that could do it silently. Counted, never
+        // enqueued.
+        if (frames <= 0) {
+            mZeroAvoided.fetch_add(1, std::memory_order_relaxed);
+            continue;
+        }
         // Latch probe: the spread of these is the device's clock talking.
         //
         // These two were declared, reset on read and printed in the health line
@@ -464,6 +492,24 @@ void UsbAudioOut::completeOut(Urb& b) {
         // Isochronous OUT has no acknowledgement: status 0 means scheduled.
         // actual_length is the controller's account of what it put on the
         // wire, which is what deficitMs is built from.
+        //
+        // AND WHAT IT PUT ON THE WIRE IS NOT ALWAYS WHAT WE ASKED FOR. A single
+        // ZERO-LENGTH OUT packet wedges the CP-88 permanently -- proved by
+        // injection, 11 trials of 11, with a full queue and no load. We now
+        // refuse to generate one. But if the controller completes a packet we
+        // submitted with real data as actual_length 0, then a zero-length
+        // packet went out anyway, from the other side, and the residual latches
+        // have exactly that shape: starved=0, zeroAvoided=0, a clean submitted
+        // cadence, and deficit growing -- deficit being precisely the bytes
+        // that never reached the wire.
+        const unsigned asked = b.u->iso_frame_desc[p].length;
+        if (asked > 0) {
+            if (d.actual_length == 0) {
+                mOutEmpty.fetch_add(1, std::memory_order_relaxed);
+            } else if (d.actual_length < asked) {
+                mOutShort.fetch_add(1, std::memory_order_relaxed);
+            }
+        }
         mOutBytes.fetch_add(d.actual_length, std::memory_order_relaxed);
     }
 }
@@ -587,6 +633,9 @@ UsbAudioOut::Stats UsbAudioOut::stats() const {
     s.inFramesTotal = mInFramesTotal.load(std::memory_order_relaxed);
     s.fbDrop = mFbDrop.load(std::memory_order_relaxed);
     s.fbClamp = mFbClamp.load(std::memory_order_relaxed);
+    s.zeroAvoided = mZeroAvoided.load(std::memory_order_relaxed);
+    s.outEmpty = mOutEmpty.load(std::memory_order_relaxed);
+    s.outShort = mOutShort.load(std::memory_order_relaxed);
     s.outMinFlightUs = mOutMinFlightUs.exchange(INT64_MAX, std::memory_order_relaxed);
     s.inMinFlightUs = mInMinFlightUs.exchange(INT64_MAX, std::memory_order_relaxed);
     if (s.outMinFlightUs == INT64_MAX) s.outMinFlightUs = -1;
