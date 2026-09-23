@@ -807,6 +807,57 @@ statement yet of the central puzzle: the bare transport survived `late=8654`,
 and this one dies at `late=126`. Whatever the CP-88 objects to, these counters
 are not measuring it.
 
+## 5l. A core of its own, and the question it leaves (2026-09-23)
+
+Michiel: "what if you give the reap thread its own pinned core made unavailable
+for the other threads?" Done: the reap thread is pinned to cpu6 alone and the
+render and MIDI threads are restricted to everything else. Granted as asked --
+`usb reap thread: cpus 6`, `render thread: cpus 0,1,2,3,4,5` (the prime cpu7 is
+excluded by Android's own cpuset for this app, not by us).
+
+Cumulative effect of the two scheduling changes, same provocation throughout:
+
+| | equal nice -19 | split bands | split + pinned |
+|---|---|---|---|
+| `late` | 1292 / 1537 / 1762 | 126 / 234 / 155 | **33 / 97** |
+| `deficit` | 3057 / 3717 / 4091 ms | 392 / 572 / 393 ms | **83 / 275 ms** |
+| `starved` | 152 / 202 / 218 | 28 / 20 / 36 | **0 / 4** |
+| latched | 3 of 3 | 3 of 3 | **all** |
+
+**A forty-fold reduction in late URBs and not one latch prevented.** Michiel's
+question is the right one: how does it latch with an undisturbed reap? It
+settles that the reap thread's scheduling was never the mechanism, which the
+bare transport had already implied by surviving `late=8654`.
+
+Retested at 8 ms depth with the pinned thread, to close off depth for good:
+latched 3 of 3, one of them at `starved=0 late=33 deficit=70 ms`. Depth is not
+it either.
+
+### Where that leaves it
+
+usbhost survives `late=8654`, `starved=996`, `deficit=24,2 s`. Bag-O-Synths
+latches with a nearly pristine transport. **So the cause is something this app
+DOES, not how well it is scheduled**, and the next step is a direct comparison
+of the two transports' wire behaviour rather than another sweep.
+
+Checked and eliminated already, so the next person does not repeat them:
+
+* **Nothing blocks the reap thread via the ring.** `pullFromRing` is lock-free,
+  clamps to the scratch, zero-fills a short read and leaves packet lengths
+  unchanged. The only mutexes guard stream start/stop and instrument loading,
+  neither in the reap path.
+* **MIDI does not contaminate the reap queue.** `USBDEVFS_REAPURB` is per-fd, so
+  a MIDI URB submitted on the same descriptor would be reaped by the audio loop
+  and cast to the wrong type -- but Bag-O-Synths uses the synchronous
+  `USBDEVFS_BULK` ioctl and usbhost uses Java `bulkTransfer`, whose comment
+  says outright that "a native reap loop would steal its completions". Both
+  already avoid it.
+* **Packet sizes stay legal.** `fbDrop` and `fbClamp` are zero in every latch.
+
+What has NOT been compared, and is where to go next: the actual sequence of
+submitted packet sizes on the wire, bagosynths against usbhost, over the moments
+around a latch.
+
 ## 6. Still open
 
 | Question | Status |

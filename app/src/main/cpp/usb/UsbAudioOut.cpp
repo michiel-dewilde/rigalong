@@ -398,6 +398,7 @@ void UsbAudioOut::reapLoop() {
     // The highest band an app is given, and above the render thread: this is
     // the thread that actually puts audio on the wire.
     bos::raiseRenderPriority("usb reap thread", bos::kTransportNice);
+    bos::pinToTransportCore("usb reap thread");
 
     int64_t lastReap = nowNs();
     const int64_t ringNs = static_cast<int64_t>(mUrbs * mPackets * mPeriodUs * 1000.0);
