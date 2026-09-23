@@ -15,12 +15,15 @@
 
 namespace bos {
 
-void raiseRenderPriority(const char* what) {
+void raiseRenderPriority(const char* what, int niceValue) {
     // 1. Real-time, properly. Priority 2 rather than something greedy: this is
     //    the band AudioFlinger's own fast mixer uses, and a thread ABOVE the
     //    audio HAL is a thread that can starve it.
+    //
+    //    The transport keeps 2; anything that merely feeds it drops to 1, so
+    //    the ordering survives if a build ever does grant SCHED_FIFO.
     sched_param p{};
-    p.sched_priority = 2;
+    p.sched_priority = niceValue <= kTransportNice ? 2 : 1;
     if (sched_setscheduler(0, SCHED_FIFO, &p) == 0) {
         LOGI("%s: SCHED_FIFO priority %d", what, p.sched_priority);
         return;
@@ -29,12 +32,13 @@ void raiseRenderPriority(const char* what) {
 
     // 2. What Android actually grants an app: ANDROID_PRIORITY_URGENT_AUDIO.
     errno = 0;
-    if (setpriority(PRIO_PROCESS, 0, -19) == 0) {
-        LOGI("%s: nice -19 (SCHED_FIFO refused: %s)", what, std::strerror(fifoErr));
+    if (setpriority(PRIO_PROCESS, 0, niceValue) == 0) {
+        LOGI("%s: nice %d (SCHED_FIFO refused: %s)", what, niceValue,
+             std::strerror(fifoErr));
         return;
     }
-    LOGE("%s: no priority raise -- SCHED_FIFO: %s, nice -19: %s", what,
-         std::strerror(fifoErr), std::strerror(errno));
+    LOGE("%s: no priority raise -- SCHED_FIFO: %s, nice %d: %s", what,
+         std::strerror(fifoErr), niceValue, std::strerror(errno));
 }
 
 // --------------------------------------------------------------------- ADPF

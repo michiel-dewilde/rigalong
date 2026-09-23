@@ -84,7 +84,10 @@ int UsbMidiIn::drain(uint8_t* out, int max) {
 void UsbMidiIn::loop() {
     // Raised like the audio threads, and by the same rule: a note waiting
     // behind a low-priority reader is latency nobody can see in any counter.
-    bos::raiseRenderPriority("usb midi reader");
+    // Feeds the engine rather than the wire, so it sits with the render
+    // thread. A MIDI byte read a millisecond late delays a note; a URB
+    // submitted a millisecond late is audio that was never sent.
+    bos::raiseRenderPriority("usb midi reader", bos::kRenderNice);
 
     uint8_t buf[512];
     const int len = mMaxPacket <= static_cast<int>(sizeof(buf)) ? mMaxPacket : static_cast<int>(sizeof(buf));

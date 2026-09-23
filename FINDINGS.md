@@ -112,6 +112,14 @@ fault on. Measured, both states, side by side. So anything that needs to know
 "is sound reaching the piano" must either make a noise and listen, or give up
 and act on the disturbance instead. See MEASUREMENTS.md §5i.
 
+**The transport outranks the synth.** The USB reap thread runs at nice -19 and
+the render thread and MIDI reader at -16, which are Android's own two audio
+bands. They were all equal once, and the render thread won often enough to cost
+8-11x more late URBs under load. The rule is not arbitrary: the ring exists to
+make a late render block inaudible, and nothing absorbs a late URB. Anything
+added later that feeds the wire goes at -16; only what writes to the wire gets
+-19.
+
 **Lateness is not what the CP-88 objects to.** A bare transport survived 8654
 late URBs, 996 starved packets and 24,2 s of accumulated deficit with the tone
 unchanged. `late`, `deficit` and `maxGap` therefore measure a CORRELATE of the

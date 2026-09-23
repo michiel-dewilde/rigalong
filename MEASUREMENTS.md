@@ -775,6 +775,38 @@ Also added and measured at zero in every latch so far, so not the path that
 bites: `fbDrop` (a request discarded on queue overflow) and `fbClamp` (a request
 cut down to the endpoint's max packet).
 
+## 5k. The transport outranks the synth (2026-09-23)
+
+Michiel: "what if you give the usb driving thread more priority than the threads
+calculating samples?" A flaw walked past twice: all three audio threads asked
+for nice -19, so the render thread and the USB reap thread fought each other as
+EQUALS, and usbhost had already shown the system was never the competition --
+eight external spinners could not move the bare transport's `late` at all.
+
+Split onto Android's own two audio bands: ANDROID_PRIORITY_URGENT_AUDIO (-19)
+for the reap thread, ANDROID_PRIORITY_AUDIO (-16) for the render thread and the
+MIDI reader. The design already said which one may be late -- the ring exists to
+turn a late render block into something inaudible, and nothing absorbs a late
+URB.
+
+Three heavy trials either side, identical provocation (45 rounds of a 64-note
+sweep against eight spinners):
+
+| | before | after |
+|---|---|---|
+| `late` | 1292 / 1537 / 1762 | **126 / 234 / 155** |
+| `deficit` | 3057 / 3717 / 4091 ms | **392 / 572 / 393 ms** |
+| `starved` | 152 / 202 / 218 | **28 / 20 / 36** |
+| latched | 3 of 3 | **3 of 3** |
+
+**Eight to eleven times fewer late URBs, and not one latch prevented.** Kept,
+because a transport that is ten times less disturbed is worth having on its own
+-- fewer holes means fewer watchdog resets while playing, and Michiel heard it
+as "survived a bit longer". But it is not a cure, and it is the sharpest
+statement yet of the central puzzle: the bare transport survived `late=8654`,
+and this one dies at `late=126`. Whatever the CP-88 objects to, these counters
+are not measuring it.
+
 ## 6. Still open
 
 | Question | Status |

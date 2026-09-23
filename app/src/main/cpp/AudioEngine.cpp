@@ -875,7 +875,10 @@ void AudioEngine::renderLoop() {
     // Real-time if the system will grant it, urgent-audio nice if not, and it
     // says which in the log. Denormal flushing is per-thread, and this is the
     // thread that does the arithmetic.
-    bos::raiseRenderPriority("render thread");
+    // BELOW the USB reap thread on purpose. The ring exists so that a late
+    // render block is absorbed and inaudible; nothing absorbs a late URB. See
+    // RealtimePriority.h.
+    bos::raiseRenderPriority("render thread", bos::kRenderNice);
     enableFlushToZero();
 
     // And the part that actually moves the needle on this tablet: a

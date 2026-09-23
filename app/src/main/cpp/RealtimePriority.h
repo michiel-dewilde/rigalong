@@ -23,6 +23,29 @@
 // have but do not is worse than none.
 namespace bos {
 
+// THE TRANSPORT OUTRANKS THE SYNTH, and these two constants are that rule.
+//
+// All three threads used to ask for nice -19, which put the render thread and
+// the USB reap thread in the SAME band -- so when sfizz went to 64 voices they
+// fought each other as equals, and the transport lost often enough to matter.
+// Measured in usbhost/: eight EXTERNAL spinners could not move the bare
+// transport's `late` at all (666 -> 666), while Bag-O-Synths under its own
+// render load reached `late` in the thousands. The competition was never the
+// system. It was us.
+//
+// The project's own design already says which one may be late. The ring exists
+// precisely to turn the render thread's hard deadline into a soft one: a late
+// block eats into the reserve and is inaudible. Nothing absorbs a late URB --
+// the audio is simply not on the wire, and `deficit` grows by exactly that
+// much. So the render thread is the one that must yield.
+//
+// The two values are Android's own audio bands, which is what makes them the
+// right pair rather than two numbers pulled apart by three:
+//   ANDROID_PRIORITY_URGENT_AUDIO = -19   the transport
+//   ANDROID_PRIORITY_AUDIO        = -16   everything that feeds it
+constexpr int kTransportNice = -19;
+constexpr int kRenderNice = -16;
+
 /**
  * Asks for real-time scheduling for the CALLING thread.
  *
@@ -31,12 +54,13 @@ namespace bos {
  * syscall, it is the right thing to ask for, and a device or build that does
  * allow it should get it.
  *
- * Then ANDROID_PRIORITY_URGENT_AUDIO (nice -19), which apps ARE allowed, and
- * which is what AudioFlinger gives its own client callback threads.
+ * Then the nice value, which apps ARE allowed. Pass [kTransportNice] for a
+ * thread that puts bytes on the wire and [kRenderNice] for one that produces
+ * them; see the note above for why they must differ.
  *
  * `what` names the thread in the log.
  */
-void raiseRenderPriority(const char* what);
+void raiseRenderPriority(const char* what, int niceValue = kTransportNice);
 
 /**
  * Android's Performance Hint session (ADPF), the supported way to tell the
