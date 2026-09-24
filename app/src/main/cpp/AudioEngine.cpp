@@ -318,7 +318,8 @@ bool AudioEngine::startUsb(const UsbAudioOut::Config& config, std::string* error
     mRenderRun.store(true, std::memory_order_release);
     mRenderThread = std::thread([this] { renderLoop(); });
 
-    if (!mUsbOut.start(config, &AudioEngine::pullBytesForUsb, this, error)) {
+    if (!mUsbOut.start(config, &AudioEngine::pullBytesForUsb,
+                       &AudioEngine::flushBytesForUsb, this, error)) {
         closeStream();
         return false;
     }
@@ -1440,7 +1441,9 @@ AudioEngine::Stats AudioEngine::stats() const {
             LOGI("health usb %s  out=%.4f cb=%.4f voices=%d/%d frames=%lld deficit=%.1fms "
                  "late=%lld starved=%lld errors=%lld fb=%.1fHz ringUnder=%lld ringTarget=%.1fms "
                  "inSize=%d..%d/%lld fbDrift=%lld fbDrop=%lld fbClamp=%lld "
-                 "inLost=%lld zeroAvoided=%lld shaped=%lld bal=%lld/%lld rise=%lld fifo=%lld held=%lld outShort=%lld outOdd=%lld outDry=%lld%s%s",
+                 "inLost=%lld zeroAvoided=%lld shaped=%lld bal=%lld/%lld rise=%lld "
+                 "fifo=%d..%d preRoll=%lld trim=%lld silence=%lld "
+                 "outShort=%lld outOdd=%lld outDry=%lld%s%s",
                  s.usbRunning ? "ok" : "DOWN",
                  static_cast<double>(s.outputPeak),
                  static_cast<double>(mCallbackPeak.load(std::memory_order_relaxed)),
@@ -1485,13 +1488,26 @@ AudioEngine::Stats AudioEngine::stats() const {
                  // only part of the deficit the device can actually feel,
                  // because its FIFO stops at empty and ours does not.
                  static_cast<long long>(u.balRise),
-                 // The modelled device FIFO, worst this interval. The device
-                 // wedges past about 170 frames; the ceiling holds it at 88.
-                 static_cast<long long>(u.fifoPeak),
-                 // Packets the ceiling had to cut down. Non-zero means the
-                 // transport tried to overfeed and was stopped -- interesting
-                 // every single time, because normal sizing cannot do it.
-                 static_cast<long long>(u.balanceHeld),
+                 // THE PACKET-FRAMES FIFO, the depth it covered this interval.
+                 // It is the only accounting instrument this transport has.
+                 // Healthy is a narrow band near the pre-roll depth of 24.
+                 // Riding the cap of 48 means OUT is not keeping up with IN;
+                 // reaching 0 means the stream ran dry and restarted.
+                 u.inPackets ? u.fifoMin : -1,
+                 u.inPackets ? u.fifoMax : -1,
+                 // Times the OUT stream was withheld and restarted from the
+                 // pre-roll. One at start-up is normal and expected. More than
+                 // that is the transport refusing to invent a size, which is
+                 // the design working -- but each one is an audible gap and a
+                 // discarded render backlog, so the count is the thing to
+                 // watch under load.
+                 static_cast<long long>(u.preRolls),
+                 // Times a full FIFO was cut back on an OUT reap: asks that
+                 // arrived while nothing was going out.
+                 static_cast<long long>(u.outTrims),
+                 // Frames of pre-roll silence sent. Correctly sized packets of
+                 // zeroes while the render ring rebuilds, never zero-length.
+                 static_cast<long long>(u.silenceFrames),
                  // What the controller says it PUT ON THE WIRE against what it
                  // was asked for. Both must stay 0. A short packet, or one
                  // that is not a whole number of frames, is the one fault no
@@ -2111,6 +2127,34 @@ uint32_t AudioEngine::pullBytes(uint8_t* dst, uint32_t want) {
 int AudioEngine::pullBytesForUsb(void* ctx, uint8_t* dst, int frames) {
     auto* self = static_cast<AudioEngine*>(ctx);
     return static_cast<int>(self->pullBytes(dst, static_cast<uint32_t>(std::max(0, frames))));
+}
+
+// THE OUT STREAM RESTARTED, so throw away what the ring is holding.
+//
+// Called on the reap thread at the end of a pre-roll, and it is the consumer
+// side of the ring doing the discarding -- mRingRead belongs to this thread, so
+// moving it forward to the write cursor is a plain store and needs no lock.
+//
+// Everything in the ring at this moment is audio that was due while the OUT
+// stream was silent. Playing it out now would put the whole gap back as added
+// latency and keep it there: the device absorbs about 110 frames, 2,7 ms, so
+// there is nowhere for a backlog to go but into delay that never comes off
+// again. Discarding it costs exactly the audio nobody heard anyway and puts the
+// instrument back at the live edge, which is the whole reason this app exists.
+//
+// The return value is how deep the producer wants to be before it is steady --
+// its own adaptive target -- and the transport sends correctly-sized silence
+// for that many frames while the renderer rebuilds.
+int AudioEngine::flushBytes() {
+    const uint32_t write = mRingWrite.load(std::memory_order_acquire);
+    mRingRead.store(write, std::memory_order_release);
+    mRingFillMs.store(0.0f, std::memory_order_relaxed);
+    mConcealedFrames = 0;
+    return static_cast<int>(mTargetFill.load(std::memory_order_relaxed));
+}
+
+int AudioEngine::flushBytesForUsb(void* ctx) {
+    return static_cast<AudioEngine*>(ctx)->flushBytes();
 }
 
 namespace {

@@ -148,7 +148,15 @@ object UsbBuffers {
     // because the debug route ignored any value outside choicesMs without
     // saying so. Whatever numbers sit beside it now were taken after that was
     // fixed.
-    const val DEFAULT_MS = 6
+    // 4 ms since 2026-09-25, and the number means something different now.
+    //
+    // Every measurement above was taken at TWO packets per URB, so 4 ms was two
+    // URBs and exactly ONE stayed queued while the reap thread refilled the
+    // other -- any refill over 2 ms emptied the endpoint. It is one packet per
+    // URB now, so 4 ms is FOUR URBs and three stay queued: 3 ms of slack where
+    // the old 4 ms had 2 and the old 8 ms had 6. The depth that measured worst
+    // of the three is not the same configuration as the depth on this list.
+    const val DEFAULT_MS = 4
 }
 
 /**

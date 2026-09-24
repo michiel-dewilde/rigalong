@@ -52,6 +52,42 @@
 // deadline should do the least work, which is ordinary real-time hygiene, not
 // because it bought anything here.
 
+// THE TRANSPORT, 2026-09-25. Michiel's design, and the shape of the reap loop.
+// The evidence for every line of it is in HANDOFF sections 31-36.
+//
+// ON EVERY WAKE-UP, IN THIS ORDER:
+//   1. DRAIN THE IN SIDE TO EAGAIN, pushing every ask and resubmitting every
+//      IN URB, BEFORE the OUT side is touched at all. Not optional: the kernel
+//      holds 0-2 unreaped completions when idle but 18-19 after a 30 ms stall,
+//      and at 8 packets per IN URB that is ~150 asks the FIFO does not know
+//      about yet -- arriving exactly when a trim decision is being taken. The
+//      FIFO depth is the only accounting instrument that exists (there is no
+//      frame number to be had from usbfs, probed exhaustively), so it must be
+//      read on a drained queue or it is not an instrument at all.
+//   2. THEN evaluate the FIFO and resubmit the completed OUT URBs.
+//
+// PUSH: an IN packet with non-zero status or zero actual_length is not an ask.
+//       Nothing is pushed for it.
+// POP:  exactly one count per OUT packet, sent at exactly that size. If the
+//       FIFO cannot fill the URB, the URB is not submitted. A size is NEVER
+//       synthesised, in either direction.
+// FULL, on an IN reap:  pop as you push, so the FIFO stays full and holds the
+//       NEWEST asks -- a size from 48 ms ago still describes this cadence; one
+//       from half a second ago does not.
+// FULL, on an OUT reap: the output gapped too, so cut back to the pre-roll
+//       depth in one go.
+// DRY:  submit NOTHING until the FIFO holds kFifoPreRoll again, then discard
+//       the render backlog and send silence at the popped sizes while the
+//       renderer rebuilds, then cut over to live audio.
+//
+// AND THE ONE THAT KILLS, stated on its own because everything else here is a
+// matter of degree and this is not: SILENCE MEANS CORRECTLY-SIZED PACKETS OF
+// DIGITAL ZEROES. It never means a zero-length packet. One zero-length OUT
+// packet wedges the CP-88 permanently -- 11 trials of 11, with a full queue and
+// no load -- and only a USB reset clears it. The push rule already makes a zero
+// impossible to pop; the pre-roll silence path is the one place an
+// implementation could put one back.
+
 #include <limits>
 #include <atomic>
 #include <cstdint>
@@ -87,7 +123,7 @@ public:
         int subslotBytes = 3;        // 2 = S16, 3 = S24_3LE, 4 = S32
         int rate = 44100;
 
-        int bufferMs = 8;            // total OUT depth in flight
+        int bufferMs = 4;            // total OUT depth in flight
 
         // IN DEPTH IS FREE, AND IT IS NOT THE SAME NUMBER AS OUT DEPTH.
         //
@@ -136,7 +172,26 @@ public:
         // inLost=0 -- no invented packet and no lost request, so the
         // starvation mechanism cannot explain it and a second one exists.
         // Costs one submit and one reap per millisecond instead of per two.
-        int packetsPerUrb = 2;
+        //
+        // 1 since 2026-09-25, and the bench measured exactly what it buys.
+        // SLACK -- how long this thread may be away before the wire goes
+        // silent -- is `(urbs - 1) x packets` packets, exactly linear: at a
+        // fixed 8 ms of latency, 8x1 / 4x2 / 2x4 give 7 / 6 / 4 ms. So
+        // dividing the same depth into more, smaller URBs is free slack, and
+        // one packet per URB is the most of it there is.
+        int packetsPerUrb = 1;
+
+        // AND THE IN SIDE'S, WHICH IS A DIFFERENT NUMBER FOR A DIFFERENT
+        // REASON. These were one field until 2026-09-25, which tied the
+        // feedback stream's URB size to the latency knob above.
+        //
+        // An IN URB is an empty receive buffer, so its packet count costs
+        // nothing but a coarser wake-up: 8 packets means this thread is woken
+        // once per 8 ms with 8 asks, instead of eight times with one each.
+        // That is the point -- the asks are not late, they are BATCHED, and
+        // the FIFO below absorbs the batch. 128 URBs x 8 packets is the same
+        // 1024 ms of depth for a quarter of the reaps.
+        int inPacketsPerUrb = 8;
     };
 
     // Fills `frames` frames of audio ALREADY IN THE DEVICE'S FORMAT -- the
@@ -151,9 +206,23 @@ public:
     // load of 62, where this app reached 250-600.
     using PullFn = int (*)(void* ctx, uint8_t* dst, int frames);
 
+    // DISCARD THE RENDER BACKLOG, and say how many frames of silence cover the
+    // refill. Called on the reap thread, once, at the moment the OUT stream
+    // restarts after the size FIFO ran dry.
+    //
+    // Whatever is in the render ring at that moment is audio that was due
+    // during the gap. Carrying it would make every gap permanent added
+    // latency -- the device absorbs about 110 frames, 2,7 ms, and no more --
+    // so the backlog goes and the stream resumes at the live edge. The return
+    // value is how far the producer wants to be ahead again; the transport
+    // sends correctly-sized SILENCE for that many frames while the renderer
+    // rebuilds, then cuts over to live audio.
+    using FlushFn = int (*)(void* ctx);
+
     ~UsbAudioOut() { stop(); }
 
-    bool start(const Config& config, PullFn pull, void* ctx, std::string* error);
+    bool start(const Config& config, PullFn pull, FlushFn flush, void* ctx,
+               std::string* error);
     void stop();
 
     bool running() const { return mRunning.load(std::memory_order_acquire); }
@@ -182,11 +251,14 @@ public:
         int64_t balance = 0;     // frames SENT minus frames ASKED; must stay <= 0
         int64_t balPeak = 0;     // worst (highest) balance this interval
         int64_t balRise = 0;     // furthest the balance climbed off its own floor
-        int64_t fifoPeak = 0;    // modelled device FIFO, worst this interval
         int64_t outShort = 0;    // OUT packets the controller cut short; MUST stay 0
         int64_t outOdd = 0;      // OUT packets not a whole number of frames; MUST stay 0
         int64_t outDry = 0;      // reap gaps longer than the OUT ring: stream RESTARTS
-        int64_t balanceHeld = 0; // packets the ceiling cut down; should stay 0
+        int64_t preRolls = 0;    // times the OUT stream was withheld and restarted
+        int64_t silenceFrames = 0;   // frames of pre-roll silence sent, cumulative
+        int64_t outTrims = 0;        // times a full FIFO was cut back on an OUT reap
+        int32_t fifoMin = 0;         // size-FIFO depth, this interval
+        int32_t fifoMax = 0;
         int64_t fbDrop = 0;          // requests discarded on queue overflow
         int64_t fbClamp = 0;         // requests cut down to the max packet
         float deficitMs = 0.0f;      // wall time minus wire time; GROWTH is a hole
@@ -235,16 +307,18 @@ public:
         mInjectSizeFrames.store(frames, std::memory_order_relaxed);
         mInjectSizeLeft.store(count, std::memory_order_relaxed);
     }
-    // And the shape that matters most, because it is the one this transport can
-    // produce by itself: STARVATION. The next `count` packets skip the feedback
-    // queue entirely and are sized from the nominal rate, exactly as a dry
-    // queue sizes them -- which is not a substitution but an ADDITION, because
-    // the request that was skipped is still in the queue and will be honoured a
-    // packet later. Every starved packet is therefore ~44 frames of PERMANENT
-    // surplus, and nothing anywhere drains it.
-    // A/B for the ceiling itself: off reproduces every latch measured before it
-    // existed, on should make them impossible. TEST ONLY.
-    void setBalanceGuard(bool on) { mBalanceGuard.store(on, std::memory_order_relaxed); }
+    // And the one that now exercises the RECOVERY instead of the fault:
+    // injectStarve(n) makes the next n packets skip the FIFO, which under this
+    // transport is not an invented size but an absence. Each one drops the OUT
+    // stream into pre-roll -- withheld packets, a discarded render backlog,
+    // silence, then live audio -- so the whole dry-FIFO path can be fired on
+    // demand instead of waited for.
+    //
+    // It used to mean the opposite: the skipped packet was sized from the
+    // nominal rate, which is not a substitution but an ADDITION, because the
+    // ask it stood in for was still in the queue and got honoured a packet
+    // later. Every starved packet was ~44 frames of permanent surplus. That
+    // path is gone; injectBias is the way to ask the device about a surplus now.
 
     // Delay the resubmission of OUT URBs only, `count` times, `us` each. IN
     // keeps being serviced from its own queue throughout. TEST ONLY.
@@ -298,20 +372,25 @@ private:
                      int bytesPerPacket);
     void freeStream(std::vector<Urb>& v);
     bool submit(Urb& b);
-    void fillOut(Urb& b);
+    int fillOut(Urb& b);
     void fillIn(Urb& b, int packets, int bytesPerPacket);
     void completeIn(Urb& b);
     void completeFeedback(Urb& b);
     void completeOut(Urb& b);
+    bool dispatch(void* reaped);
+    bool serviceOut();
+    void noteFifoDepth();
     void reapLoop();
     int nextFrames();
     void setFatal(const std::string& why);
 
     Config mCfg;
     PullFn mPull = nullptr;
+    FlushFn mFlush = nullptr;
     void* mCtx = nullptr;
 
-    int mUrbs = 4, mInUrbs = 4, mPackets = 2, mFramesPerUrb = 0;
+    int mUrbs = 4, mInUrbs = 128, mPackets = 1, mInPacketsPerUrb = 8,
+        mFramesPerUrb = 0;
     double mPeriodUs = 1000.0;
     int mFrameBytes = 6;
 
@@ -342,30 +421,49 @@ private:
     // Explicit feedback: frames per period in 16.16, and its accumulator.
     uint32_t mFbQ16 = 0;
     uint32_t mFbAcc = 0;
-    // Implicit feedback: packet sizes seen on the IN stream, oldest first.
-    // SHALLOW ON PURPOSE, and it works with the deep IN URB queue rather than
-    // against it. The two solve different halves of the same problem.
+    // THE PACKET-FRAMES FIFO. Integers, not audio: what the device asked for,
+    // oldest first. It grows by one entry per IN packet received and shrinks by
+    // one per OUT packet sent, and it is the only thing that decides a size.
     //
-    // The arithmetic first. The device asks for ~44,1 frames per millisecond
-    // and one OUT packet can carry at most 45, so the headroom for catching up
-    // is about 2%: a 140 ms backlog needs ~7 SECONDS to drain, and holes arrive
-    // far more often than that. Frame debt is therefore permanent, and any
-    // design that tries to answer every request eventually just overflows --
-    // measured, fbDrop climbing 468 -> 1278 -> 2178 with a 512-deep queue.
+    // THE RULE THE WHOLE TRANSPORT IS BUILT ON, measured on the bench over
+    // three days and written up in HANDOFF sections 31-35:
     //
-    // So the rule is not "answer every request". It is:
-    //   never INVENT a size  -- that is what wedges the device;
-    //   never use a STALE one -- a size from 512 ms ago describes a cadence the
-    //                            device has long since moved on from.
-    // The deep IN URB queue buys the first: packets are always caught, so a
-    // recent size is always available and nextFrames() never has to guess. This
-    // cap buys the second: once the backlog exceeds ~64 ms the oldest entries
-    // are dropped, resynchronising to what the device is asking for NOW. The
-    // frames in them are a debt that is acknowledged, bounded and counted in
-    // fbDrop rather than pretended away.
-    static constexpr int kSizeCap = 64;
-    int mSizes[kSizeCap] = {};
+    //   NEVER MANUFACTURE A SIZE. Absence is free -- 11,6 s of it, no ill
+    //   effect. Phase lag is free -- 1000 packets behind, no ill effect. An
+    //   INVENTED size is fatal and cumulative: the device integrates the
+    //   deviation and wedges at about 100-200 frames, and nothing drains it.
+    //   A nominal 44,1 against the device's true 44,09929 is enough on its
+    //   own -- 43 frames out in a minute, dead in three and a half.
+    //
+    // So this FIFO is never bypassed, never topped up from a clock, and never
+    // read when empty. What it costs is phase: sending the ask from
+    // PRE_ROLL packets ago means running that far behind, which is a permanent
+    // deficit, which is the free direction.
+    //
+    // A gap in the OUT stream DISCARDS whatever deviation the device had
+    // accumulated -- measured, and 2 ms of gap is enough. That is why running
+    // dry is not a disaster here but a reset, and why the pre-roll below is a
+    // deliberate mechanism rather than an apology.
+    static constexpr int kFifoLen = 48;
+    static constexpr int kFifoPreRoll = 24;
+    int mSizes[kFifoLen] = {};
     int mSizeHead = 0, mSizeCount = 0;
+
+    // PRE-ROLL: the OUT stream is WITHHELD -- no URB submitted at all, not one
+    // of a nominal size -- until the FIFO has rebuilt to kFifoPreRoll. True at
+    // start and whenever the FIFO runs dry.
+    bool mPreRoll = true;
+    // Frames of silence still owed while the render ring rebuilds after the
+    // flush. Correctly sized packets of digital zeroes; see fillOut.
+    int mSilenceFrames = 0;
+    // OUT URBs that have completed and not yet been resubmitted, in completion
+    // order. Reserved at start(), so no allocation on the reap thread.
+    std::vector<Urb*> mOutIdle;
+    std::atomic<int64_t> mPreRolls{0};
+    std::atomic<int64_t> mSilenceTotal{0};
+    std::atomic<int64_t> mOutTrims{0};
+    mutable std::atomic<int32_t> mFifoMin{1 << 30};
+    mutable std::atomic<int32_t> mFifoMax{0};
 
 
     std::atomic<int64_t> mFrames{0}, mOutBytes{0}, mOutErr{0}, mInErr{0};
@@ -423,38 +521,33 @@ private:
     // frames it wants, destroyed before they were read. Unlike `starved`, which
     // only notices that the size queue ran dry, this counts requests that are
     // GONE and can never be answered.
-    // Cumulative frames sent may never exceed cumulative frames asked. Zero,
-    // not a margin: the device's own tolerance was measured at about 170 frames
-    // and a ceiling should not be set at the edge of the cliff it guards.
-    // How far above its own resting level the modelled FIFO may go. The resting
-    // level is not zero and never was: it is the OUT ring, every frame of which
-    // the device is holding -- measured at exactly 265 frames for a 6 ms ring,
-    // stable to the frame. So the ceiling is computed from the ring at start(),
-    // not written down here, and this is only the margin above it. 88 is two
-    // packets: healthy operation excursions are one, and the cliff is ~170.
-    static constexpr int64_t kFifoMarginFrames = 88;
-    int64_t mFifoCeiling = 0;
-    // OFF by default, and it stays off until it is shown to prevent something.
-    // It does not: holding the modelled FIFO exactly at this ceiling (measured,
-    // fifo=352 held=3852) did NOT stop a sustained overfeed from wedging the
-    // device. So the model predicts the resting level correctly and the cliff
-    // wrongly, and a fix that does not fix is a hack. Kept behind the GUARD
-    // broadcast because it is the only handle on the one mechanism that IS
-    // proven, and because the counters beside it are worth having.
-    std::atomic<bool> mBalanceGuard{false};
-    std::atomic<int64_t> mBalanceHeld{0};
+    // THE BALANCE CEILING IS GONE, 2026-09-25, and why is worth keeping.
+    //
+    // It modelled the device's playout FIFO and cut a packet down when the
+    // model said the device was too full. It never fired in the field latch it
+    // was written for (rise=45 against a ceiling of 88), and holding the model
+    // exactly at the ceiling did NOT stop a sustained overfeed from wedging the
+    // device -- so it predicted the resting level right and the cliff wrong.
+    //
+    // And then the bench settled the principle underneath it: a size the device
+    // did not ask for is fatal in BOTH directions. Cutting a packet down is
+    // manufacturing a size just as much as padding one up, and doing it packet
+    // after packet is precisely the shape that kills in ~200 frames. The guard
+    // would have been a slower way to wedge the device, not a defence. The
+    // counters it came with -- bal, balPeak, balRise -- are kept: they measure,
+    // they do not intervene.
     // mutable, like the other interval peaks: stats() is const and resets it.
     mutable std::atomic<int64_t> mBalPeak{std::numeric_limits<int64_t>::min()};
     mutable std::atomic<int64_t> mBalRise{0};
     // Reap thread only, so no atomic: the floor `balRise` is measured from.
     int64_t mBalMin = std::numeric_limits<int64_t>::max();
-    // Reap thread only: fillOut adds, completeIn subtracts, floor at zero.
-    int64_t mFifoFrames = 0;
-    mutable std::atomic<int64_t> mFifoPeak{0};
     std::atomic<int64_t> mOutShort{0};
     std::atomic<int64_t> mOutOdd{0};
     std::atomic<int64_t> mOutDry{0};
-    int64_t mOutRingUs = 0;
+    // Reap thread only. Per direction, because the two queues are deliberately
+    // different depths: measuring an IN URB against the OUT ring made `late`
+    // meaningless the moment the feedback stream went deep.
+    int64_t mOutRingUs = 0, mOutRingNs = 0, mInRingNs = 0;
     struct TraceEntry {
         int32_t tUs;      // since the stream started
         int16_t frames;   // packet size, or -1 for a packet the device lost

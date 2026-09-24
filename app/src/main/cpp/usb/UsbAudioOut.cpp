@@ -44,10 +44,12 @@ uint32_t le32(const uint8_t* p) { return le24(p) | (static_cast<uint32_t>(p[3]) 
 
 // ------------------------------------------------------------ lifecycle ---
 
-bool UsbAudioOut::start(const Config& config, PullFn pull, void* ctx, std::string* error) {
+bool UsbAudioOut::start(const Config& config, PullFn pull, FlushFn flush, void* ctx,
+                        std::string* error) {
     stop();
     mCfg = config;
     mPull = pull;
+    mFlush = flush;
     mCtx = ctx;
     mFatal.clear();
     mFatalSet.store(0, std::memory_order_relaxed);
@@ -78,9 +80,14 @@ bool UsbAudioOut::start(const Config& config, PullFn pull, void* ctx, std::strin
                        : std::max(1, static_cast<int>(std::lround(2000.0 / mPeriodUs)));
     const double urbMs = mPackets * mPeriodUs / 1000.0;
     mUrbs = std::clamp(static_cast<int>(std::lround(mCfg.bufferMs / urbMs)), 2, 64);
-    // Separately, and far deeper: see Config::inBufferMs. Never fewer than the
-    // OUT count, because the feedback stream must never be the shallower one.
-    mInUrbs = std::clamp(static_cast<int>(std::lround(mCfg.inBufferMs / urbMs)),
+    // The IN side sizes itself: see Config::inPacketsPerUrb and inBufferMs. 128
+    // is the kernel's own comfort, and 8 packets each is the batching. Never
+    // fewer URBs than the OUT count -- the feedback stream must never be the
+    // shallower one.
+    mInPacketsPerUrb = std::clamp(mCfg.inPacketsPerUrb > 0 ? mCfg.inPacketsPerUrb : 8,
+                                  1, 128);
+    const double inUrbMs = mInPacketsPerUrb * mPeriodUs / 1000.0;
+    mInUrbs = std::clamp(static_cast<int>(std::lround(mCfg.inBufferMs / inUrbMs)),
                          mUrbs, 1024);
 
     mFrameBytes = mCfg.channels * mCfg.subslotBytes;
@@ -103,7 +110,6 @@ bool UsbAudioOut::start(const Config& config, PullFn pull, void* ctx, std::strin
     // ever gets compared against itself.
     mInFramesTotal = 0;
     mFbDrop = 0; mFbClamp = 0; mZeroAvoided = 0; mShaped = 0;
-    mBalanceHeld = 0;
     mBalMin = std::numeric_limits<int64_t>::max();
     mBalPeak = std::numeric_limits<int64_t>::min();
     mBalRise = 0;
@@ -112,10 +118,15 @@ bool UsbAudioOut::start(const Config& config, PullFn pull, void* ctx, std::strin
     mTrace.assign(kTraceCap, TraceEntry{});
     mTraceAt = 0;
     mTraceT0 = nowNs();
-    mFifoFrames = 0;
-    mFifoPeak = 0;
-    mFifoCeiling = static_cast<int64_t>(mUrbs) * mPackets * mCfg.rate / 1000 +
-                   kFifoMarginFrames;
+    mPreRoll = true;
+    mSilenceFrames = 0;
+    mPreRolls = 0; mSilenceTotal = 0; mOutTrims = 0;
+    mFifoMin = 1 << 30; mFifoMax = 0;
+    mOutIdle.clear();
+    mOutIdle.reserve(static_cast<size_t>(mUrbs));
+    mOutRingUs = static_cast<int64_t>(mUrbs * mPackets * mPeriodUs);
+    mOutRingNs = mOutRingUs * 1000;
+    mInRingNs = static_cast<int64_t>(mInUrbs * mInPacketsPerUrb * mPeriodUs * 1000.0);
     mFbRate = static_cast<float>(mCfg.rate);
 
     if (!allocStream(mOut, mUrbs, mPackets, mCfg.outEp, true, mCfg.outMaxPacket)) {
@@ -124,7 +135,7 @@ bool UsbAudioOut::start(const Config& config, PullFn pull, void* ctx, std::strin
     }
     if (mCfg.feedback == kImplicit) {
         if (mCfg.fbFrameBytes <= 0) { freeStream(mOut); return fail("implicit feedback without a frame size"); }
-        if (!allocStream(mIn, mInUrbs, mPackets, mCfg.fbEp, false, mCfg.fbMaxPacket)) {
+        if (!allocStream(mIn, mInUrbs, mInPacketsPerUrb, mCfg.fbEp, false, mCfg.fbMaxPacket)) {
             freeStream(mOut); freeStream(mIn);
             return fail("out of memory for feedback URBs");
         }
@@ -143,7 +154,7 @@ bool UsbAudioOut::start(const Config& config, PullFn pull, void* ctx, std::strin
     // to say until the device has reported its cadence -- the ordering the
     // kernel uses too.
     for (Urb& b : mIn) {
-        fillIn(b, mCfg.feedback == kExplicit ? 1 : mPackets, mCfg.fbMaxPacket);
+        fillIn(b, mCfg.feedback == kExplicit ? 1 : mInPacketsPerUrb, mCfg.fbMaxPacket);
         if (!submit(b)) { stop(); if (error) *error = fatal(); return false; }
     }
     // PRIME THE SIZE QUEUE ON THIS THREAD, before the reap thread exists.
@@ -176,27 +187,34 @@ bool UsbAudioOut::start(const Config& config, PullFn pull, void* ctx, std::strin
                 fillIn(*b, 1, mCfg.fbMaxPacket);
             } else {
                 completeIn(*b);
-                fillIn(*b, mPackets, mCfg.fbMaxPacket);
+                fillIn(*b, mInPacketsPerUrb, mCfg.fbMaxPacket);
             }
             if (!submit(*b)) { stop(); if (error) *error = fatal(); return false; }
         }
     }
 
-    for (Urb& b : mOut) {
-        fillOut(b);
-        if (!submit(b)) { stop(); if (error) *error = fatal(); return false; }
-    }
+    // NO OUT URB IS SUBMITTED HERE. Every one of them starts idle and the reap
+    // thread's pre-roll releases them once the FIFO holds kFifoPreRoll asks --
+    // the same path a dry FIFO takes later, so the stream's first packet and
+    // its first packet after a gap are produced by exactly one piece of code.
+    // Starting the OUT stream here would mean sizing packets before the device
+    // had asked for anything, which is the one thing this transport does not do.
+    for (Urb& b : mOut) mOutIdle.push_back(&b);
 
     // Only now does a second thread exist, and from here on mSizes is touched
     // by that thread alone.
     mThread = std::thread([this] { reapLoop(); });
 
     LOGI("usb out: ep 0x%02x %s, %d ch x %d B @ %d Hz, period %.0f us, "
-         "%d URBs x %d packets = %.1f ms out / %d URBs = %.0f ms in, feedback %s",
+         "%d URBs x %d packets = %.1f ms out (%.1f ms slack) / "
+         "%d URBs x %d packets = %.0f ms in, fifo %d/%d, feedback %s",
          mCfg.outEp, mCfg.highSpeed ? "high speed" : "full speed", mCfg.channels,
          mCfg.subslotBytes, mCfg.rate, mPeriodUs, mUrbs, mPackets, mUrbs * urbMs,
+         (mUrbs - 1) * urbMs,
          mCfg.feedback == kImplicit ? mInUrbs : 0,
-         mCfg.feedback == kImplicit ? mInUrbs * urbMs : 0.0,
+         mCfg.feedback == kImplicit ? mInPacketsPerUrb : 0,
+         mCfg.feedback == kImplicit ? mInUrbs * inUrbMs : 0.0,
+         kFifoPreRoll, kFifoLen,
          mCfg.feedback == kImplicit ? "implicit" : mCfg.feedback == kExplicit ? "explicit" : "none");
     return true;
 }
@@ -215,6 +233,8 @@ void UsbAudioOut::stop() {
     void* p = nullptr;
     while (ioctl(mCfg.fd, USBDEVFS_REAPURBNDELAY, &p) == 0) {}
 
+    // Before the buffers go, or it holds pointers into a freed vector.
+    mOutIdle.clear();
     freeStream(mOut);
     freeStream(mIn);
     LOGI("usb out stopped");
@@ -283,42 +303,34 @@ int UsbAudioOut::nextFrames() {
         }
         if (!starve && mSizeCount > 0) {
             const int n = mSizes[mSizeHead];
-            mSizeHead = (mSizeHead + 1) % kSizeCap;
+            mSizeHead = (mSizeHead + 1) % kFifoLen;
             --mSizeCount;
             return n;
         }
-        // DRY QUEUE: SEND A NOMINAL SIZE. NEVER A ZERO-LENGTH PACKET.
+        // DRY FIFO, AND THERE IS NOTHING HONEST TO SEND. Not a nominal size,
+        // not a zero-length packet, not the last size again: NOTHING. The
+        // caller checks the depth before it fills a URB, so the only way here
+        // is the injectStarve test hook above, and this path exists to serve it
+        // and to be counted if anything else ever reaches it.
         //
-        // This said the opposite until 2026-09-23, and the reasoning was sound
-        // and the conclusion was wrong. A zero-length packet is legal on an
-        // isochronous OUT endpoint and it preserves the cumulative frame count
-        // exactly, where an invented size is a permanent surplus. On the
-        // principle, sending nothing is the honest choice.
+        // Both of the alternatives this code has held in the past are now known
+        // to be fatal, which is why neither is here any more:
         //
-        // Measured: **a single zero-length OUT packet wedges the CP-88
-        // permanently.** One. It takes a USB reset to clear, and the device
-        // gives no indication of it anywhere. Injected deliberately with a full
-        // queue, no load and no lateness: 11 trials of 11 silent, against a
-        // control of 3 of 3 audible. A wrong-but-plausible size does NOT do it
-        // -- 1x44, 1x45 and 20x44 unrequested frames all played on happily.
-        // So it is the zero length specifically, not the guess.
+        //   A ZERO-LENGTH PACKET wedges the CP-88 permanently. One. 11 trials
+        //   of 11, with a full queue and no load, cleared only by a USB reset.
         //
-        // That also settles an A/B from earlier in this hunt that came back
-        // false -> audible, true -> silent and was dismissed as noise. It was
-        // the right answer.
+        //   A NOMINAL SIZE is not a substitution but an ADDITION -- the ask it
+        //   stood in for is still in the FIFO and gets honoured a packet later
+        //   -- so every starved packet is ~44 frames of permanent surplus. And
+        //   even without that, 44,1 is not the device's rate: it asks for
+        //   44,09929, so a nominal accumulator runs 43 frames ahead in a minute
+        //   and reaches the ~200-frame cliff in about three and a half.
         //
-        // So: the surplus is real, it is counted in fbDrift, and it is the
-        // lesser evil by a wide margin. In practice this path should never run
-        // at all -- the 1024 ms feedback capture means the queue has a recent
-        // size waiting even after a 300 ms deschedule -- and `starved` counting
-        // up says it did.
+        // Returning 0 means "no packet". fillOut submits a shorter URB, or none
+        // at all, which is the free direction: absence costs nothing, and a gap
+        // in the OUT stream discards whatever deviation the device had built up.
         mStarved.fetch_add(1, std::memory_order_relaxed);
-        mNominalAcc += static_cast<int64_t>(mCfg.rate) * static_cast<int64_t>(mPeriodUs);
-        {
-            const int n = static_cast<int>(mNominalAcc / 1000000);
-            mNominalAcc -= static_cast<int64_t>(n) * 1000000;
-            return n > 0 ? n : 1;
-        }
+        return 0;
     } else if (mCfg.feedback == kExplicit && mFbQ16 != 0) {
         const uint32_t unitsPerPacket = 1u << (std::clamp(mCfg.outInterval, 1, 16) - 1);
         mFbAcc += mFbQ16 * unitsPerPacket;
@@ -333,21 +345,31 @@ int UsbAudioOut::nextFrames() {
     return n;
 }
 
-void UsbAudioOut::fillOut(Urb& b) {
+int UsbAudioOut::fillOut(Urb& b) {
     const int maxFrames = mCfg.outMaxPacket / mFrameBytes;
     int offset = 0;
+    int filled = 0;
     for (int p = 0; p < mPackets; ++p) {
+        const bool inject = mInjectSizeLeft.load(std::memory_order_relaxed) > 0 ||
+                            mInjectBiasLeft.load(std::memory_order_relaxed) > 0;
         const int want = nextFrames();
+        // NO ASK, NO PACKET. The FIFO was empty, so there is nothing the device
+        // asked for and nothing this transport is prepared to invent. The URB
+        // ends here -- short, or not submitted at all -- and serviceOut puts the
+        // stream back into pre-roll. Absence is the free direction: 11,6 s of it
+        // measured with no ill effect, and a gap in the OUT stream DISCARDS
+        // whatever deviation the device had accumulated, which makes it curative
+        // rather than merely survivable.
+        if (want <= 0 && !inject) break;
         int frames = std::clamp(want, 0, maxFrames);
         if (want != frames) mFbClamp.fetch_add(1, std::memory_order_relaxed);
-        // THE INVARIANT, enforced at the only place that can enforce it: no OUT
-        // packet is ever submitted with zero length. One of those is fatal to
-        // this device and recoverable only by USBDEVFS_RESET, so no path above
-        // -- dry queue, a zero-length IN packet echoed back, a clamp, or
-        // anything added later -- gets to produce one. If this ever fires, the
-        // rig came within a single packet of wedging and something above is
-        // wrong; `zeroAvoided` is in the health line for exactly that.
-        if (frames <= 0) {
+        // THE INVARIANT, and it is now unreachable by construction -- the push
+        // rule never enqueues a zero and the line above turns one into "no
+        // packet". It stays because `zeroAvoided` in the health line is the
+        // alarm for exactly this, and an alarm that can only ring if something
+        // above is wrong is worth its two lines. One zero-length OUT packet
+        // wedges this device permanently and only a USB reset clears it.
+        if (!inject && frames <= 0) {
             mZeroAvoided.fetch_add(1, std::memory_order_relaxed);
             frames = 1;
         }
@@ -365,9 +387,8 @@ void UsbAudioOut::fillOut(Urb& b) {
             mShaped.fetch_add(1, std::memory_order_relaxed);
         }
 
-        // THE BALANCE CEILING, and it is the whole of what this device asks of
-        // a host. Measured on the CP-88, 2026-09-23, with everything else
-        // normal and no lateness anywhere:
+        // THE ASYMMETRY THIS TRANSPORT IS SHAPED BY, measured on the CP-88 and
+        // left here as arithmetic rather than as a clamp:
         //
         //   sending LESS than it asked, cumulatively, is free. 10 s at one
         //   frame per packet below the request -- 227 ms of deficit -- played
@@ -376,37 +397,13 @@ void UsbAudioOut::fillOut(Urb& b) {
         //   the request: 175 packets survived, 190 wedged, every time. That is
         //   about 170 frames, 3,9 ms. It accumulates across gaps -- three
         //   bursts of 100 two seconds apart wedged it just the same -- so the
-        //   device is integrating, and nothing ever drains what it integrates.
+        //   device is integrating, and nothing ever drains what it integrates
+        //   except a discontinuity in the stream.
         //
-        // So the rule is not symmetric and the transport must not treat it as
-        // if it were: cumulative frames sent may never exceed cumulative frames
-        // asked. This is that rule, enforced at the only place that can enforce
-        // it, and it makes the fault impossible rather than rare. A packet cut
-        // down by it is a deficit, which costs a fraction of a millisecond of
-        // audio and is proven harmless; the alternative is a dead device and a
-        // USB reset in the middle of a piece.
-        //
-        // The model is a SATURATING accumulator, and the saturation is the
-        // whole point. Cumulative sent-minus-asked is not what the device
-        // feels: its FIFO stops at empty, so the twelve seconds of deficit a
-        // hole leaves in our books are fiction to it, and a ceiling placed on
-        // that number sits hundreds of frames the wrong side of the cliff. A
-        // level that cannot go below zero tracks the thing that can overflow.
-        if (mBalanceGuard.load(std::memory_order_relaxed)) {
-            const int64_t room = mFifoCeiling - mFifoFrames;
-            if (frames > room) {
-                // Never zero, whatever the arithmetic says: see the invariant.
-                frames = static_cast<int>(std::max<int64_t>(1, room));
-                mBalanceHeld.fetch_add(1, std::memory_order_relaxed);
-            }
-        }
-        mFifoFrames += frames;
-        {
-            int64_t seen = mFifoPeak.load(std::memory_order_relaxed);
-            while (mFifoFrames > seen &&
-                   !mFifoPeak.compare_exchange_weak(seen, mFifoFrames,
-                                                    std::memory_order_relaxed)) {}
-        }
+        // Nothing here intervenes on that any more; the pop rule makes a
+        // surplus impossible at the source, because a size is only ever one the
+        // device itself stated. These counters just watch. See the note in the
+        // header on why the ceiling that used to sit here is gone.
         {
             const int64_t bal = mFrames.load(std::memory_order_relaxed) + frames -
                                 mInFramesTotal.load(std::memory_order_relaxed);
@@ -436,11 +433,24 @@ void UsbAudioOut::fillOut(Urb& b) {
         // the samples, and it is deliberate: see the thread contract at the top
         // of this file. The producer has already mapped channels, dithered,
         // packed to the endpoint's format and concealed any shortfall.
+        //
+        // Or, while the pre-roll's silence is owed, no pull at all: the render
+        // ring was just emptied and it needs the time to rebuild. Pulling from
+        // it here would drain what little it has and hand the device the
+        // concealer's output at the exact moment the stream is restarting.
+        // SILENCE IS A CORRECTLY-SIZED PACKET OF ZEROES -- `frames` of them,
+        // the size the device asked for. It is never a zero-length packet.
         uint8_t* dst = b.data + offset;
-        const int got = mPull ? mPull(mCtx, dst, frames) : 0;
-        if (got < frames) {
-            std::memset(dst + static_cast<size_t>(got) * mFrameBytes, 0,
-                        static_cast<size_t>(frames - got) * mFrameBytes);
+        if (mSilenceFrames > 0) {
+            std::memset(dst, 0, static_cast<size_t>(frames) * mFrameBytes);
+            mSilenceFrames -= frames;
+            mSilenceTotal.fetch_add(frames, std::memory_order_relaxed);
+        } else {
+            const int got = mPull ? mPull(mCtx, dst, frames) : 0;
+            if (got < frames) {
+                std::memset(dst + static_cast<size_t>(got) * mFrameBytes, 0,
+                            static_cast<size_t>(frames - got) * mFrameBytes);
+            }
         }
 
         // MICHIEL'S EXPERIMENT: usbhost's payload, in this process.
@@ -485,9 +495,16 @@ void UsbAudioOut::fillOut(Urb& b) {
         b.u->iso_frame_desc[p].actual_length = 0;
         b.u->iso_frame_desc[p].status = 0;
         offset += bytes;
+        ++filled;
         mFrames.fetch_add(frames, std::memory_order_relaxed);
     }
+    // A URB carrying fewer packets than it was allocated for is perfectly
+    // legal, and it is the honest answer to a FIFO that ran out mid-URB: send
+    // what was asked for and nothing else. At one packet per URB -- the default
+    // -- this is always all or nothing anyway.
+    b.u->number_of_packets = filled;
     b.u->buffer_length = offset;
+    return filled;
 }
 
 void UsbAudioOut::fillIn(Urb& b, int packets, int bytesPerPacket) {
@@ -502,14 +519,17 @@ void UsbAudioOut::fillIn(Urb& b, int packets, int bytesPerPacket) {
 // ----------------------------------------------------------- completion ---
 
 void UsbAudioOut::completeIn(Urb& b) {
-    for (int p = 0; p < mPackets; ++p) {
+    for (int p = 0; p < mInPacketsPerUrb; ++p) {
         const auto& d = b.u->iso_frame_desc[p];
+        // THE PUSH RULE, and both halves of it are refusals. An IN packet with
+        // a non-zero status is not a statement about the device's clock, it is
+        // a transfer that failed; a zero-length one is not an ask for zero
+        // frames, it is the absence of an ask. Neither pushes anything. What
+        // the device DID deliver is what it wants back, and only that.
         if (d.status != 0) { mInErr.fetch_add(1, std::memory_order_relaxed); continue; }
-        // What the device delivered is what it wants back: the whole of the
-        // implicit feedback loop.
         const int frames = static_cast<int>(d.actual_length) / mCfg.fbFrameBytes;
-        // A zero-length IN packet would be echoed as a zero-length OUT packet,
-        // and one of those wedges the device for good. This path does not touch
+        // A zero pushed here would be a zero popped there, and one zero-length
+        // OUT packet wedges the device for good. This path does not touch
         // `starved`, so it is the one that could do it silently. Counted, never
         // enqueued.
         if (frames <= 0) {
@@ -534,32 +554,48 @@ void UsbAudioOut::completeIn(Urb& b) {
                    !mInSizeMax.compare_exchange_weak(seen, frames,
                                                      std::memory_order_relaxed)) {}
         }
-        // The device consumes what it asks for, so its IN packets are the only
-        // statement of its drain we get. Saturating at empty: it cannot owe us.
-        mFifoFrames -= frames;
-        if (mFifoFrames < 0) mFifoFrames = 0;
         mTrace[mTraceAt++ & (kTraceCap - 1)] = {
                 static_cast<int32_t>((nowNs() - mTraceT0) / 1000),
                 static_cast<int16_t>(frames), 1};
         mInPackets.fetch_add(1, std::memory_order_relaxed);
         mInPacketsTotal.fetch_add(1, std::memory_order_relaxed);
         mInFramesTotal.fetch_add(frames, std::memory_order_relaxed);
-        if (mSizeCount == kSizeCap) {
-            // THE QUEUE IS FULL AND SOMETHING MUST GIVE. Dropping the oldest
-            // request -- what this did before, "keep the newest" -- breaks the
-            // contract: that many frames were asked for and will never be sent.
-            // Dropping the NEWEST is equally a break, so neither choice is
-            // clean at this point; what matters is that it is counted rather
-            // than silent, because a contract broken without a counter is one
-            // nobody can argue about later. Measured at 0 across every latch
-            // reproduced so far, so this path is not the one that bites.
-            mSizeHead = (mSizeHead + 1) % kSizeCap;
+        // FULL ON AN IN REAP: POP AS YOU PUSH, so the FIFO stays full and holds
+        // the NEWEST asks. Something has to give -- a count dropped is frames
+        // the device asked for that will never be sent -- and the oldest is the
+        // one to lose: a size from 48 ms ago still describes this cadence,
+        // where one from half a second ago describes a cadence the device has
+        // moved on from. The frames in it are a debt that is acknowledged,
+        // bounded and counted in fbDrop rather than pretended away.
+        if (mSizeCount == kFifoLen) {
+            mSizeHead = (mSizeHead + 1) % kFifoLen;
             --mSizeCount;
             mFbDrop.fetch_add(1, std::memory_order_relaxed);
         }
-        mSizes[(mSizeHead + mSizeCount) % kSizeCap] = frames;
+        mSizes[(mSizeHead + mSizeCount) % kFifoLen] = frames;
         ++mSizeCount;
     }
+    noteFifoDepth();
+}
+
+// The depth is the only accounting instrument this transport has, so the spread
+// it covers over an interval is worth a line in the health log: resting in a
+// narrow band near the pre-roll depth is healthy, riding the cap means OUT is
+// not keeping up with IN, and touching zero means the stream ran dry.
+//
+// Called at BOTH ends of the cycle -- after a batch of asks is pushed and after
+// the pops that answer them -- because sampling only one of them samples one
+// phase. The first tablet run read a flat "22..22" for exactly that reason,
+// which looks like perfect balance and is really one measurement repeated.
+void UsbAudioOut::noteFifoDepth() {
+    int seen = mFifoMin.load(std::memory_order_relaxed);
+    while (mSizeCount < seen &&
+           !mFifoMin.compare_exchange_weak(seen, mSizeCount,
+                                           std::memory_order_relaxed)) {}
+    seen = mFifoMax.load(std::memory_order_relaxed);
+    while (mSizeCount > seen &&
+           !mFifoMax.compare_exchange_weak(seen, mSizeCount,
+                                           std::memory_order_relaxed)) {}
 }
 
 void UsbAudioOut::completeFeedback(Urb& b) {
@@ -590,7 +626,10 @@ void UsbAudioOut::completeFeedback(Urb& b) {
 }
 
 void UsbAudioOut::completeOut(Urb& b) {
-    for (int p = 0; p < mPackets; ++p) {
+    // What was SUBMITTED, not what was allocated: a URB whose FIFO ran out
+    // mid-fill carries fewer packets than mPackets, and the descriptors beyond
+    // it are last cycle's.
+    for (int p = 0; p < b.u->number_of_packets; ++p) {
         const auto& d = b.u->iso_frame_desc[p];
         if (d.status != 0) { mOutErr.fetch_add(1, std::memory_order_relaxed); continue; }
         // Isochronous OUT has no acknowledgement: status 0 means scheduled.
@@ -622,6 +661,134 @@ void UsbAudioOut::completeOut(Urb& b) {
     }
 }
 
+// One reaped completion. IN is finished here and now -- pushed, refilled,
+// resubmitted -- because an ask the FIFO does not hold yet is an ask that does
+// not exist. OUT is only PARKED: nothing about the output is decided until the
+// kernel's queue is empty. See the drain in reapLoop().
+bool UsbAudioOut::dispatch(void* reaped) {
+    auto* u = static_cast<usbdevfs_urb*>(reaped);
+    auto* b = static_cast<Urb*>(u->usercontext);
+    if (b == nullptr || !mRunning.load(std::memory_order_acquire)) return true;
+
+    // Per direction, because the two queues are deliberately different depths.
+    // Measuring an IN URB against the OUT ring made `late` meaningless the
+    // moment the feedback stream went deep -- every IN URB legitimately sits
+    // queued for its whole second, and the counter read 119582 in one trial.
+    if (nowNs() - b->submittedNs > 2 * (b->out ? mOutRingNs : mInRingNs)) {
+        mLate.fetch_add(1, std::memory_order_relaxed);
+    }
+
+    if (b->out) {
+        completeOut(*b);
+        mOutIdle.push_back(b);
+        return true;
+    }
+    if (mCfg.feedback == kExplicit) {
+        completeFeedback(*b);
+        fillIn(*b, 1, mCfg.fbMaxPacket);
+    } else {
+        completeIn(*b);
+        fillIn(*b, mInPacketsPerUrb, mCfg.fbMaxPacket);
+    }
+    return submit(*b);
+}
+
+// The OUT side of one wake-up, run once the kernel's queue is empty and every
+// ask it was holding is in the FIFO.
+bool UsbAudioOut::serviceOut() {
+    if (mOutIdle.empty()) return true;
+
+    // TEST ONLY: THE SHAPE A HOLE ACTUALLY HAS, with no load to make it.
+    //
+    // Under contention this transport does NOT stall symmetrically. The IN
+    // stream is 128 URBs deep, so the controller keeps servicing it from
+    // buffers already queued and the device's packets keep flowing; the OUT
+    // stream is four URBs deep, so four milliseconds after this thread stops
+    // running the OUT endpoint has nothing queued and the host puts NOTHING on
+    // the wire. The uniform reap stalls tested previously do not reproduce
+    // that: this does, and with no synthesiser, no spinners and no lateness.
+    // It sits here rather than in the reap path so that it delays the OUT
+    // submission ONLY -- IN has already been drained and resubmitted above.
+    const int64_t holdUs = mHoldOutUs.load(std::memory_order_relaxed);
+    if (holdUs > 0) {
+        bool due = true;
+        const int64_t every = mHoldOutEvery.load(std::memory_order_relaxed);
+        if (every > 1) due = (++mHoldOutSeen % every) == 0;
+        if (due && mHoldOutLeft.fetch_sub(1, std::memory_order_relaxed) > 0) {
+            timespec ts{static_cast<time_t>(holdUs / 1000000),
+                        static_cast<long>((holdUs % 1000000) * 1000)};
+            nanosleep(&ts, nullptr);
+        }
+    }
+
+    // FULL, ON AN OUT REAP. The IN side has been keeping up and the OUT side
+    // has not, which means the output gapped: the asks between then and now
+    // describe audio that was due during a silence and can never be delivered.
+    // Cut back to the pre-roll depth in one go rather than one entry at a time,
+    // because a FIFO that rides its cap is a FIFO that answers with sizes as
+    // old as the cap and drops one on every single push.
+    if (mSizeCount >= kFifoLen) {
+        while (mSizeCount > kFifoPreRoll) {
+            mSizeHead = (mSizeHead + 1) % kFifoLen;
+            --mSizeCount;
+            mFbDrop.fetch_add(1, std::memory_order_relaxed);
+        }
+        mOutTrims.fetch_add(1, std::memory_order_relaxed);
+    }
+
+    // PRE-ROLL. THE OUT STREAM IS WITHHELD ENTIRELY -- not one packet of a
+    // nominal size, not a zero-length one, nothing at all -- until the FIFO
+    // holds kFifoPreRoll asks again.
+    //
+    // This is the start-up path and the recovery path, deliberately the same
+    // code. It is also, unexpectedly, the repair: a gap in the OUT stream makes
+    // the device DISCARD whatever deviation it had accumulated, measured, with
+    // 2 ms of gap enough to do it. So the thing that looks like giving up is
+    // the thing that puts the device back at zero, and the depth we rebuild to
+    // is the phase lag we then run at -- a permanent deficit, the free
+    // direction.
+    if (mPreRoll) {
+        if (mSizeCount < kFifoPreRoll) return true;
+        mPreRoll = false;
+        mPreRolls.fetch_add(1, std::memory_order_relaxed);
+        // AND THE BALANCE STARTS AGAIN FROM HERE, because for the device it
+        // does. A gap discards whatever deviation it had accumulated, so the
+        // frames it asked for during the pre-roll and never got are not a debt
+        // it is still carrying -- and leaving the floor down there made `rise`
+        // read a permanent ~440 off a trough that no longer exists. Measured
+        // the first time this ran on the tablet: rise=441 with a flat FIFO and
+        // nothing wrong anywhere. An alarm that is always ringing is not one.
+        mBalMin = mFrames.load(std::memory_order_relaxed) -
+                  mInFramesTotal.load(std::memory_order_relaxed);
+        // EMPTY THE RENDER BUFFER, and take back the silence it owes. Whatever
+        // is in the ring is audio that was due during the gap; carrying it
+        // would turn every gap into permanent added latency, and the device
+        // absorbs about 110 frames, 2,7 ms, and no more.
+        mSilenceFrames = mFlush ? std::max(0, mFlush(mCtx)) : 0;
+    }
+
+    size_t sent = 0;
+    bool ok = true;
+    for (Urb* b : mOutIdle) {
+        // THE POP RULE. One count per packet, at exactly that size, and if the
+        // FIFO cannot fill this URB then this URB is not submitted. Nothing is
+        // ever manufactured, in either direction: a size the device did not
+        // state is fatal and cumulative, and absence is free.
+        if (mSizeCount < mPackets || fillOut(*b) <= 0) {
+            mPreRoll = true;
+            break;
+        }
+        ++sent;
+        if (!submit(*b)) { ok = false; break; }
+    }
+    if (sent > 0) {
+        mOutIdle.erase(mOutIdle.begin(),
+                       mOutIdle.begin() + static_cast<std::ptrdiff_t>(sent));
+        noteFifoDepth();
+    }
+    return ok;
+}
+
 void UsbAudioOut::reapLoop() {
     // SCHED_FIFO if the system grants it, else nice -19 -- the framework's
     // THREAD_PRIORITY_URGENT_AUDIO, measured to be granted to an ordinary app
@@ -636,15 +803,6 @@ void UsbAudioOut::reapLoop() {
                 static_cast<int64_t>(mPackets * mPeriodUs * 1000.0));
 
     int64_t lastReap = nowNs();
-    // Per direction, because the two queues are deliberately different depths
-    // now. Measuring IN URBs against the OUT ring made `late` meaningless the
-    // moment the feedback stream went deep -- every IN URB legitimately sits
-    // queued for its whole 256 ms, and the counter read 119582 in one trial.
-    const int64_t outRingNs =
-            static_cast<int64_t>(mUrbs * mPackets * mPeriodUs * 1000.0);
-    mOutRingUs = static_cast<int64_t>(mUrbs * mPackets * mPeriodUs);
-    const int64_t inRingNs =
-            static_cast<int64_t>(mInUrbs * mPackets * mPeriodUs * 1000.0);
 
     while (mRunning.load(std::memory_order_acquire)) {
         void* p = nullptr;
@@ -675,57 +833,32 @@ void UsbAudioOut::reapLoop() {
         if (gapUs > mOutRingUs) mOutDry.fetch_add(1, std::memory_order_relaxed);
         lastReap = t;
 
-        auto* u = static_cast<usbdevfs_urb*>(p);
-        auto* b = static_cast<Urb*>(u->usercontext);
-        if (b == nullptr || !mRunning.load(std::memory_order_acquire)) continue;
+        if (!dispatch(p)) break;
 
-        // CAN WE SCHEDULE EXPLICITLY? This decides whether the last structural
-        // difference from snd-usb-audio is fixable at all.
+        // DRAIN THE QUEUE TO EAGAIN BEFORE ANYTHING IS DECIDED. This is the
+        // ordering the whole transport rests on and it is not optional.
         //
-        // Every URB here carries USBDEVFS_URB_ISO_ASAP, so a drained endpoint
-        // does not RESUME the stream, it starts a new one at whatever frame the
-        // controller has reached. The kernel driver sets ASAP only on the first
-        // URB and schedules the rest by explicit start_frame, which keeps the
-        // stream contiguous across a late submission. Doing the same needs the
-        // controller to tell us frame numbers; usbhost recorded start_frame as
-        // 0 for every URB on this tablet, which would make it impossible.
-        // Logged for the first few of each direction, with USBDEVFS_GETFRAME
-        // alongside as the other possible source.
-        if (t - b->submittedNs > 2 * (b->out ? outRingNs : inRingNs)) {
-            mLate.fetch_add(1, std::memory_order_relaxed);
+        // One REAPURB returns ONE completion, and the kernel holds whatever
+        // else is ready: 0-2 when this thread is keeping up, but 18-19 measured
+        // after a 30 ms stall. At 8 packets per IN URB that is up to ~150 asks
+        // sitting unread -- and the FIFO depth is the only accounting
+        // instrument that exists here, because usbfs will not tell us a frame
+        // number by any route (probed exhaustively, section 35). Deciding
+        // anything about the OUT side against a depth that stale is deciding
+        // against a number that is simply wrong, and the trim would throw away
+        // asks that had already arrived.
+        //
+        // So: every completion the kernel is holding, IN first by construction
+        // -- pushed and resubmitted -- and only then serviceOut.
+        bool drained = true;
+        for (;;) {
+            void* q = nullptr;
+            if (ioctl(mCfg.fd, USBDEVFS_REAPURBNDELAY, &q) < 0) break;
+            if (!dispatch(q)) { drained = false; break; }
         }
+        if (!drained) break;
 
-        if (b->out) {
-            // TEST ONLY: THE SHAPE A HOLE ACTUALLY HAS, with no load to make it.
-            //
-            // Under contention this transport does NOT stall symmetrically.
-            // The IN stream is 512 URBs deep, so the controller keeps servicing
-            // it from buffers already queued and the device's packets keep
-            // flowing; the OUT stream is three URBs deep, so six milliseconds
-            // after this thread stops running the OUT endpoint has nothing
-            // queued and the host puts NOTHING on the wire. The uniform reap
-            // stalls tested previously do not reproduce that: this does, and it
-            // does it with no synthesiser, no spinners and no lateness.
-            const int64_t holdUs = mHoldOutUs.load(std::memory_order_relaxed);
-            const int64_t every = mHoldOutEvery.load(std::memory_order_relaxed);
-            bool due = true;
-            if (every > 1) due = (++mHoldOutSeen % every) == 0;
-            if (holdUs > 0 && due &&
-                mHoldOutLeft.fetch_sub(1, std::memory_order_relaxed) > 0) {
-                timespec ts{static_cast<time_t>(holdUs / 1000000),
-                            static_cast<long>((holdUs % 1000000) * 1000)};
-                nanosleep(&ts, nullptr);
-            }
-            completeOut(*b);
-            fillOut(*b);
-        } else if (mCfg.feedback == kExplicit) {
-            completeFeedback(*b);
-            fillIn(*b, 1, mCfg.fbMaxPacket);
-        } else {
-            completeIn(*b);
-            fillIn(*b, mPackets, mCfg.fbMaxPacket);
-        }
-        if (!submit(*b)) break;
+        if (!serviceOut()) break;
 
         // WHAT THE WORK ACTUALLY COST, which is not the same as the period.
         //
@@ -765,11 +898,15 @@ UsbAudioOut::Stats UsbAudioOut::stats() const {
     s.balPeak = mBalPeak.exchange(std::numeric_limits<int64_t>::min(),
                                   std::memory_order_relaxed);
     s.balRise = mBalRise.exchange(0, std::memory_order_relaxed);
-    s.fifoPeak = mFifoPeak.exchange(0, std::memory_order_relaxed);
     s.outShort = mOutShort.load(std::memory_order_relaxed);
     s.outOdd = mOutOdd.load(std::memory_order_relaxed);
     s.outDry = mOutDry.load(std::memory_order_relaxed);
-    s.balanceHeld = mBalanceHeld.load(std::memory_order_relaxed);
+    s.preRolls = mPreRolls.load(std::memory_order_relaxed);
+    s.silenceFrames = mSilenceTotal.load(std::memory_order_relaxed);
+    s.outTrims = mOutTrims.load(std::memory_order_relaxed);
+    // Reset on read, like the other spreads: each sample its own interval.
+    s.fifoMin = mFifoMin.exchange(1 << 30, std::memory_order_relaxed);
+    s.fifoMax = mFifoMax.exchange(0, std::memory_order_relaxed);
     s.maxGapMs = mMaxGapUs.load(std::memory_order_relaxed) / 1000.0f;
     s.feedbackRate = mFbRate.load(std::memory_order_relaxed);
     const int64_t start = mStartNs.load(std::memory_order_relaxed);

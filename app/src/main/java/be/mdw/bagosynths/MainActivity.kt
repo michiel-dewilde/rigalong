@@ -200,7 +200,6 @@ class MainActivity : Activity() {
         filter.addAction("be.mdw.bagosynths.SIZE")
         filter.addAction("be.mdw.bagosynths.BIAS")
         filter.addAction("be.mdw.bagosynths.STARVE")
-        filter.addAction("be.mdw.bagosynths.GUARD")
         filter.addAction("be.mdw.bagosynths.TONE")
         filter.addAction("be.mdw.bagosynths.INDEPTH")
         filter.addAction("be.mdw.bagosynths.DUMP")
@@ -1895,12 +1894,6 @@ class MainActivity : Activity() {
                     NativeBridge.nativeSetUsbTone(hz)
                     android.util.Log.i("bos-ui", "usb payload: " +
                         if (hz > 0f) "synthetic tone ${hz} Hz" else "the engine")
-                }
-                //   ... .GUARD --ei on 0    overfeeding allowed again
-                "be.mdw.bagosynths.GUARD" -> {
-                    val on = intent.getIntExtra("on", 1) != 0
-                    NativeBridge.nativeSetBalanceGuard(on)
-                    android.util.Log.i("bos-ui", "balance ceiling: " + if (on) "ON" else "OFF")
                 }
                 //   ... .STARVE --ei n 4     the dry-queue path, on demand
                 "be.mdw.bagosynths.STARVE" -> {

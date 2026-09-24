@@ -278,7 +278,6 @@ public:
     void injectUsbSize(int count, int frames) { mUsbOut.injectSize(count, frames); }
     void injectUsbBias(int count, int delta) { mUsbOut.injectBias(count, delta); }
     void injectUsbStarve(int count) { mUsbOut.injectStarve(count); }
-    void setUsbBalanceGuard(bool on) { mUsbOut.setBalanceGuard(on); }
     void setUsbTone(float hz) { mUsbOut.setTone(hz); }
     void dumpUsbTrace(const char* path) { mUsbOut.dumpTrace(path); }
     void holdUsbOut(int us, int count, int every) { mUsbOut.holdOut(us, count, every); }
@@ -352,6 +351,8 @@ private:
     /** Device-format bytes for the USB sink. Conceals a shortfall in place. */
     uint32_t pullBytes(uint8_t* dst, uint32_t want);
     static int pullBytesForUsb(void* ctx, uint8_t* dst, int frames);
+    int flushBytes();
+    static int flushBytesForUsb(void* ctx);
     /** Stereo float -> the endpoint's channel count and sample format. */
     void packForUsb(uint8_t* dst, const float* stereo, int frames);
     /** Conceal `missing` frames at `dst`, in the device's packed format. */

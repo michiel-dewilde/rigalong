@@ -143,11 +143,6 @@ Java_be_mdw_bagosynths_NativeBridge_nativeInjectStarve(JNIEnv*, jobject, jint co
     engine().injectUsbStarve(count);
 }
 
-JNIEXPORT void JNICALL
-Java_be_mdw_bagosynths_NativeBridge_nativeSetBalanceGuard(JNIEnv*, jobject, jboolean on) {
-    engine().setUsbBalanceGuard(on == JNI_TRUE);
-}
-
 std::atomic<int> gInDepthMs{1024};
 
 JNIEXPORT void JNICALL
@@ -952,7 +947,17 @@ Java_be_mdw_bagosynths_NativeBridge_nativeStartUsbAudio(JNIEnv* env, jobject, ji
     // on the same device as the OUT endpoint that must not miss its deadline.
     // Settable so it can be A/B'd against usbhost's own depth.
     cfg.inBufferMs = gInDepthMs.load(std::memory_order_relaxed);
-    cfg.packetsPerUrb = 2;   // measured: 1 ms URBs are worse, 4 no better
+    // ONE PACKET PER OUT URB, EIGHT PER IN URB. Not symmetry, and not taste:
+    // the OUT number buys slack and the IN number saves wake-ups.
+    //
+    // Slack -- how long this process may be away before the wire goes silent --
+    // is `(urbs - 1) x packets`, measured exactly linear. At the same 8 ms of
+    // latency, 8x1 / 4x2 / 2x4 give 7 / 6 / 4 ms of it, so the finest division
+    // of the same depth is simply the best one. The old 2 came with a note that
+    // 1 ms URBs "are worse", which was measured against a transport that
+    // invented a size when it fell behind; this one cannot.
+    cfg.packetsPerUrb = 1;
+    cfg.inPacketsPerUrb = 8;
 
     std::string startErr;
     if (!engine().startUsb(cfg, &startErr)) {

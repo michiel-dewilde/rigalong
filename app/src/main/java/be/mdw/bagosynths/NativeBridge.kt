@@ -43,9 +43,6 @@ object NativeBridge {
     /** The next [count] OUT packets skip the feedback queue. TEST ONLY. */
     external fun nativeInjectStarve(count: Int)
 
-    /** The cumulative-balance ceiling. Off only to reproduce the old fault. */
-    external fun nativeSetBalanceGuard(on: Boolean)
-
     /** Replaces the USB payload with a tone, load and sizes unchanged. TEST ONLY. */
     external fun nativeSetUsbTone(hz: Float)
 
