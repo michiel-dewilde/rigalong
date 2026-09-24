@@ -147,19 +147,23 @@ Java_be_mdw_bagosynths_NativeBridge_nativeInjectStarve(JNIEnv*, jobject, jint co
 // broadcast, because the two policies below differ in five numbers and an A/B
 // that needs a rebuild between arms is an A/B nobody runs twice.
 //
-//   resync (default):  in 12 ms, fifo 12/8, a full FIFO forces a gap
-//                      -- latched 1 of 10
+//   resync (default):  in 24 ms, fifo 24/20, a full FIFO forces a gap
+//                      -- latched 0 of 10
 //   trim (section 36): in 1024 ms, fifo 48/24, a full FIFO is trimmed
 //                      -- latched 4 of 7, and 5 of 6 at the SAME 12/8 geometry
-std::atomic<int> gInDepthMs{12};
+std::atomic<int> gInDepthMs{24};
 std::atomic<int> gInPktsPerUrb{1};
-std::atomic<int> gFifoLen{12};
-std::atomic<int> gFifoPreRoll{8};
+std::atomic<int> gFifoLen{24};
+std::atomic<int> gFifoPreRoll{20};
 std::atomic<int> gFifoResync{1};
+// Packets per OUT URB. Latency is urbs x packets x period and is set by
+// `buffer`; this decides how that depth is DIVIDED, which is the slack --
+// (urbs - 1) x packets -- and is a variable in its own right.
+std::atomic<int> gOutPktsPerUrb{1};
 
 JNIEXPORT void JNICALL
 Java_be_mdw_bagosynths_NativeBridge_nativeSetInDepthMs(JNIEnv*, jobject, jint ms) {
-    gInDepthMs.store(ms > 0 ? ms : 12, std::memory_order_relaxed);
+    gInDepthMs.store(ms > 0 ? ms : 24, std::memory_order_relaxed);
 }
 
 // The whole size-FIFO geometry in one call, so the resync and trim policies can
@@ -167,7 +171,8 @@ Java_be_mdw_bagosynths_NativeBridge_nativeSetInDepthMs(JNIEnv*, jobject, jint ms
 JNIEXPORT void JNICALL
 Java_be_mdw_bagosynths_NativeBridge_nativeSetFifo(JNIEnv*, jobject, jint len,
                                                   jint preRoll, jint resync,
-                                                  jint inPkts) {
+                                                  jint inPkts, jint outPkts) {
+    if (outPkts > 0) gOutPktsPerUrb.store(outPkts, std::memory_order_relaxed);
     if (len > 0) gFifoLen.store(len, std::memory_order_relaxed);
     if (preRoll > 0) gFifoPreRoll.store(preRoll, std::memory_order_relaxed);
     if (resync >= 0) gFifoResync.store(resync, std::memory_order_relaxed);
@@ -980,7 +985,7 @@ Java_be_mdw_bagosynths_NativeBridge_nativeStartUsbAudio(JNIEnv* env, jobject, ji
     // of the same depth is simply the best one. The old 2 came with a note that
     // 1 ms URBs "are worse", which was measured against a transport that
     // invented a size when it fell behind; this one cannot.
-    cfg.packetsPerUrb = 1;
+    cfg.packetsPerUrb = gOutPktsPerUrb.load(std::memory_order_relaxed);
     cfg.inPacketsPerUrb = gInPktsPerUrb.load(std::memory_order_relaxed);
     cfg.fifoLength = gFifoLen.load(std::memory_order_relaxed);
     cfg.fifoPreRoll = gFifoPreRoll.load(std::memory_order_relaxed);

@@ -164,7 +164,7 @@ public:
         // free -- so under the resync policy below, 8 ms of IN is a deliberate
         // choice and not a regression. `inLost` will read in the hundreds under
         // load and that is expected, not a fault.
-        int inBufferMs = 12;         // feedback capture depth; NOT latency
+        int inBufferMs = 24;         // feedback capture depth; NOT latency
 
         // THE SIZE FIFO'S GEOMETRY, and the pre-roll depth is not free to
         // choose: IT MUST EXCEED THE OUT RING. Filling the ring consumes
@@ -173,10 +173,23 @@ public:
         // scrap of jitter runs it dry again. Measured 2026-09-25: 8/4 idled at
         // `fifo=0..2` with eight pre-rolls before it settled, then thrashed
         // under load -- ~1400 pre-rolls and 6,8 s of injected silence per
-        // trial -- and latched 4 of 4. 12/8 leaves four packets of margin,
-        // idles at `fifo=3..4` with one pre-roll, and latched 1 of 10.
-        int fifoLength = 12;
-        int fifoPreRoll = 8;
+        // trial -- and latched 4 of 4.
+        //
+        // The margin is monotone from there, all at 4 OUT URBs: 12/8
+        // (margin 4) latched 3 of 20, 16/12 (margin 8) 1 of 10, 24/20
+        // (margin 16) 0 of 10. Those three are NOT distinguishable from one
+        // another at ten trials each -- only the ends of the range are -- so
+        // 24/20 is the best point estimate rather than a proven optimum. It
+        // is chosen because the margin costs only phase lag, and phase lag
+        // is the free direction.
+        //
+        // And the BAND -- length minus pre-roll, how far the host may drift
+        // before it resyncs -- is the other half: 24/8 is the same length
+        // with a band of 16 and it latched 6 of 10, against 24/20's 0 of 10
+        // at band 4. So it is not how STALE an ask may get that matters, it
+        // is how far behind the host is allowed to run before it gives up.
+        int fifoLength = 24;
+        int fifoPreRoll = 20;
         // true: a full FIFO clears it and forces a pre-roll, so the device
         // resyncs on a gap. false: a full FIFO is trimmed back to the pre-roll
         // depth and the stream stays contiguous. See mFifoResync.
@@ -477,7 +490,7 @@ private:
     // buffer quietly starts returning the wrong entry.
     static constexpr int kFifoCap = 64;
     int mSizes[kFifoCap] = {};
-    int mFifoLen = 12, mFifoPreRoll = 8;
+    int mFifoLen = 24, mFifoPreRoll = 20;
     int mSizeHead = 0, mSizeCount = 0;
 
     // WHAT TO DO WHEN THE FIFO FILLS, and it is the whole experiment of

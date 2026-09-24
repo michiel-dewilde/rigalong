@@ -1892,10 +1892,16 @@ class MainActivity : Activity() {
                     val res = intent.getIntExtra("resync", -1)
                     val pkt = intent.getIntExtra("inpkts", -1)
                     val dep = intent.getIntExtra("indepth", -1)
-                    NativeBridge.nativeSetFifo(len, pre, res, pkt)
+                    val opk = intent.getIntExtra("outpkts", -1)
+                    NativeBridge.nativeSetFifo(len, pre, res, pkt, opk)
                     if (dep > 0) NativeBridge.nativeSetInDepthMs(dep)
+                    if (intent.hasExtra("buffer")) {
+                        val ms = intent.getIntExtra("buffer", UsbBuffers.DEFAULT_MS)
+                        if (ms in 2..64) usbBufferMs = ms
+                    }
                     android.util.Log.i("bos-ui",
-                        "fifo: len=$len preRoll=$pre resync=$res inPkts=$pkt inDepth=$dep (restarting)")
+                        "fifo: len=$len preRoll=$pre resync=$res inPkts=$pkt " +
+                        "outPkts=$opk inDepth=$dep buffer=$usbBufferMs (restarting)")
                     resetAudioPath()
                 }
                 //   ... .INDEPTH --ei ms 16   usbhost's feedback depth

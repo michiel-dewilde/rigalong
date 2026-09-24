@@ -1439,7 +1439,7 @@ AudioEngine::Stats AudioEngine::stats() const {
             mLastHealthLogAt.store(now, std::memory_order_relaxed);
             const std::string why = mUsbOut.fatal();
             LOGI("health usb %s  out=%.4f cb=%.4f voices=%d/%d frames=%lld deficit=%.1fms "
-                 "late=%lld starved=%lld errors=%lld fb=%.1fHz ringUnder=%lld ringTarget=%.1fms "
+                 "late=%lld starved=%lld errors=%lld fb=%.1fHz ringUnder=%lld concealed=%lld ringTarget=%.1fms "
                  "inSize=%d..%d/%lld fbDrift=%lld fbDrop=%lld fbClamp=%lld "
                  "inLost=%lld zeroAvoided=%lld shaped=%lld bal=%lld/%lld rise=%lld "
                  "fifo=%d..%d preRoll=%lld resync=%lld trim=%lld silence=%lld "
@@ -1454,6 +1454,15 @@ AudioEngine::Stats AudioEngine::stats() const {
                  static_cast<long long>(u.outErrors + u.inErrors),
                  static_cast<double>(u.feedbackRate),
                  static_cast<long long>(mRingUnderruns.load(std::memory_order_relaxed)),
+                 // FRAMES OF AUDIO THE RENDERER DID NOT PRODUCE IN TIME, and
+                 // the direct measure of chopping. It is a RENDER-side fault,
+                 // not a transport one: a late render leaves the byte ring
+                 // short, the reap thread still sends a correctly sized packet,
+                 // and what is in it is concealment. So this number moving is
+                 // sfizz reaching for a sample that is not in memory yet, and
+                 // no amount of USB buffer fixes it -- only a deeper render
+                 // reserve, which `ringTarget` beside it is already adapting.
+                 static_cast<long long>(mConcealedTotal.load(std::memory_order_relaxed)),
                  // The adaptive reserve, in milliseconds. Watching it is the
                  // only way to see the growth and shrink policy behave.
                  1000.0 * mTargetFill.load(std::memory_order_relaxed) / currentRate(),
