@@ -71,12 +71,12 @@
 // POP:  exactly one count per OUT packet, sent at exactly that size. If the
 //       FIFO cannot fill the URB, the URB is not submitted. A size is NEVER
 //       synthesised, in either direction.
-// FULL, on an IN reap:  pop as you push, so the FIFO stays full and holds the
-//       NEWEST asks -- a size from 48 ms ago still describes this cadence; one
-//       from half a second ago does not.
-// FULL, on an OUT reap: the output gapped too, so cut back to the pre-roll
-//       depth in one go.
-// DRY:  submit NOTHING until the FIFO holds kFifoPreRoll again, then discard
+// FULL: OUT has fallen behind IN. Under the RESYNC policy (the default since
+//       2026-09-25) the FIFO is cleared and the stream drops into pre-roll, so
+//       the device gets the gap that makes it discard its accumulated
+//       deviation. Under the TRIM policy it is cut back to the pre-roll depth
+//       and the stream stays contiguous. See mFifoResync for the argument.
+// DRY:  submit NOTHING until the FIFO holds mFifoPreRoll again, then discard
 //       the render backlog and send silence at the popped sizes while the
 //       renderer rebuilds, then cut over to live audio.
 //
@@ -155,7 +155,32 @@ public:
         // latch came back 3 of 3. The budget, not the principle, was wrong.
         // 1024 ms is 512 URBs x 2 packets x 270 bytes, about 276 kB, and still
         // costs exactly nothing in latency.
-        int inBufferMs = 1024;       // feedback capture depth; NOT latency
+        //
+        // AND IT MAY NO LONGER HAVE A JOB, 2026-09-25. The depth was bought to
+        // stop asks being LOST while this process was descheduled, because a
+        // FIFO that ran dry then invented a nominal size, which is fatal. That
+        // path is gone: a dry FIFO now withholds the OUT stream instead. A lost
+        // ask is simply an ask never answered, which is a deficit, which is
+        // free -- so under the resync policy below, 8 ms of IN is a deliberate
+        // choice and not a regression. `inLost` will read in the hundreds under
+        // load and that is expected, not a fault.
+        int inBufferMs = 12;         // feedback capture depth; NOT latency
+
+        // THE SIZE FIFO'S GEOMETRY, and the pre-roll depth is not free to
+        // choose: IT MUST EXCEED THE OUT RING. Filling the ring consumes
+        // `mUrbs x mPackets` asks the instant the pre-roll releases, so a
+        // pre-roll of 4 against 4 OUT URBs leaves the FIFO at ZERO and every
+        // scrap of jitter runs it dry again. Measured 2026-09-25: 8/4 idled at
+        // `fifo=0..2` with eight pre-rolls before it settled, then thrashed
+        // under load -- ~1400 pre-rolls and 6,8 s of injected silence per
+        // trial -- and latched 4 of 4. 12/8 leaves four packets of margin,
+        // idles at `fifo=3..4` with one pre-roll, and latched 1 of 10.
+        int fifoLength = 12;
+        int fifoPreRoll = 8;
+        // true: a full FIFO clears it and forces a pre-roll, so the device
+        // resyncs on a gap. false: a full FIFO is trimmed back to the pre-roll
+        // depth and the stream stays contiguous. See mFifoResync.
+        bool fifoResync = true;
 
         // PACKETS PER URB, which is NOT the same knob as latency and was
         // hardcoded to 2 ms until 2026-09-23.
@@ -191,7 +216,7 @@ public:
         // That is the point -- the asks are not late, they are BATCHED, and
         // the FIFO below absorbs the batch. 128 URBs x 8 packets is the same
         // 1024 ms of depth for a quarter of the reaps.
-        int inPacketsPerUrb = 8;
+        int inPacketsPerUrb = 1;
     };
 
     // Fills `frames` frames of audio ALREADY IN THE DEVICE'S FORMAT -- the
@@ -257,6 +282,7 @@ public:
         int64_t preRolls = 0;    // times the OUT stream was withheld and restarted
         int64_t silenceFrames = 0;   // frames of pre-roll silence sent, cumulative
         int64_t outTrims = 0;        // times a full FIFO was cut back on an OUT reap
+        int64_t resyncs = 0;         // times a full FIFO forced a gap to resync the device
         int32_t fifoMin = 0;         // size-FIFO depth, this interval
         int32_t fifoMax = 0;
         int64_t fbDrop = 0;          // requests discarded on queue overflow
@@ -444,13 +470,38 @@ private:
     // accumulated -- measured, and 2 ms of gap is enough. That is why running
     // dry is not a disaster here but a reset, and why the pre-roll below is a
     // deliberate mechanism rather than an apology.
-    static constexpr int kFifoLen = 48;
-    static constexpr int kFifoPreRoll = 24;
-    int mSizes[kFifoLen] = {};
+    // The array is the biggest the FIFO may be configured to; the working
+    // length and the pre-roll depth are RUNTIME values, so the geometry can be
+    // swept from a broadcast instead of a rebuild. The modulus below is always
+    // the capacity, never the working length -- mixing the two is how a ring
+    // buffer quietly starts returning the wrong entry.
+    static constexpr int kFifoCap = 64;
+    int mSizes[kFifoCap] = {};
+    int mFifoLen = 12, mFifoPreRoll = 8;
     int mSizeHead = 0, mSizeCount = 0;
 
+    // WHAT TO DO WHEN THE FIFO FILLS, and it is the whole experiment of
+    // 2026-09-25 late. Michiel:
+    //
+    //   "whenever the fifo is full (all INs processed), you clean the fifo with
+    //    a new pre-roll (disrupting OUT for a bit so the device resyncs)"
+    //
+    // TRIM (false) absorbs the backlog: discard the oldest asks, keep the
+    // stream contiguous, carry on. It is the conservative choice and it is what
+    // section 36 shipped -- and the rig still latched under it, with 924 gaps
+    // and a wire that was perfect to the frame.
+    //
+    // RESYNC (true) does the opposite. A full FIFO means OUT has fallen behind
+    // IN, and rather than quietly catching up it CLEARS the FIFO and drops into
+    // pre-roll: the wire goes silent for a few milliseconds, and a gap is the
+    // one thing measured to make the device discard whatever deviation it had
+    // accumulated (section 34 -- 2 ms is enough). The cost is an audible seam
+    // every time the host falls 8 ms behind, which is a real cost and the
+    // reason this is a flag rather than a decision.
+    bool mFifoResync = true;
+
     // PRE-ROLL: the OUT stream is WITHHELD -- no URB submitted at all, not one
-    // of a nominal size -- until the FIFO has rebuilt to kFifoPreRoll. True at
+    // of a nominal size -- until the FIFO has rebuilt to mFifoPreRoll. True at
     // start and whenever the FIFO runs dry.
     bool mPreRoll = true;
     // Frames of silence still owed while the render ring rebuilds after the
@@ -462,6 +513,7 @@ private:
     std::atomic<int64_t> mPreRolls{0};
     std::atomic<int64_t> mSilenceTotal{0};
     std::atomic<int64_t> mOutTrims{0};
+    std::atomic<int64_t> mResyncs{0};
     mutable std::atomic<int32_t> mFifoMin{1 << 30};
     mutable std::atomic<int32_t> mFifoMax{0};
 

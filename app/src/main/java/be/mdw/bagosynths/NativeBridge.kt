@@ -43,6 +43,9 @@ object NativeBridge {
     /** The next [count] OUT packets skip the feedback queue. TEST ONLY. */
     external fun nativeInjectStarve(count: Int)
 
+    /** The size FIFO's geometry and its full-FIFO policy; -1 leaves a field alone. */
+    external fun nativeSetFifo(len: Int, preRoll: Int, resync: Int, inPkts: Int)
+
     /** Replaces the USB payload with a tone, load and sizes unchanged. TEST ONLY. */
     external fun nativeSetUsbTone(hz: Float)
 

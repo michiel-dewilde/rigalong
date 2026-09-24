@@ -1442,7 +1442,7 @@ AudioEngine::Stats AudioEngine::stats() const {
                  "late=%lld starved=%lld errors=%lld fb=%.1fHz ringUnder=%lld ringTarget=%.1fms "
                  "inSize=%d..%d/%lld fbDrift=%lld fbDrop=%lld fbClamp=%lld "
                  "inLost=%lld zeroAvoided=%lld shaped=%lld bal=%lld/%lld rise=%lld "
-                 "fifo=%d..%d preRoll=%lld trim=%lld silence=%lld "
+                 "fifo=%d..%d preRoll=%lld resync=%lld trim=%lld silence=%lld "
                  "outShort=%lld outOdd=%lld outDry=%lld%s%s",
                  s.usbRunning ? "ok" : "DOWN",
                  static_cast<double>(s.outputPeak),
@@ -1483,7 +1483,11 @@ AudioEngine::Stats AudioEngine::stats() const {
                  // MORE than was asked wedges the CP-88 at about +170 frames;
                  // sending less is free. Both of these must stay negative.
                  static_cast<long long>(u.balance),
-                 static_cast<long long>(u.balPeak),
+                 // balPeak's "no samples" sentinel is INT64_MIN, and an
+                 // interval in which not one IN packet arrived printed it raw:
+                 // bal=.../-9223372036854775808. Report the running balance
+                 // instead, which is the honest value for an empty interval.
+                 static_cast<long long>(u.inPackets ? u.balPeak : u.balance),
                  // How far the balance climbed back off its own floor: the
                  // only part of the deficit the device can actually feel,
                  // because its FIFO stops at empty and ours does not.
@@ -1502,6 +1506,12 @@ AudioEngine::Stats AudioEngine::stats() const {
                  // discarded render backlog, so the count is the thing to
                  // watch under load.
                  static_cast<long long>(u.preRolls),
+                 // Times a full FIFO forced a gap instead of catching up: the
+                 // host had fallen a whole FIFO behind, so the stream was cut
+                 // and restarted to make the device discard its accumulated
+                 // deviation. Each one is an audible seam, so this is the price
+                 // of the resync policy, in events.
+                 static_cast<long long>(u.resyncs),
                  // Times a full FIFO was cut back on an OUT reap: asks that
                  // arrived while nothing was going out.
                  static_cast<long long>(u.outTrims),

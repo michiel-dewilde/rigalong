@@ -120,7 +120,11 @@ bool UsbAudioOut::start(const Config& config, PullFn pull, FlushFn flush, void* 
     mTraceT0 = nowNs();
     mPreRoll = true;
     mSilenceFrames = 0;
-    mPreRolls = 0; mSilenceTotal = 0; mOutTrims = 0;
+    mPreRolls = 0; mSilenceTotal = 0; mOutTrims = 0; mResyncs = 0;
+    mFifoLen = std::clamp(mCfg.fifoLength > 0 ? mCfg.fifoLength : 8, 2, kFifoCap);
+    mFifoPreRoll = std::clamp(mCfg.fifoPreRoll > 0 ? mCfg.fifoPreRoll : mFifoLen / 2,
+                              1, mFifoLen - 1);
+    mFifoResync = mCfg.fifoResync;
     mFifoMin = 1 << 30; mFifoMax = 0;
     mOutIdle.clear();
     mOutIdle.reserve(static_cast<size_t>(mUrbs));
@@ -194,7 +198,7 @@ bool UsbAudioOut::start(const Config& config, PullFn pull, FlushFn flush, void* 
     }
 
     // NO OUT URB IS SUBMITTED HERE. Every one of them starts idle and the reap
-    // thread's pre-roll releases them once the FIFO holds kFifoPreRoll asks --
+    // thread's pre-roll releases them once the FIFO holds mFifoPreRoll asks --
     // the same path a dry FIFO takes later, so the stream's first packet and
     // its first packet after a gap are produced by exactly one piece of code.
     // Starting the OUT stream here would mean sizing packets before the device
@@ -214,7 +218,7 @@ bool UsbAudioOut::start(const Config& config, PullFn pull, FlushFn flush, void* 
          mCfg.feedback == kImplicit ? mInUrbs : 0,
          mCfg.feedback == kImplicit ? mInPacketsPerUrb : 0,
          mCfg.feedback == kImplicit ? mInUrbs * inUrbMs : 0.0,
-         kFifoPreRoll, kFifoLen,
+         mFifoPreRoll, mFifoLen,
          mCfg.feedback == kImplicit ? "implicit" : mCfg.feedback == kExplicit ? "explicit" : "none");
     return true;
 }
@@ -303,7 +307,7 @@ int UsbAudioOut::nextFrames() {
         }
         if (!starve && mSizeCount > 0) {
             const int n = mSizes[mSizeHead];
-            mSizeHead = (mSizeHead + 1) % kFifoLen;
+            mSizeHead = (mSizeHead + 1) % kFifoCap;
             --mSizeCount;
             return n;
         }
@@ -567,12 +571,12 @@ void UsbAudioOut::completeIn(Urb& b) {
         // where one from half a second ago describes a cadence the device has
         // moved on from. The frames in it are a debt that is acknowledged,
         // bounded and counted in fbDrop rather than pretended away.
-        if (mSizeCount == kFifoLen) {
-            mSizeHead = (mSizeHead + 1) % kFifoLen;
+        if (mSizeCount >= mFifoLen) {
+            mSizeHead = (mSizeHead + 1) % kFifoCap;
             --mSizeCount;
             mFbDrop.fetch_add(1, std::memory_order_relaxed);
         }
-        mSizes[(mSizeHead + mSizeCount) % kFifoLen] = frames;
+        mSizes[(mSizeHead + mSizeCount) % kFifoCap] = frames;
         ++mSizeCount;
     }
     noteFifoDepth();
@@ -696,8 +700,6 @@ bool UsbAudioOut::dispatch(void* reaped) {
 // The OUT side of one wake-up, run once the kernel's queue is empty and every
 // ask it was holding is in the FIFO.
 bool UsbAudioOut::serviceOut() {
-    if (mOutIdle.empty()) return true;
-
     // TEST ONLY: THE SHAPE A HOLE ACTUALLY HAS, with no load to make it.
     //
     // Under contention this transport does NOT stall symmetrically. The IN
@@ -721,24 +723,55 @@ bool UsbAudioOut::serviceOut() {
         }
     }
 
-    // FULL, ON AN OUT REAP. The IN side has been keeping up and the OUT side
-    // has not, which means the output gapped: the asks between then and now
-    // describe audio that was due during a silence and can never be delivered.
-    // Cut back to the pre-roll depth in one go rather than one entry at a time,
-    // because a FIFO that rides its cap is a FIFO that answers with sizes as
-    // old as the cap and drops one on every single push.
-    if (mSizeCount >= kFifoLen) {
-        while (mSizeCount > kFifoPreRoll) {
-            mSizeHead = (mSizeHead + 1) % kFifoLen;
-            --mSizeCount;
-            mFbDrop.fetch_add(1, std::memory_order_relaxed);
+    // THE FIFO IS FULL: OUT HAS FALLEN BEHIND IN. Two answers, and which one is
+    // right is the open question of 2026-09-25.
+    //
+    // RESYNC (Michiel's, the default). Clear the FIFO and drop into pre-roll.
+    // The in-flight URBs drain, the wire goes quiet for a few milliseconds while
+    // mFifoPreRoll fresh asks arrive, and then the stream starts again from the
+    // live edge. That silence is the point: section 34 measured a gap as the one
+    // thing that makes this device DISCARD the deviation it has accumulated, and
+    // 2 ms is enough to do it. So instead of catching up -- which is what a host
+    // that has fallen behind cannot honestly do, since it has no idea what the
+    // device did with the packets it missed -- the transport takes the device
+    // back to a known state.
+    //
+    // TRIM (what section 36 shipped). Discard the oldest asks, keep the stream
+    // contiguous, carry on. Conservative, seamless, and the rig latched under it
+    // with 924 gaps and a wire that was perfect to the frame -- which is exactly
+    // why the other answer is worth measuring.
+    //
+    // The trigger is deliberately the same for both, and it is read AFTER the
+    // IN queue has been drained: a depth of mFifoLen means the host is that many
+    // packets behind, and with 8/4 that is 8 ms, about one OUT ring plus its
+    // slack.
+    if (mSizeCount >= mFifoLen) {
+        if (mFifoResync) {
+            // Clear, not trim. Trimming to mFifoPreRoll would leave enough asks
+            // to fill every idle URB immediately, so there would be no gap at
+            // all and the whole mechanism would be a no-op that counted itself.
+            mFbDrop.fetch_add(mSizeCount, std::memory_order_relaxed);
+            mSizeHead = 0;
+            mSizeCount = 0;
+            mPreRoll = true;
+            mResyncs.fetch_add(1, std::memory_order_relaxed);
+        } else {
+            while (mSizeCount > mFifoPreRoll) {
+                mSizeHead = (mSizeHead + 1) % kFifoCap;
+                --mSizeCount;
+                mFbDrop.fetch_add(1, std::memory_order_relaxed);
+            }
+            mOutTrims.fetch_add(1, std::memory_order_relaxed);
         }
-        mOutTrims.fetch_add(1, std::memory_order_relaxed);
     }
+
+    // Nothing to submit into. The decision above still had to be taken, because
+    // the FIFO can fill while every OUT URB is in flight.
+    if (mOutIdle.empty()) return true;
 
     // PRE-ROLL. THE OUT STREAM IS WITHHELD ENTIRELY -- not one packet of a
     // nominal size, not a zero-length one, nothing at all -- until the FIFO
-    // holds kFifoPreRoll asks again.
+    // holds mFifoPreRoll asks again.
     //
     // This is the start-up path and the recovery path, deliberately the same
     // code. It is also, unexpectedly, the repair: a gap in the OUT stream makes
@@ -748,7 +781,7 @@ bool UsbAudioOut::serviceOut() {
     // is the phase lag we then run at -- a permanent deficit, the free
     // direction.
     if (mPreRoll) {
-        if (mSizeCount < kFifoPreRoll) return true;
+        if (mSizeCount < mFifoPreRoll) return true;
         mPreRoll = false;
         mPreRolls.fetch_add(1, std::memory_order_relaxed);
         // AND THE BALANCE STARTS AGAIN FROM HERE, because for the device it
@@ -904,6 +937,7 @@ UsbAudioOut::Stats UsbAudioOut::stats() const {
     s.preRolls = mPreRolls.load(std::memory_order_relaxed);
     s.silenceFrames = mSilenceTotal.load(std::memory_order_relaxed);
     s.outTrims = mOutTrims.load(std::memory_order_relaxed);
+    s.resyncs = mResyncs.load(std::memory_order_relaxed);
     // Reset on read, like the other spreads: each sample its own interval.
     s.fifoMin = mFifoMin.exchange(1 << 30, std::memory_order_relaxed);
     s.fifoMax = mFifoMax.exchange(0, std::memory_order_relaxed);

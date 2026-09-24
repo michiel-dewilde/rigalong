@@ -202,6 +202,7 @@ class MainActivity : Activity() {
         filter.addAction("be.mdw.bagosynths.STARVE")
         filter.addAction("be.mdw.bagosynths.TONE")
         filter.addAction("be.mdw.bagosynths.INDEPTH")
+        filter.addAction("be.mdw.bagosynths.FIFO")
         filter.addAction("be.mdw.bagosynths.DUMP")
         filter.addAction("be.mdw.bagosynths.HOLD")
         filter.addAction("be.mdw.bagosynths.CONCEAL")
@@ -1880,6 +1881,22 @@ class MainActivity : Activity() {
                     val f = java.io.File(getExternalFilesDir(null), "wire.txt")
                     NativeBridge.nativeDumpUsbTrace(f.absolutePath)
                     android.util.Log.i("bos-ui", "wire trace: ${f.absolutePath} (${f.length()} bytes)")
+                }
+                // The size FIFO and what it does when it fills. The two arms
+                // of the 2026-09-25 experiment, one broadcast each:
+                //   ... .FIFO --ei len 8  --ei preroll 4  --ei resync 1 --ei inpkts 1 --ei indepth 8
+                //   ... .FIFO --ei len 48 --ei preroll 24 --ei resync 0 --ei inpkts 8 --ei indepth 1024
+                "be.mdw.bagosynths.FIFO" -> {
+                    val len = intent.getIntExtra("len", -1)
+                    val pre = intent.getIntExtra("preroll", -1)
+                    val res = intent.getIntExtra("resync", -1)
+                    val pkt = intent.getIntExtra("inpkts", -1)
+                    val dep = intent.getIntExtra("indepth", -1)
+                    NativeBridge.nativeSetFifo(len, pre, res, pkt)
+                    if (dep > 0) NativeBridge.nativeSetInDepthMs(dep)
+                    android.util.Log.i("bos-ui",
+                        "fifo: len=$len preRoll=$pre resync=$res inPkts=$pkt inDepth=$dep (restarting)")
+                    resetAudioPath()
                 }
                 //   ... .INDEPTH --ei ms 16   usbhost's feedback depth
                 "be.mdw.bagosynths.INDEPTH" -> {
