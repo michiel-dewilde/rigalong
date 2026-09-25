@@ -29,7 +29,7 @@
 
 class UsbMidiIn {
 public:
-    ~UsbMidiIn() { stop(); }
+    ~UsbMidiIn() { stop(); freeRetired(); }
 
     // `port`: the cable (1.0) or group (2.0) to listen to; -1 for all.
     //
@@ -84,6 +84,7 @@ private:
     static bool reapThunk(void* ctx, struct usbdevfs_urb* u);
     bool submitAll();
     void freeUrbs();
+    void freeRetired();
 
     // The async path: `kMaxMidiUrbs` buffers of one wMaxPacketSize, so a
     // request is ALWAYS outstanding on this endpoint. The synchronous ioctl
@@ -97,6 +98,10 @@ private:
         UsbMidiIn* owner = nullptr;   // usercontext points here
     };
     std::vector<MidiUrb> mUrbs;
+    // Cancelled but not yet collected: the kernel may still hand any of these
+    // to a reaper, so they outlive stop() and are freed only in the destructor.
+    // See the note in UsbMidiIn::stop().
+    std::vector<MidiUrb> mRetired;
     class UsbAudioOut* mCo = nullptr;
     bool mAsync = false;
     void push(const bagosynths::usbmidi::Message& m);

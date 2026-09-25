@@ -226,7 +226,22 @@ void AudioEngine::prepareRing(int32_t burst) {
     // fade the instrument in.
     mMasterRamp.prepare(currentRate(), mMasterGain.load(std::memory_order_relaxed));
 
-    mScratchFrames = std::max(2048, burst * 16);
+    // CLAMPED, and the ceiling is a NODE limit rather than a taste.
+    //
+    // sfizz asserts `samplesPerBlock <= config::maxBlockSize`, which is 8192,
+    // and sizes its internal buffers for that. The assert exists only in a
+    // debug build: in release it is compiled out and sfizz is handed a block
+    // size it then overruns. So a device whose AAudio burst exceeds 512 frames
+    // silently corrupts the heap here, and the damage surfaces later and
+    // somewhere else entirely.
+    //
+    // Found on 2026-09-25 by running an ASan DEBUG build on a phone, where the
+    // assert fired during the reset path's AAudio open. The cost of the clamp
+    // is nil: the render loop only ever asks for kRenderBlockFrames, and the
+    // callback is clamped to this value anyway, so a larger scratch bought
+    // nothing but exposure.
+    static constexpr int kMaxNodeBlock = 8192;   // sfizz config::maxBlockSize
+    mScratchFrames = std::clamp(std::max(2048, burst * 16), 2048, kMaxNodeBlock);
     mScratch.assign(static_cast<size_t>(mScratchFrames) * 2, 0.0f);
     mDitherOut.assign(static_cast<size_t>(mScratchFrames) * 2, 0);
     mRing.assign(static_cast<size_t>(kRingFrames) * 2, 0.0f);

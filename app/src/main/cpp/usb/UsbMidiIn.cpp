@@ -96,11 +96,36 @@ void UsbMidiIn::stop() {
     if (mThread.joinable()) mThread.join();
     if (mAsync) {
         // Unhook FIRST, so a completion arriving mid-teardown cannot reach a
-        // half-freed queue, then discard and give the engine a moment to reap.
+        // handler that is going away.
         if (mCo != nullptr) mCo->setForeignReaper(nullptr, nullptr);
         for (MidiUrb& b : mUrbs) { if (b.u) ioctl(mFd, USBDEVFS_DISCARDURB, b.u); }
-        usleep(20 * 1000);
-        freeUrbs();
+
+        // AND THEN RETIRE THEM RATHER THAN FREE THEM.
+        //
+        // USBDEVFS_DISCARDURB CANCELS a URB; it does not COLLECT it. The
+        // completion still has to be reaped, and until it is, the kernel holds
+        // a pointer to this exact `usbdevfs_urb`. Freeing here leaves that live
+        // pointer behind, and the next REAPURB on this descriptor hands it to
+        // whoever reaps next -- which is the priming loop in
+        // UsbAudioOut::start(), one route change later.
+        //
+        // Caught by AddressSanitizer on 2026-09-25: heap-use-after-free, READ
+        // of size 8 on the usb-routing thread, allocated at UsbMidiIn.cpp:56,
+        // freed at freeUrbs, read in UsbAudioOut::start. A 20 ms sleep was
+        // standing in for a handshake and, as ever, was not one.
+        //
+        // There is no safe moment to free them from here: reaping them back
+        // ourselves would steal the isochronous engine's completions off the
+        // same descriptor. So they are retired instead. The cost is bounded and
+        // tiny -- one urb struct plus one wMaxPacketSize buffer per URB, per
+        // MIDI restart -- and a retired URB handed to a reaper is now merely
+        // ignored rather than fatal, because it is still valid memory and
+        // UsbAudioOut::dispatch checks ownership before casting.
+        //
+        // They are released in the destructor, by which time this process has
+        // closed the descriptor and the kernel can hold no reference at all.
+        for (MidiUrb& b : mUrbs) mRetired.push_back(b);
+        mUrbs.clear();
         mCo = nullptr;
         mAsync = false;
     }
@@ -295,4 +320,10 @@ bool UsbMidiIn::submitAll() {
 void UsbMidiIn::freeUrbs() {
     for (MidiUrb& b : mUrbs) { free(b.u); free(b.data); }
     mUrbs.clear();
+}
+
+// Only safe once the descriptor itself is gone: see stop().
+void UsbMidiIn::freeRetired() {
+    for (MidiUrb& b : mRetired) { free(b.u); free(b.data); }
+    mRetired.clear();
 }

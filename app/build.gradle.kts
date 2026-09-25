@@ -32,6 +32,14 @@ android {
                 // AGP packages libc++_shared.so into the APK automatically.
                 arguments += "-DANDROID_STL=c++_shared"
 
+                // ADDRESS SANITIZER on demand: ./gradlew assembleDebug -Pasan
+                // Needs the runtime in jniLibs and wrap.sh in resources, and a
+                // DEBUGGABLE build so wrap.sh is honoured. Diagnostic only --
+                // never judge audio from it.
+                if (project.hasProperty("asan")) {
+                    arguments += "-DBOS_ASAN=ON"
+                }
+
                 // Build OUR library, and only our library.
                 //
                 // Without this, AGP asks ninja for every target it discovered,
@@ -76,6 +84,26 @@ android {
             // Native debug builds are unoptimised and WILL glitch. Always judge
             // audio performance from a release build.
             isJniDebuggable = true
+        }
+    }
+
+    // ASAN ONLY: wrap.sh is honoured only when the native libraries are
+    // EXTRACTED to disk, and AGP 8 keeps them compressed in the APK by default
+    // -- which fails the install outright with "Failed to extract native
+    // libraries". Guarded, so the shipping package keeps modern packaging.
+    if (project.hasProperty("asan")) {
+        packaging {
+            jniLibs {
+                useLegacyPackaging = true
+            }
+        }
+        // The runtime and wrap.sh live in their OWN source set, not in main:
+        // anything under src/main goes into EVERY variant, and a wrap.sh inside
+        // lib/ is not a valid .so, so the release APK then fails to install
+        // outright with "Failed to extract native libraries".
+        sourceSets.getByName("debug") {
+            jniLibs.srcDir("src/asan/jniLibs")
+            resources.srcDir("src/asan/resources")
         }
     }
 

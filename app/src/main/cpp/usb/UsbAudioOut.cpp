@@ -187,6 +187,12 @@ bool UsbAudioOut::start(const Config& config, PullFn pull, FlushFn flush, void* 
             void* p = nullptr;
             if (ioctl(mCfg.fd, USBDEVFS_REAPURBNDELAY, &p) < 0) break;
             auto* u = static_cast<usbdevfs_urb*>(p);
+            // NOT OURS: the descriptor is shared, so this loop can be handed a
+            // MIDI URB -- including a stale one cancelled before we started.
+            // Casting it to our Urb and reading `out` is type confusion at
+            // best and a use-after-free at worst, which is exactly what
+            // AddressSanitizer caught here on 2026-09-25.
+            if (!ownsContext(u->usercontext)) continue;
             auto* b = static_cast<Urb*>(u->usercontext);
             if (b == nullptr || b->out) continue;
             if (mCfg.feedback == kExplicit) {

@@ -219,6 +219,20 @@ target_compile_definitions(libfluidsynth-OBJ PRIVATE BAGOSYNTHS_STB_VORBIS=1)
 # half: the parts that can only run on the device.
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../../../../engine engine)
 
+# ADDRESS SANITIZER, opt-in with -DBOS_ASAN=ON (gradle: -Pasan).
+#
+# Added 2026-09-25 to find a heap corruption that surfaces as SIGSEGV inside
+# scudo::deallocate under Schedule::~Schedule, reached from startUsb. The
+# pointer being freed was 0x7200000000 -- low 32 bits exactly zero -- which is
+# the signature of a 32-bit write landing in the upper half of a 64-bit pointer
+# field rather than any lifetime error. Reasoning from a register dump got that
+# far and no further; this is the tool that names the write.
+#
+# NOT for judging audio: an ASan build is slower still than a debug build, and
+# the standing rule is that performance is only ever read from a release build.
+# The fault reproduces on ROUTING, which is not performance sensitive.
+option(BOS_ASAN "Build with AddressSanitizer" OFF)
+
 add_library(bagosynths SHARED
         native_bridge.cpp
         AudioEngine.cpp
@@ -275,3 +289,9 @@ target_link_libraries(bagosynths
         amidi      # AMidi: native MIDI, API 29+
         android
         log)
+
+if(BOS_ASAN)
+    target_compile_options(bagosynths PRIVATE -fsanitize=address -fno-omit-frame-pointer)
+    target_link_options(bagosynths PRIVATE -fsanitize=address)
+    message(STATUS "bagosynths: AddressSanitizer ENABLED")
+endif()
