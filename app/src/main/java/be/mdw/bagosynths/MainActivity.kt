@@ -1903,7 +1903,12 @@ class MainActivity : Activity() {
                     if (dep > 0) NativeBridge.nativeSetInDepthMs(dep)
                     if (intent.hasExtra("buffer")) {
                         val ms = intent.getIntExtra("buffer", UsbBuffers.DEFAULT_MS)
-                        if (ms in 2..64) usbBufferMs = ms
+                        // PERSISTED, or the next app start silently reverts to
+                        // the stored preference and a swept value is lost.
+                        if (ms in 2..64) {
+                            usbBufferMs = ms
+                            prefs().edit().putInt("usbBufferMs", ms).apply()
+                        }
                     }
                     android.util.Log.i("bos-ui",
                         "fifo: len=$len preRoll=$pre resync=$res inPkts=$pkt " +

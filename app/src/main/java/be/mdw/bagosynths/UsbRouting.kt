@@ -148,15 +148,30 @@ object UsbBuffers {
     // because the debug route ignored any value outside choicesMs without
     // saying so. Whatever numbers sit beside it now were taken after that was
     // fixed.
-    // 4 ms since 2026-09-25, and the number means something different now.
+    // 6 ms since 2026-09-25, and for the first time on this list it is a
+    // MEASURED choice rather than a guess -- the note above admits 6 had never
+    // been tested when it was last the default.
     //
-    // Every measurement above was taken at TWO packets per URB, so 4 ms was two
-    // URBs and exactly ONE stayed queued while the reap thread refilled the
-    // other -- any refill over 2 ms emptied the endpoint. It is one packet per
-    // URB now, so 4 ms is FOUR URBs and three stay queued: 3 ms of slack where
-    // the old 4 ms had 2 and the old 8 ms had 6. The depth that measured worst
-    // of the three is not the same configuration as the depth on this list.
-    const val DEFAULT_MS = 4
+    // Two things changed the arithmetic. One packet per URB, so 6 ms is SIX
+    // URBs with five staying queued -- 5 ms of slack, where the old 6 ms had 4
+    // and the old 4 ms had 2. And the transport now answers a reap thread that
+    // has fallen behind by breaking the stream on purpose, so slack no longer
+    // buys "audio not lost", it buys FEWER DELIBERATE GAPS.
+    //
+    // That is what it was chosen on. Intensive piano, no spinners, 60 rounds of
+    // 16 voices sweeping cold Salamander samples:
+    //
+    //     4 ms (3 ms slack)  20 resyncs, 213 ms of silence
+    //     6 ms (5 ms slack)   8 resyncs,  76 ms of silence
+    //     8 ms (7 ms slack)   2 resyncs,  49 ms of silence
+    //
+    // And in Michiel's own playing, 1,9 resyncs per minute at 4 ms against 1,1
+    // at 6 ms. 8 ms is quieter still and stays on the list, but 6 ms is where
+    // the curve turns and it costs 2 ms of key-to-note latency, not 4.
+    //
+    // Latching is NOT what decides this: 4x1, 6x1, 8x1 and 4x2 ms all measured
+    // 0 of 10 with the resync policy. This knob is about seams, not the wedge.
+    const val DEFAULT_MS = 6
 }
 
 /**

@@ -123,7 +123,7 @@ public:
         int subslotBytes = 3;        // 2 = S16, 3 = S24_3LE, 4 = S32
         int rate = 44100;
 
-        int bufferMs = 4;            // total OUT depth in flight
+        int bufferMs = 6;            // total OUT depth in flight
 
         // IN DEPTH IS FREE, AND IT IS NOT THE SAME NUMBER AS OUT DEPTH.
         //
