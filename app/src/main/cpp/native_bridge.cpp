@@ -117,6 +117,11 @@ Java_be_mdw_bagosynths_NativeBridge_nativeSetRenderPaused(JNIEnv*, jobject, jboo
 }
 
 JNIEXPORT void JNICALL
+Java_be_mdw_bagosynths_NativeBridge_nativeSetFillMs(JNIEnv*, jobject, jint ms) {
+    engine().setFillMs(ms);
+}
+
+JNIEXPORT void JNICALL
 Java_be_mdw_bagosynths_NativeBridge_nativeSetConcealment(JNIEnv*, jobject, jboolean on) {
     engine().setConcealment(on == JNI_TRUE);
 }

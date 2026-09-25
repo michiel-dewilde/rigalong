@@ -263,12 +263,38 @@ void AudioEngine::prepareRing(int32_t burst) {
     // device. The CP-88 path is untouched by construction: 89 + 44 = 133, below
     // the 192-frame constant, so it still gets 192 and every measurement taken
     // on it still stands.
-    const int32_t minFill = std::min(std::max(kMinFillFrames, burst + burst / 2),
-                                     kRingFrames / 2);
+    applyFillTargets(burst);
+}
+
+void AudioEngine::applyFillTargets(int32_t burst) {
+    int32_t minFill = std::min(std::max(kMinFillFrames, burst + burst / 2),
+                               kRingFrames / 2);
+    // An explicit depth wins over the burst-derived one. See mFillOverrideMs
+    // for the measurement that made this worth having.
+    const int32_t fillMs = mFillOverrideMs.load(std::memory_order_relaxed);
+    if (fillMs > 0) {
+        minFill = std::clamp(static_cast<int32_t>(fillMs * currentRate() / 1000.0),
+                             burst, kRingFrames / 2);
+    }
     mMinFill.store(minFill, std::memory_order_relaxed);
     mMaxFill.store(std::min(std::max(kMaxFillFrames, minFill + kFillHeadroomFrames),
                             kRingFrames / 2), std::memory_order_relaxed);
     mTargetFill.store(minFill, std::memory_order_relaxed);
+}
+
+void AudioEngine::setFillMs(int ms) {
+    mFillOverrideMs.store(std::max(0, ms), std::memory_order_relaxed);
+    // Retarget in place. A sweep that restarts the stream between points
+    // measures the reopen as much as the parameter, and the ring is in use by
+    // both the render thread and the callback -- so this touches the three
+    // targets and nothing else.
+    std::lock_guard<std::mutex> lock(mStreamLock);
+    if (!mStream) return;
+    applyFillTargets(mStream->getFramesPerBurst());
+    LOGI("ring fill: %s, minFill=%d frames (%.1f ms)",
+         ms > 0 ? "explicit" : "burst-derived",
+         mMinFill.load(std::memory_order_relaxed),
+         1000.0 * mMinFill.load(std::memory_order_relaxed) / currentRate());
 }
 
 double AudioEngine::currentRate() const {
@@ -533,11 +559,33 @@ bool AudioEngine::openInput(int32_t deviceId) {
         mInputDeviceId = deviceId;
         mProbeState.store(ProbeState::Idle, std::memory_order_relaxed);
 
-        LOGI("input open [%s]: rate=%d ch=%d burst=%d sharing=%d perf=%d",
+        // CHECK WHAT CAME BACK, exactly as the output side does. Asking for an
+        // input device that cannot serve the request does NOT fail: AAudio
+        // falls back to the default input -- the built-in microphone -- and
+        // returns OK, so `open=true` on a device id means nothing by itself.
+        //
+        // Found on 2026-09-25 while testing whether the CP-88 loops host
+        // playback back into its capture endpoint. openInput(6692) returned
+        // true, logged a fresh stream, and was still the microphone: sending
+        // the output to the phone's own speaker took the probe's peak from
+        // 0,015 to 0,66, which only a microphone a few centimetres from that
+        // speaker can do. Without this check the measurement would have been
+        // read as "the piano loops back, quietly".
+        const int32_t gotIn = mInputStream->getDeviceId();
+        LOGI("input open [%s]: rate=%d ch=%d burst=%d sharing=%d perf=%d dev=%d (asked %d)",
              a.name, mInputStream->getSampleRate(), mInputChannels,
              mInputStream->getFramesPerBurst(),
              static_cast<int>(mInputStream->getSharingMode()),
-             static_cast<int>(mInputStream->getPerformanceMode()));
+             static_cast<int>(mInputStream->getPerformanceMode()),
+             gotIn, deviceId);
+        if (deviceId != kUnspecifiedDevice && gotIn != deviceId) {
+            LOGE("input: asked for device %d and got %d -- refusing it",
+                 deviceId, gotIn);
+            mInputStream->stop();
+            mInputStream->close();
+            mInputStream.reset();
+            continue;
+        }
         return true;
     }
 

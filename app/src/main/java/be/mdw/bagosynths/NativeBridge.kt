@@ -73,6 +73,9 @@ object NativeBridge {
     external fun nativeSetExclusive(exclusive: Boolean)
 
     /** The rate the chosen device declares, from AudioDeviceInfo. 0 = let AAudio pick. */
+    /** Render-ring depth in ms; 0 restores the burst-derived default. */
+    external fun nativeSetFillMs(ms: Int)
+
     external fun nativeSetPreferredRate(rate: Int)
 
     /** Oboe AudioFormat: 1 = I16, 2 = Float, 3 = I24, 4 = I32. 0 = let Oboe pick. */

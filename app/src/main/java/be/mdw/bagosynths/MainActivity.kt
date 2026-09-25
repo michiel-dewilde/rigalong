@@ -194,7 +194,7 @@ class MainActivity : Activity() {
         filter.addAction("be.mdw.bagosynths.MASTER")
         filter.addAction("be.mdw.bagosynths.SHARING")
         filter.addAction("be.mdw.bagosynths.RATE")
-        filter.addAction("be.mdw.bagosynths.INPUT")
+        filter.addAction("be.mdw.bagosynths.FILL")
         filter.addAction("be.mdw.bagosynths.PARAM")
         filter.addAction("be.mdw.bagosynths.PANIC")
         filter.addAction("be.mdw.bagosynths.STRESS")
@@ -393,6 +393,24 @@ class MainActivity : Activity() {
      * The CP-88's capture side. Input and output device ids are different objects
      * even for the same physical interface, so this cannot reuse the output id.
      */
+    // MEASURED AND DEAD, 2026-09-25. The idea was to make the latency probe
+    // listen on the piano's capture endpoint instead of a microphone: a click
+    // read digitally, at full scale, with no room and no volume control in
+    // between, would fix the oracle that has now been wrong four times.
+    //
+    // The CP-88 does not loop host playback back. With the output running on
+    // the CP-88 and the input pinned to device 6692 -- verified by the device
+    // check in openInput, not assumed -- three probes in a row read
+    // maxPeak=0,0000 exactly. The stream opens and delivers nothing, which
+    // agrees with what this file already said above: the two directions are
+    // mutually exclusive on that card.
+    //
+    // It cost two builds because the first attempts were read as a quiet
+    // loopback. They were the microphone: MEASURE calls enableInputIfPermitted
+    // on its way in, which put the mic back before every probe, and the give
+    // away was that sending the output to the phone's own speaker took the
+    // peak from 0,015 to 0,69.
+    @Suppress("unused")  // kept: useful if a future Android release allows full duplex
     private fun findCp88InputDeviceId(): Int {
         val am = getSystemService(Context.AUDIO_SERVICE) as AudioManager
         val inputs = am.getDevices(AudioManager.GET_DEVICES_INPUTS).filter {
@@ -2008,31 +2026,21 @@ class MainActivity : Activity() {
                         ", format " +
                         (if (formatOverride > 0) "$formatOverride" else "device's own"))
                 }
-                //   ... .INPUT --es dev cp88      measure over the WIRE, not the room
-                //   ... .INPUT --es dev mic       back to the microphone
+                //   ... .FILL --ei ms 12     how much slack the render thread gets
+                //   ... .FILL --ei ms 0      back to the burst-derived default
                 //
-                // WHY THIS IS WORTH HAVING, beyond one experiment. Every latch
-                // verdict in this project comes from a microphone, and the
-                // microphone has now been the thing that was wrong four times:
-                // the rig's volume moved 8x between sessions, the phone reads an
-                // order of magnitude quieter than the tablet, and the round-trip
-                // window turned out to be a path property too. A room is not an
-                // instrument.
-                //
-                // The CP-88's capture endpoint might be one. If the piano mixes
-                // what the host sends into what it sends back, then pointing the
-                // probe at it measures the same click DIGITALLY -- full scale,
-                // no room, no distance, no volume control in between -- and the
-                // oracle stops being defeatable by someone talking.
-                //
-                // If it does NOT loop back, this reads silence and says so, and
-                // that is worth knowing once rather than assuming forever.
-                "be.mdw.bagosynths.INPUT" -> {
-                    val which = intent.getStringExtra("dev") ?: "mic"
-                    val id = if (which.lowercase().startsWith("cp"))
-                        findCp88InputDeviceId() else findBuiltinMicDeviceId()
-                    val ok = NativeBridge.nativeEnableInput(id)
-                    android.util.Log.i("bos-ui", "input device: $which -> id $id, open=$ok")
+                // Separate from RATE on purpose: the ring depth is derived from
+                // the BURST, which means choosing a stream geometry silently
+                // chooses a render deadline as well. On the phone's two ALSA
+                // arms that hidden coupling is a factor of 7,5 -- 30 ms of
+                // slack at burst 882, 4 ms at burst 96 -- and it shows up as a
+                // factor of 45 in ring underruns under intensive piano. Worth
+                // sweeping rather than inheriting.
+                "be.mdw.bagosynths.FILL" -> {
+                    val ms = intent.getIntExtra("ms", 0)
+                    NativeBridge.nativeSetFillMs(ms)
+                    android.util.Log.i("bos-ui", "ring fill: " +
+                        if (ms > 0) "$ms ms" else "burst-derived")
                 }
                 //   adb shell am broadcast -a be.mdw.bagosynths.MASTER --ef db -12
                 // The profile, including the per-engine held peaks. Scriptable

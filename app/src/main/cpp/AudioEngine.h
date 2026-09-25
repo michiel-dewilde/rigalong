@@ -179,6 +179,9 @@ public:
 
     bool openInput(int32_t deviceId);
 
+    /** Ring depth in ms; 0 restores the burst-derived default. See mFillOverrideMs. */
+    void setFillMs(int ms);
+
     // Click probe: emit a click, time its return. Measures the output stage plus
     // the room and the microphone.
     void startLatencyProbe();
@@ -345,6 +348,12 @@ private:
     // at a time. Shared by both sinks, so their buffering is the same by
     // construction.
     void prepareRing(int32_t burst);
+
+    // Just the three fill targets, with no allocation and no cursor reset, so
+    // that changing the depth does NOT interrupt the stream. prepareRing calls
+    // it; so does setFillMs, which must not reallocate a ring the render thread
+    // and the callback are both using.
+    void applyFillTargets(int32_t burst);
 
     // Copies up to `want` frames of finished stereo audio out of the ring into
     // `dst`, the one operation both sinks perform. Returns how many were
@@ -718,6 +727,27 @@ private:
     // (89-frame burst); the tablet's own speaker hands the callback 882 frames
     // at a time and needs a proportionally deeper reserve or it underruns on
     // every callback. See openStream().
+    // THE RENDER RING'S DEPTH, IN MILLISECONDS, AS A SWEEPABLE PARAMETER.
+    //
+    // Zero keeps the computed default. It is a parameter because the default
+    // is derived from the BURST, and that turns out to hide a 7,5x difference
+    // in the thing that actually matters -- how much slack the render thread
+    // has -- behind two configurations of the same device.
+    //
+    // Measured on the phone, 2026-09-25, intensive piano, 60 rounds of 16
+    // voices, the two ALSA arms interleaved:
+    //
+    //   44100 shared, burst 882 -> minFill 1323 frames = 30,0 ms -> ringUnder 8, 9
+    //   48000 excl,   burst  96 -> minFill  192 frames =  4,0 ms -> ringUnder 347, 448
+    //
+    // Same machine, same music, a factor of forty-five. AAudio itself was never
+    // late in either (xruns 0) -- it is the render thread missing a 4 ms
+    // deadline on a Snapdragon 695. The exclusive arm has room to pay for more:
+    // it measures 30-43 ms of acoustic round trip against the shared arm's
+    // 128-134, so several milliseconds of ring are affordable where they would
+    // be unthinkable on the direct-USB path.
+    std::atomic<int32_t> mFillOverrideMs{0};
+
     std::atomic<int32_t> mMinFill{kMinFillFrames};
     std::atomic<int32_t> mMaxFill{kMaxFillFrames};
 
