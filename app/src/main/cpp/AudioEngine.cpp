@@ -870,8 +870,26 @@ void AudioEngine::logMidiChain() const {
 }
 
 void AudioEngine::renderBlockIntoRing(int frames) {
-    bagosynths::Schedule* schedule = mSchedule.load(std::memory_order_acquire);
-    if (schedule == nullptr) return;
+    // ACQUIRE THE HAZARD. See mScheduleHazard: publish what we are about to
+    // use, then re-read the current one and retry if it moved under us. The
+    // loop runs twice at most in practice -- only a rebuild landing in this
+    // exact window makes it turn a second time.
+    bagosynths::Schedule* schedule = nullptr;
+    for (;;) {
+        schedule = mSchedule.load(std::memory_order_acquire);
+        if (schedule == nullptr) {
+            mScheduleHazard.store(nullptr, std::memory_order_release);
+            return;
+        }
+        mScheduleHazard.store(schedule, std::memory_order_seq_cst);
+        if (schedule == mSchedule.load(std::memory_order_seq_cst)) break;
+    }
+    // RELEASE IT on every exit from here on, or the retiring side will keep
+    // this generation alive for ever.
+    struct HazardRelease {
+        std::atomic<bagosynths::Schedule*>* h;
+        ~HazardRelease() { h->store(nullptr, std::memory_order_release); }
+    } hazardRelease{&mScheduleHazard};
 
     updateInstrumentGates(frames);
 
@@ -1609,6 +1627,11 @@ AudioEngine::Stats AudioEngine::stats() const {
 }
 
 void AudioEngine::resetPeaks() {
+    // Under mStreamLock, like logProfile and for the same reason: this
+    // dereferences the published schedule from the UI thread, so a rebuild
+    // landing at the wrong moment could free the object between the load and
+    // the call. Every trial harness in tools/ fires RESETPEAKS before each run,
+    // which is exactly the timing that would find it.
     mCallbackMaxMs.store(0.0f, std::memory_order_relaxed);
 
     // The render peak and the underrun count belong here too. They did not used
@@ -1621,8 +1644,11 @@ void AudioEngine::resetPeaks() {
     mUsbOut.resetPeaks();
 
     // Per-node peaks as well, so the profile log and this button agree.
-    if (bagosynths::Schedule* s = mSchedule.load(std::memory_order_acquire)) {
-        s->resetProfile();
+    {
+        std::lock_guard<std::mutex> lock(mStreamLock);
+        if (bagosynths::Schedule* s = mSchedule.load(std::memory_order_acquire)) {
+            s->resetProfile();
+        }
     }
     if (mSurge != nullptr) mSurge->resetProfile();
     if (mDexed != nullptr) mDexed->resetProfile();
@@ -1740,11 +1766,25 @@ bool AudioEngine::rebuildGraph(std::string* error) {
     // Publish. A single release store is the whole handover.
     mSchedule.store(fresh, std::memory_order_release);
 
-    // Retire older schedules. The audio thread may still have been inside one
-    // when we stored, so keep the previous generation alive for a moment rather
-    // than freeing it immediately -- and never free from the callback.
-    if (mScheduleKeepAlive.size() > 3) {
-        mScheduleKeepAlive.erase(mScheduleKeepAlive.begin());
+    // RETIRE, and now it is a handshake rather than a wait. The store above
+    // happened first; this reads the hazard after it, so any generation the
+    // render thread is inside is either the one just published or the one it
+    // has named here. Everything else is provably unreachable and freed -- and
+    // never from the callback, since rebuildGraph runs under mStreamLock on a
+    // control thread.
+    //
+    // A generation that is neither current nor hazarded but is still held by a
+    // DESCHEDULED reader cannot exist: the reader re-reads mSchedule after
+    // publishing, so it would have seen the new one and retried.
+    {
+        const bagosynths::Schedule* hazard =
+                mScheduleHazard.load(std::memory_order_seq_cst);
+        auto dead = std::remove_if(
+                mScheduleKeepAlive.begin(), mScheduleKeepAlive.end(),
+                [&](const std::unique_ptr<bagosynths::Schedule>& s) {
+                    return s.get() != fresh && s.get() != hazard;
+                });
+        mScheduleKeepAlive.erase(dead, mScheduleKeepAlive.end());
     }
 
     LOGI("graph compiled: %zu steps, %zu audio buffers, %d frames",
@@ -2043,6 +2083,11 @@ void AudioEngine::stressChord(int count) {
 }
 
 void AudioEngine::logProfile() {
+    // Under the same lock the retiring side holds. This walks a schedule from
+    // the UI thread, so without it a rebuild could free the very steps being
+    // printed -- the same defect as the render path, in a debug route that
+    // would have been blamed on something else entirely.
+    std::lock_guard<std::mutex> lock(mStreamLock);
     bagosynths::Schedule* sched = mSchedule.load(std::memory_order_acquire);
     if (sched == nullptr) return;
     for (size_t i = 0; i < sched->steps.size(); ++i) {

@@ -392,6 +392,31 @@ private:
     bagosynths::Graph mGraph;
     std::atomic<bagosynths::Schedule*> mSchedule{nullptr};
     std::vector<std::unique_ptr<bagosynths::Schedule>> mScheduleKeepAlive;
+
+    // WHICH SCHEDULE THE RENDER THREAD IS INSIDE. A hazard pointer.
+    //
+    // Retiring used to be "keep the last three and free the rest", with this
+    // reasoning: "the audio thread may still have been inside one when we
+    // stored, so keep the previous generation alive for a moment". That is a
+    // guess about TIMING, not a handshake -- nothing anywhere published which
+    // generation the render thread was actually executing. It holds while
+    // rebuilds are seconds apart, which is a human tapping the UI. It does not
+    // hold when four rebuilds arrive in ten seconds and the render thread is
+    // descheduled in between, which is a slow phone driven by broadcasts: the
+    // generation still in use gets freed, the render thread writes into freed
+    // memory, and the damage surfaces later as a fault inside free().
+    //
+    // Measured that way on an XQ-CC54 (Snapdragon 695), 2026-09-25: SIGSEGV,
+    // SEGV_ACCERR, inside scudo::deallocate under Schedule::~Schedule.
+    //
+    // The protocol is the standard hazard-pointer one, and it is correct with a
+    // single reader. The reader publishes the pointer it intends to use and
+    // then RE-READS the current one; if they differ it tries again. The writer
+    // publishes the new schedule FIRST and only then reads the hazard. So for
+    // any generation the reader is inside: either the reader saw the new store
+    // and is on the new one, or the writer sees the old one in the hazard --
+    // there is no interleaving in which the writer frees what the reader holds.
+    std::atomic<bagosynths::Schedule*> mScheduleHazard{nullptr};
     bagosynths::SfizzNode* mSfizz = nullptr;
     bagosynths::HammondNode* mHammond = nullptr;
     bagosynths::SurgeNode* mSurge = nullptr;
