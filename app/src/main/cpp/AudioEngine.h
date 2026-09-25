@@ -631,6 +631,12 @@ private:
     std::vector<float> mPackScratch;      // channel-mapped, render thread only
     std::vector<int16_t> mPackI16;
     Dither mUsbDither;                    // 16-bit targets only; render thread
+    // TEST ONLY: keep the OUT stream off bit-exact zero. See packForUsb.
+    std::atomic<bool> mSilenceFloor{false};
+    int mFloorPhase = 0;                  // render thread only
+public:
+    void setSilenceFloor(bool on) { mSilenceFloor.store(on, std::memory_order_relaxed); }
+private:
     int mUsbChannels = 2;
     int mUsbSubslot = 3;
     int mUsbFrameBytes = 6;

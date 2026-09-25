@@ -2096,6 +2096,37 @@ void AudioEngine::packForUsb(uint8_t* dst, const float* stereo, int frames) {
             for (int c = 2; c < ch; ++c) f[i * ch + c] = 0.0f;
         }
     }
+    // NEVER BIT-EXACT DIGITAL SILENCE, when the floor is on.
+    //
+    // The last host-side idea standing, and it is the only one that is not
+    // about TIMING -- which matters, because at the moment of the 2026-09-25
+    // cold-start latch the timing was provably perfect: OUT 32782 packets
+    // against IN 32781, only 44s and 45s, no gap over 5,9 ms, no resync,
+    // starved=0, inLost=0. The host did nothing wrong and the device died on
+    // the fifth note after a quiet stretch.
+    //
+    // So: what if the transition itself is the trigger -- a stage piano that
+    // mutes its USB audio input on digital silence and wedges on the way back
+    // out? A stream that is never exactly zero never makes that transition.
+    //
+    // One LSB of the 24-bit word is -138 dBFS. It is inaudible, it costs one
+    // multiply-add per sample on the RENDER thread (never the reap thread),
+    // and it is a hypothesis with a cheap test rather than a fix -- if playing
+    // still latches with this on, the idea is dead and it comes straight back
+    // out. See `remove-unproven-fixes`.
+    if (mSilenceFloor.load(std::memory_order_relaxed)) {
+        // A slow triangle rather than a constant: a DC offset would be a
+        // steady pressure on the output stage, and a fixed value could still
+        // be optimised into silence by something downstream.
+        const float lsb = (mUsbSubslot == 2) ? (1.0f / 32768.0f)
+                                             : (1.0f / 8388608.0f);
+        for (int i = 0; i < frames * ch; ++i) {
+            mFloorPhase += 1;
+            if (mFloorPhase >= 64) mFloorPhase = -64;
+            f[i] += lsb * (static_cast<float>(mFloorPhase) / 64.0f);
+        }
+    }
+
     const int samples = frames * ch;
     switch (mUsbSubslot) {
         case 2:
