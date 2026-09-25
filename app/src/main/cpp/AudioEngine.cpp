@@ -68,25 +68,85 @@ bool AudioEngine::start(int32_t deviceId, int bufferBursts) {
 }
 
 bool AudioEngine::openStream(int32_t deviceId, int bufferBursts) {
-    oboe::AudioStreamBuilder builder;
-
-    // TWO ATTEMPTS: strictly first, then letting Oboe negotiate. Only a device
-    // that would otherwise fail to open ever reaches the second, so the piano's
-    // measurements are untouched.
+    // PREFER THE BEST EXCLUSIVE/MMAP CONFIGURATION THE PLATFORM WILL GRANT.
     //
-    // This is interim. Once the graph editor exists the output is a property of
-    // the patch and none of it is hardcoded.
-    oboe::Result result = oboe::Result::ErrorInternal;
-    bool relaxed = false;
+    // Michiel's rule, 2026-09-25: ALSA is not the default, but IF the ALSA path
+    // is in use then it should take the best exclusive/MMAP configuration that
+    // is available rather than settle for a shared mixer.
+    //
+    // Why a ladder and not a constant. EXCLUSIVE is not a property we can ask
+    // for and be told about in advance: it comes from one mix port, that port
+    // has its own fixed profile, and no public API enumerates it. Android's
+    // policy dump does, and on BOTH machines here it reads the same:
+    //
+    //   "mmap_no_irq_out"; AUDIO_OUTPUT_FLAG_DIRECT|AUDIO_OUTPUT_FLAG_MMAP_NOIRQ
+    //     Profiles (1): AUDIO_FORMAT_PCM_16_BIT, sampling rates: 48000
+    //
+    // while the CP-88's own port declares 44100 and PCM_24_BIT_PACKED alone. So
+    // the phone grants EXCLUSIVE to the piano only at 48000/16, with the HAL
+    // converting both rate and word length; the tablet grants it at the piano's
+    // own 44100 with an 89-frame burst, which is strictly better because
+    // nothing is converted.
+    //
+    // Hence: try the device's OWN terms first and keep them if they are granted
+    // exclusive -- that is the tablet, and it is the outcome with no conversion
+    // in it. Only if the platform answers SHARED do we go looking, and then the
+    // rungs are TRIED rather than assumed: a configuration is kept only if the
+    // stream actually comes back EXCLUSIVE, so a device that wants something
+    // else simply refuses and we fall back. 48000/I16 is a guess about which
+    // rung will work, never a guess about whether it worked.
+    //
+    // This does NOT change the direct-USB path, which owns the device outright
+    // and never comes here, and it does not change what a user gets by default,
+    // because direct USB is the default.
+    struct Rung {
+        int32_t rate;               // 0: do not pin
+        int32_t format;             // 0: use the device's
+        bool demandExclusive;       // keep the result only if EXCLUSIVE
+        bool allowConversion;       // Oboe's own conversion layer
+        const char* why;
+    };
 
-    for (int attempt = 0; attempt < 2; ++attempt) {
-        relaxed = (attempt == 1);
+    const int32_t devRate = mPreferredRate.load(std::memory_order_relaxed);
+    const int32_t devFmt = mPreferredFormat.load(std::memory_order_relaxed);
+    const bool wantExclusive = mWantExclusive.load(std::memory_order_relaxed);
+
+    // The MMAP mix port's profile on every Qualcomm HAL seen here. Named rather
+    // than inlined so the next device that wants something else has one place
+    // to add a rung.
+    static constexpr int32_t kMmapRate = 48000;
+    static constexpr int32_t kMmapFormat = static_cast<int32_t>(oboe::AudioFormat::I16);
+
+    std::vector<Rung> rungs;
+    if (wantExclusive) {
+        // Exclusive AND no conversion. The tablet's CP-88 lands here.
+        rungs.push_back({devRate, devFmt, true, false, "the device's own terms"});
+        // The rate is right but the word length is not what the MMAP port takes.
+        if (devFmt != kMmapFormat) {
+            rungs.push_back({devRate, kMmapFormat, true, false,
+                             "the device's rate, the MMAP port's format"});
+        }
+        // The MMAP port's own terms. The phone's CP-88 lands here, and pays a
+        // rate AND a format conversion in the HAL for it.
+        if (devRate != kMmapRate || devFmt != kMmapFormat) {
+            rungs.push_back({kMmapRate, kMmapFormat, true, false,
+                             "the MMAP port's own terms"});
+        }
+    }
+    // Fallbacks: whatever opens. Never demand exclusive here, or a device with
+    // no exclusive path at all would fail to open rather than play.
+    rungs.push_back({devRate, devFmt, false, false, "shared, the device's terms"});
+    rungs.push_back({0, devFmt, false, true, "shared, the device's own choice"});
+
+    oboe::Result result = oboe::Result::ErrorInternal;
+    const Rung* taken = nullptr;
+
+    for (const Rung& r : rungs) {
         oboe::AudioStreamBuilder b;
         b.setDirection(oboe::Direction::Output)
                 ->setPerformanceMode(oboe::PerformanceMode::LowLatency)
-                ->setSharingMode(mWantExclusive.load(std::memory_order_relaxed)
-                                         ? oboe::SharingMode::Exclusive
-                                         : oboe::SharingMode::Shared)
+                ->setSharingMode(wantExclusive ? oboe::SharingMode::Exclusive
+                                               : oboe::SharingMode::Shared)
                 ->setChannelCount(oboe::ChannelCount::Stereo)
                 // Game, not Media: this is interactive audio, not a media
                 // session. Verified to keep MMAP/EXCLUSIVE on this device.
@@ -97,41 +157,52 @@ bool AudioEngine::openStream(int32_t deviceId, int bufferBursts) {
                 ->setDataCallback(this)
                 ->setErrorCallback(this);
 
-        // The FORMAT is asked for as I16 because the render ring is int16 and
-        // the dither that fills it is deliberate. The two attempts differ only
-        // in whether a device that cannot do I16 is allowed AAudio's conversion.
-        //
         // Whatever rate comes back is handed to Graph::compile(), and every node
         // takes the rate in prepare(), so the whole instrument follows -- sfizz
         // included, which resamples its own content and therefore needs no
         // separate 48 kHz Salamander.
-        // Ask the DEVICE's format, as with the rate. The CP-88 declares 24-bit
-        // packed; asking it for I16 had the HAL pad eight bits away. The ring
-        // is float now, so any of these costs one conversion in the callback
-        // and no loss on our side.
-        const int32_t wantFmt = mPreferredFormat.load(std::memory_order_relaxed);
-        b.setFormat(wantFmt > 0 ? static_cast<oboe::AudioFormat>(wantFmt)
-                                : oboe::AudioFormat::I16)
+        //
+        // The device's format is asked for by default. The CP-88 declares
+        // 24-bit packed; asking it for I16 had the HAL pad eight bits away. The
+        // ring is float, so any of these costs one conversion in the callback
+        // and no loss on our side -- and the 16-bit case is dithered, which is
+        // why asking the MMAP port for I16 is honest rather than lossy.
+        b.setFormat(r.format > 0 ? static_cast<oboe::AudioFormat>(r.format)
+                                 : oboe::AudioFormat::I16)
                 ->setSampleRateConversionQuality(oboe::SampleRateConversionQuality::None)
-                ->setFormatConversionAllowed(relaxed);
+                ->setFormatConversionAllowed(r.allowConversion);
 
-        // Ask for the rate the DEVICE ITSELF declares, which Kotlin reads from
-        // AudioDeviceInfo. Leaving it unspecified is not the same thing and was
-        // a mistake: AAudio handed back 48000 for the CP-88, which declares
-        // 44100 and nothing else, and the stream opened happily with the HAL
-        // resampling underneath. Neither setSampleRateConversionQuality(None)
-        // nor setFormatConversionAllowed(false) prevents that -- both govern
-        // OBOE's own conversion layer, not the HAL's.
-        const int32_t want = mPreferredRate.load(std::memory_order_relaxed);
-        if (want > 0) b.setSampleRate(want);
+        // Pinning the rate is deliberate and stays deliberate. Leaving it
+        // unspecified is NOT the same as asking for the device's rate: AAudio
+        // handed back 48000 for the CP-88, which declares 44100 and nothing
+        // else, and the stream opened happily with the HAL resampling
+        // underneath. Neither setSampleRateConversionQuality(None) nor
+        // setFormatConversionAllowed(false) prevents that -- both govern OBOE's
+        // conversion layer, not the HAL's. So when a rung asks for 48000 it is
+        // asking ON PURPOSE, with the conversion understood and measured.
+        if (r.rate > 0) b.setSampleRate(r.rate);
 
         result = b.openStream(mStream);
-        if (result == oboe::Result::OK && mStream) break;
+        if (result != oboe::Result::OK || !mStream) continue;
 
-        if (!relaxed) {
-            LOGI("strict open refused (%s) -- retrying and letting the device choose "
-                 "its own rate and format", oboe::convertToText(result));
+        // Two ways a rung is wrong even though it opened.
+        const int32_t gotDev = mStream->getDeviceId();
+        const bool wrongDevice =
+                deviceId != kUnspecifiedDevice && gotDev != deviceId;
+        const bool notExclusive =
+                r.demandExclusive &&
+                mStream->getSharingMode() != oboe::SharingMode::Exclusive;
+        if (wrongDevice || notExclusive) {
+            LOGI("open rung \"%s\" rejected: rate=%d sharing=%d dev=%d (asked %d)",
+                 r.why, mStream->getSampleRate(),
+                 static_cast<int>(mStream->getSharingMode()), gotDev, deviceId);
+            mStream->close();
+            mStream.reset();
+            result = oboe::Result::ErrorInternal;
+            continue;
         }
+        taken = &r;
+        break;
     }
 
     if (result != oboe::Result::OK || !mStream) {
@@ -153,11 +224,11 @@ bool AudioEngine::openStream(int32_t deviceId, int bufferBursts) {
          static_cast<int>(mStreamFormat), mBytesPerFrame,
          mPreferredFormat.load(std::memory_order_relaxed));
 
-    if (relaxed) {
-        LOGI("opened on the device's own terms: rate=%d format=%d channels=%d",
-             mStream->getSampleRate(), static_cast<int>(mStream->getFormat()),
-             mStream->getChannelCount());
-    }
+    LOGI("open rung taken: \"%s\" -- rate=%d format=%d channels=%d sharing=%s",
+         taken != nullptr ? taken->why : "?", mStream->getSampleRate(),
+         static_cast<int>(mStream->getFormat()), mStream->getChannelCount(),
+         mStream->getSharingMode() == oboe::SharingMode::Exclusive ? "EXCLUSIVE"
+                                                                   : "shared");
 
     // CHECK WHAT WE GOT. Asking for a device id that no longer exists does NOT
     // fail: AAudio falls back to the default output -- the built-in speaker --
@@ -196,7 +267,7 @@ bool AudioEngine::openStream(int32_t deviceId, int bufferBursts) {
     // Device specific and may be a no-op -- there is no downside to asking.
     mStream->setPerformanceHintEnabled(true);
 
-    prepareRing(burst);
+    prepareRing(burst, kAAudioFloorMs);
 
     mFlushDenormalsDone.store(false, std::memory_order_relaxed);
     mCallbackMaxMs.store(0.0f, std::memory_order_relaxed);
@@ -217,7 +288,7 @@ bool AudioEngine::openStream(int32_t deviceId, int bufferBursts) {
     return true;
 }
 
-void AudioEngine::prepareRing(int32_t burst) {
+void AudioEngine::prepareRing(int32_t burst, int32_t floorMs) {
     // Preallocate render scratch with generous headroom. Allocating inside the
     // callback is the cardinal sin; this is the one place it is allowed.
     // The master ramp needs the rate to know how long 15 ms is, and this is
@@ -263,12 +334,20 @@ void AudioEngine::prepareRing(int32_t burst) {
     // device. The CP-88 path is untouched by construction: 89 + 44 = 133, below
     // the 192-frame constant, so it still gets 192 and every measurement taken
     // on it still stands.
-    applyFillTargets(burst);
+    mRingFloorMs = floorMs;
+    applyFillTargets(burst, floorMs);
 }
 
-void AudioEngine::applyFillTargets(int32_t burst) {
+void AudioEngine::applyFillTargets(int32_t burst, int32_t floorMs) {
     int32_t minFill = std::min(std::max(kMinFillFrames, burst + burst / 2),
                                kRingFrames / 2);
+    // A floor in TIME as well as in bursts, where the caller asked for one.
+    // See kAAudioFloorMs: 1,5 bursts is 3 ms of reserve on an MMAP stream.
+    if (floorMs > 0) {
+        minFill = std::min(std::max(minFill,
+                                    static_cast<int32_t>(floorMs * currentRate() / 1000.0)),
+                           kRingFrames / 2);
+    }
     // An explicit depth wins over the burst-derived one. See mFillOverrideMs
     // for the measurement that made this worth having.
     const int32_t fillMs = mFillOverrideMs.load(std::memory_order_relaxed);
@@ -290,7 +369,7 @@ void AudioEngine::setFillMs(int ms) {
     // targets and nothing else.
     std::lock_guard<std::mutex> lock(mStreamLock);
     if (!mStream) return;
-    applyFillTargets(mStream->getFramesPerBurst());
+    applyFillTargets(mStream->getFramesPerBurst(), mRingFloorMs);
     LOGI("ring fill: %s, minFill=%d frames (%.1f ms)",
          ms > 0 ? "explicit" : "burst-derived",
          mMinFill.load(std::memory_order_relaxed),
@@ -338,7 +417,9 @@ bool AudioEngine::startUsb(const UsbAudioOut::Config& config, std::string* error
     // this path is the same as on the AAudio path, and the latency comparison
     // between the two is like for like.
     const int32_t packetFrames = std::max(1, static_cast<int32_t>(config.rate / 1000));
-    prepareRing(packetFrames);
+    // FLOOR 0: the direct-USB sink keeps the burst-derived reserve it was
+    // tuned with. See kAAudioFloorMs for why the AAudio path does not.
+    prepareRing(packetFrames, 0);
 
     // The endpoint's own layout, so the render thread can write it directly.
     mUsbChannels = std::max(1, config.channels);

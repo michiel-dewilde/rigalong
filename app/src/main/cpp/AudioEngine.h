@@ -347,13 +347,13 @@ private:
     // Sizes the ring and its reserve for a sink that consumes `burst` frames
     // at a time. Shared by both sinks, so their buffering is the same by
     // construction.
-    void prepareRing(int32_t burst);
+    void prepareRing(int32_t burst, int32_t floorMs);
 
     // Just the three fill targets, with no allocation and no cursor reset, so
     // that changing the depth does NOT interrupt the stream. prepareRing calls
     // it; so does setFillMs, which must not reallocate a ring the render thread
     // and the callback are both using.
-    void applyFillTargets(int32_t burst);
+    void applyFillTargets(int32_t burst, int32_t floorMs);
 
     // Copies up to `want` frames of finished stereo audio out of the ring into
     // `dst`, the one operation both sinks perform. Returns how many were
@@ -606,6 +606,46 @@ private:
     // So it sits at minimum latency while things are calm, deepens the moment it
     // is actually hurt, and recovers the latency once the passage is over.
     static constexpr int kMinFillFrames = 192;     // ~4.4 ms floor
+
+    // A FLOOR IN TIME, FOR THE AAUDIO PATH ONLY.
+    //
+    // The derived floor is one and a half BURSTS, which is a sound rule when a
+    // burst is a sizeable slice of time and a meaningless one when it is not.
+    // An MMAP burst is 2 ms, so 1,5 of them is 3-4 ms of reserve for the render
+    // thread -- and the render thread is the part that has to produce 64 voices
+    // of Salamander on whatever core the governor felt like using.
+    //
+    // Measured on the phone, 2026-09-25, intensive piano, ring depth swept with
+    // the 4 ms point repeated at the end as a control (121 first, 221 last):
+    //
+    //   4,0 ms -> 121 underruns     12,0 ms -> 35
+    //   8,0 ms ->  86               16,0 ms -> 14
+    //
+    // against 6-16 on the same machine's SHARED stream, whose 882-frame burst
+    // derives a 30 ms floor and therefore never needed this. So the floor is
+    // what decides, and the adaptive layer above it climbs THROUGH the chop
+    // rather than preventing it -- it reacts to concealment that has already
+    // been heard.
+    //
+    // EIGHT, chosen by Michiel on 2026-09-25 against that table. It is the
+    // latency-leaning end of the trade and it is a deliberate one: 8 ms roughly
+    // halves the chop of the derived floor without spending the 12 ms that
+    // would match the shared path's underrun band. The ALSA path is a FALLBACK
+    // -- direct USB is 15-27 ms and is what the instrument actually uses -- so
+    // buying latency back here past the point of usefulness would be paying for
+    // a path nobody plays on.
+    //
+    // It is a floor, not a target: mTargetFill still grows above it under load,
+    // and FILL --ei ms N overrides it for a measurement.
+    //
+    // NOT applied to the direct-USB sink, which passes 0. That path is the
+    // primary one, its reserve is tuned against a 6 ms transport buffer, and
+    // nothing here should move it.
+    static constexpr int kAAudioFloorMs = 8;
+
+    // What prepareRing was last called with, so setFillMs can retarget without
+    // needing to know which sink is live.
+    int32_t mRingFloorMs = 0;
     static constexpr int kMaxFillFrames = 704;     // ~16 ms ceiling
     // HOW THE RESERVE ADAPTS, rewritten 2026-09-23.
     //
