@@ -36,10 +36,11 @@ bool MidiInput::open(JNIEnv* env, jobject midiDeviceObj, int portIndex) {
     return true;
 }
 
-bool MidiInput::openUsb(int fd, int endpoint, int maxPacket, bool ump, int port) {
+bool MidiInput::openUsb(int fd, int endpoint, int maxPacket, bool ump, int port,
+                        UsbAudioOut* co, int urbs) {
     close();
     mRunningStatus = 0;
-    if (!mUsb.start(fd, endpoint, maxPacket, ump, port)) return false;
+    if (!mUsb.start(fd, endpoint, maxPacket, ump, port, co, urbs)) return false;
     mUsbOpen.store(true, std::memory_order_release);
     return true;
 }

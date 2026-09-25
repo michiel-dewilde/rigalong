@@ -190,6 +190,27 @@ public:
         // is how far behind the host is allowed to run before it gives up.
         int fifoLength = 24;
         int fifoPreRoll = 20;
+
+        // HOW LONG THE WIRE GOES QUIET ON A RESYNC, and it is a SEPARATE
+        // number from the pre-roll depth on purpose.
+        //
+        // Those two were one thing until 2026-09-25, and they are two
+        // requirements wearing one hat:
+        //
+        //   THE GAP repairs the device -- a discontinuity makes it discard the
+        //   deviation it has accumulated -- and section 34 measured 2 ms as
+        //   ENOUGH, with 2, 4, 10 and 24 ms all resetting it equally.
+        //
+        //   THE MARGIN (preRoll minus the OUT ring) stops the FIFO running dry
+        //   afterwards, and section 39 measured that it wants to be LARGE:
+        //   margin 0 latched 4 of 4, margin 16 latched 0 of 10.
+        //
+        // Clearing the FIFO and waiting for `fifoPreRoll` fresh asks satisfies
+        // both, but it pays 20 ms of silence for a 2 ms job -- and that silence
+        // is the click heard about once a minute in real playing. Timing the
+        // gap directly buys the repair at a fifth of the cost and leaves the
+        // margin exactly where the trials put it.
+        int resyncGapUs = 4000;
         // true: a full FIFO clears it and forces a pre-roll, so the device
         // resyncs on a gap. false: a full FIFO is trimmed back to the pre-roll
         // depth and the stream stays contiguous. See mFifoResync.
@@ -391,6 +412,21 @@ public:
     // flawless) and it did answer it.
     void dumpTrace(const char* path) const;
 
+    // A URB ON THIS DESCRIPTOR THAT IS NOT OURS.
+    //
+    // usbfs completions are per-FILE-DESCRIPTOR, not per-endpoint, so the reap
+    // loop here sees every async URB anyone in this process submits on the
+    // device -- which is why the MIDI reader used a synchronous ioctl and had
+    // no queue at all. The answer is not for MIDI to avoid the queue but for
+    // this loop to DISPATCH what it finds: a URB whose context is none of ours
+    // goes to the registered handler, which resubmits it.
+    //
+    // Deliberately NOT cleared by start(), so an audio restart does not silently
+    // unhook the MIDI stream.
+    using ForeignFn = bool (*)(void* ctx, usbdevfs_urb* u);
+    void setForeignReaper(ForeignFn fn, void* ctx) { mForeignFn = fn; mForeignCtx = ctx; }
+    bool runningOn(int fd) const { return running() && mCfg.fd == fd; }
+
     void injectStarve(int count) {
         mInjectStarve.store(count, std::memory_order_relaxed);
     }
@@ -417,6 +453,7 @@ private:
     void completeFeedback(Urb& b);
     void completeOut(Urb& b);
     bool dispatch(void* reaped);
+    bool ownsContext(const void* p) const;
     bool serviceOut();
     void noteFifoDepth();
     void reapLoop();
@@ -434,6 +471,8 @@ private:
     int mFrameBytes = 6;
 
     std::vector<Urb> mOut, mIn;
+    ForeignFn mForeignFn = nullptr;
+    void* mForeignCtx = nullptr;
     std::thread mThread;
 
     // ADPF for the REAP THREAD, which is the one with a hard deadline.
@@ -517,6 +556,12 @@ private:
     // of a nominal size -- until the FIFO has rebuilt to mFifoPreRoll. True at
     // start and whenever the FIFO runs dry.
     bool mPreRoll = true;
+    // A DELIBERATE, TIMED GAP, which is not the same state as a dry FIFO.
+    // pre-roll waits for a DEPTH (it has nothing to send); this waits for a
+    // CLOCK (it has plenty to send and is deliberately not sending it).
+    bool mInGap = false;
+    int64_t mGapUntilNs = 0;
+    int64_t mResyncGapUs = 4000;
     // Frames of silence still owed while the render ring rebuilds after the
     // flush. Correctly sized packets of digital zeroes; see fillOut.
     int mSilenceFrames = 0;

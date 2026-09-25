@@ -1893,7 +1893,13 @@ class MainActivity : Activity() {
                     val pkt = intent.getIntExtra("inpkts", -1)
                     val dep = intent.getIntExtra("indepth", -1)
                     val opk = intent.getIntExtra("outpkts", -1)
-                    NativeBridge.nativeSetFifo(len, pre, res, pkt, opk)
+                    // MIDI IN URBs; 0 is the old synchronous bulk ioctl.
+                    //   ... .FIFO --ei midiurbs 4
+                    val mu = intent.getIntExtra("midiurbs", -1)
+                    // Microseconds of silence per resync, separate from the
+                    // pre-roll depth.   ... .FIFO --ei gapus 4000
+                    val gu = intent.getIntExtra("gapus", -1)
+                    NativeBridge.nativeSetFifo(len, pre, res, pkt, opk, mu, gu)
                     if (dep > 0) NativeBridge.nativeSetInDepthMs(dep)
                     if (intent.hasExtra("buffer")) {
                         val ms = intent.getIntExtra("buffer", UsbBuffers.DEFAULT_MS)
@@ -1901,7 +1907,8 @@ class MainActivity : Activity() {
                     }
                     android.util.Log.i("bos-ui",
                         "fifo: len=$len preRoll=$pre resync=$res inPkts=$pkt " +
-                        "outPkts=$opk inDepth=$dep buffer=$usbBufferMs (restarting)")
+                        "outPkts=$opk midiUrbs=$mu gapUs=$gu inDepth=$dep " +
+                        "buffer=$usbBufferMs (restarting)")
                     resetAudioPath()
                 }
                 //   ... .INDEPTH --ei ms 16   usbhost's feedback depth

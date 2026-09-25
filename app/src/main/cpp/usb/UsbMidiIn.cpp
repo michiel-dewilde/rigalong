@@ -1,5 +1,7 @@
 #include "UsbMidiIn.h"
 
+#include "UsbAudioOut.h"
+
 #include "../RealtimePriority.h"
 
 #include <android/log.h>
@@ -8,6 +10,7 @@
 #include <sys/resource.h>
 #include <unistd.h>
 
+#include <cstdlib>
 #include <cerrno>
 #include <cstring>
 #include <ctime>
@@ -24,7 +27,8 @@ int64_t nowNs() {
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
 #define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, __VA_ARGS__)
 
-bool UsbMidiIn::start(int fd, int endpoint, int maxPacket, bool ump, int port) {
+bool UsbMidiIn::start(int fd, int endpoint, int maxPacket, bool ump, int port,
+                      UsbAudioOut* co, int urbs) {
     stop();
     mFd = fd;
     mEp = endpoint;
@@ -34,9 +38,55 @@ bool UsbMidiIn::start(int fd, int endpoint, int maxPacket, bool ump, int port) {
     mUmpAsm.reset();
     mWrite.store(0, std::memory_order_relaxed);
     mRead.store(0, std::memory_order_relaxed);
+    mLastReturnNs = 0;
+    mMaxGapUs.store(0, std::memory_order_relaxed);
+    mMaxHoldUs.store(0, std::memory_order_relaxed);
     mRunning.store(true, std::memory_order_release);
+
+    // ASYNC only when the isochronous engine is live on THIS descriptor, since
+    // it is what reaps the completions. Otherwise -- MIDI on USB with audio on
+    // ALSA, or audio not started yet -- the synchronous thread is the only
+    // thing that works, and it is a fallback rather than an error.
+    const int want = urbs > 0 ? (urbs < kMaxMidiUrbs ? urbs : kMaxMidiUrbs) : 0;
+    if (co != nullptr && want > 0 && co->runningOn(fd)) {
+        mUrbs.assign(static_cast<size_t>(want), MidiUrb{});
+        bool ok = true;
+        for (MidiUrb& b : mUrbs) {
+            b.owner = this;
+            b.u = static_cast<usbdevfs_urb*>(calloc(1, sizeof(usbdevfs_urb)));
+            b.data = static_cast<uint8_t*>(calloc(1, static_cast<size_t>(mMaxPacket)));
+            if (b.u == nullptr || b.data == nullptr) { ok = false; break; }
+            b.u->type = USBDEVFS_URB_TYPE_BULK;
+            b.u->endpoint = static_cast<unsigned char>(mEp);
+            b.u->buffer = b.data;
+            b.u->buffer_length = mMaxPacket;
+            // Points at OUR record, which is how the iso engine tells a foreign
+            // URB from one of its own.
+            b.u->usercontext = &b;
+        }
+        if (ok) {
+            mCo = co;
+            co->setForeignReaper(&UsbMidiIn::reapThunk, this);
+            if (submitAll()) {
+                mAsync = true;
+                LOGI("usb midi in: ep 0x%02x, %s, port %d, %d async URBs x %d B "
+                     "(reaped by the iso engine)",
+                     mEp, mUmp ? "UMP (MIDI 2.0)" : "MIDI 1.0", mPort, want, mMaxPacket);
+                return true;
+            }
+        }
+        // Anything went wrong: tear the half-built queue down and fall back.
+        for (MidiUrb& b : mUrbs) { if (b.u) ioctl(mFd, USBDEVFS_DISCARDURB, b.u); }
+        co->setForeignReaper(nullptr, nullptr);
+        mCo = nullptr;
+        freeUrbs();
+        LOGE("usb midi in: async setup failed, falling back to the bulk ioctl");
+    }
+
+    mAsync = false;
     mThread = std::thread([this] { loop(); });
-    LOGI("usb midi in: ep 0x%02x, %s, port %d", mEp, mUmp ? "UMP (MIDI 2.0)" : "MIDI 1.0", mPort);
+    LOGI("usb midi in: ep 0x%02x, %s, port %d, synchronous (no queue)",
+         mEp, mUmp ? "UMP (MIDI 2.0)" : "MIDI 1.0", mPort);
     return true;
 }
 
@@ -44,6 +94,16 @@ void UsbMidiIn::stop() {
     mRunning.store(false, std::memory_order_release);
     // The reader wakes within its 100 ms bulk timeout and sees the flag.
     if (mThread.joinable()) mThread.join();
+    if (mAsync) {
+        // Unhook FIRST, so a completion arriving mid-teardown cannot reach a
+        // half-freed queue, then discard and give the engine a moment to reap.
+        if (mCo != nullptr) mCo->setForeignReaper(nullptr, nullptr);
+        for (MidiUrb& b : mUrbs) { if (b.u) ioctl(mFd, USBDEVFS_DISCARDURB, b.u); }
+        usleep(20 * 1000);
+        freeUrbs();
+        mCo = nullptr;
+        mAsync = false;
+    }
 }
 
 void UsbMidiIn::push(const bagosynths::usbmidi::Message& m) {
@@ -157,26 +217,82 @@ void UsbMidiIn::loop() {
             continue;
         }
         if (n == 0) continue;
-        mPackets.fetch_add(1, std::memory_order_relaxed);
-        // A USB-MIDI 1.0 transfer is always a whole number of 4-byte packets.
-        // A remainder means the read was cut short and a packet was lost.
-        if (!mUmp && (n % 4) != 0) mShortReads.fetch_add(1, std::memory_order_relaxed);
+        consume(buf, n);
+    }
+    mRunning.store(false, std::memory_order_release);
+}
 
-        if (mUmp) {
-            mUmpAsm.feed(buf, static_cast<size_t>(n),
-                         [this](const bagosynths::usbmidi::Message& m) { push(m); });
-        } else {
-            for (int i = 0; i + 3 < n; i += 4) {
-                bagosynths::usbmidi::Message m;
-                if (bagosynths::usbmidi::decodePacket(buf + i, m)) {
-                    push(m);
-                } else if (buf[i] != 0 || buf[i + 1] != 0) {
-                    // All-zero padding is normal and says nothing; anything
-                    // else we failed to decode is a message we threw away.
-                    mUndecoded.fetch_add(1, std::memory_order_relaxed);
-                }
+// The bytes of one transfer, whichever path delivered them.
+void UsbMidiIn::consume(const uint8_t* buf, int n) {
+    mPackets.fetch_add(1, std::memory_order_relaxed);
+    // A USB-MIDI 1.0 transfer is always a whole number of 4-byte packets.
+    // A remainder means the read was cut short and a packet was lost.
+    if (!mUmp && (n % 4) != 0) mShortReads.fetch_add(1, std::memory_order_relaxed);
+
+    if (mUmp) {
+        mUmpAsm.feed(buf, static_cast<size_t>(n),
+                     [this](const bagosynths::usbmidi::Message& m) { push(m); });
+    } else {
+        for (int i = 0; i + 3 < n; i += 4) {
+            bagosynths::usbmidi::Message m;
+            if (bagosynths::usbmidi::decodePacket(buf + i, m)) {
+                push(m);
+            } else if (buf[i] != 0 || buf[i + 1] != 0) {
+                // All-zero padding is normal and says nothing; anything
+                // else we failed to decode is a message we threw away.
+                mUndecoded.fetch_add(1, std::memory_order_relaxed);
             }
         }
     }
-    mRunning.store(false, std::memory_order_release);
+}
+
+// --------------------------------------------------------------- async ---
+//
+// One completed bulk URB, ON THE ISOCHRONOUS REAP THREAD. The work here is
+// deliberately tiny -- at most one wMaxPacketSize of 4-byte packets decoded
+// into a lock-free ring, then resubmit -- because this is the thread with the
+// hard deadline. It is a few hundred nanoseconds per transfer, and it buys a
+// queue that the synchronous path cannot have on a shared descriptor.
+bool UsbMidiIn::onReaped(usbdevfs_urb* u) {
+    if (!mRunning.load(std::memory_order_acquire)) return true;
+    if (u->status == 0) {
+        if (u->actual_length > 0) {
+            consume(static_cast<const uint8_t*>(u->buffer), u->actual_length);
+        }
+    } else if (u->status == -ENODEV || u->status == -ESHUTDOWN) {
+        LOGE("usb midi in: device gone");
+        mRunning.store(false, std::memory_order_release);
+        return true;
+    } else if (u->status != -ENOENT && u->status != -ECONNRESET) {
+        mLastErrno.store(-u->status, std::memory_order_relaxed);
+        mErrors.fetch_add(1, std::memory_order_relaxed);
+    }
+    // Straight back out. An endpoint with a request always outstanding is the
+    // whole point of this path.
+    u->actual_length = 0;
+    if (ioctl(mFd, USBDEVFS_SUBMITURB, u) < 0) {
+        mLastErrno.store(errno, std::memory_order_relaxed);
+        mErrors.fetch_add(1, std::memory_order_relaxed);
+    }
+    return true;
+}
+
+bool UsbMidiIn::reapThunk(void* ctx, usbdevfs_urb* u) {
+    return static_cast<UsbMidiIn*>(ctx)->onReaped(u);
+}
+
+bool UsbMidiIn::submitAll() {
+    for (MidiUrb& b : mUrbs) {
+        b.u->actual_length = 0;
+        if (ioctl(mFd, USBDEVFS_SUBMITURB, b.u) < 0) {
+            LOGE("usb midi in: SUBMITURB failed: %s", strerror(errno));
+            return false;
+        }
+    }
+    return true;
+}
+
+void UsbMidiIn::freeUrbs() {
+    for (MidiUrb& b : mUrbs) { free(b.u); free(b.data); }
+    mUrbs.clear();
 }

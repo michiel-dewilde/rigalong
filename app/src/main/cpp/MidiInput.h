@@ -30,7 +30,8 @@ public:
     // (see usb/UsbMidiIn.h) and this drains it through the same parser the
     // AMidi bytes go through. Exclusive with the AMidi port -- opening either
     // closes the other, so a note can never arrive twice.
-    bool openUsb(int fd, int endpoint, int maxPacket, bool ump, int port);
+    bool openUsb(int fd, int endpoint, int maxPacket, bool ump, int port,
+                 class UsbAudioOut* co, int urbs);
     bool usbOpen() const { return mUsbOpen.load(std::memory_order_acquire); }
 
     bool isOpen() const {

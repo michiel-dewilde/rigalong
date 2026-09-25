@@ -66,6 +66,9 @@ public:
     // (Kotlin) has already claimed the interfaces and selected the alternate
     // setting; `rate` is what the device's clock is now running at.
     bool startUsb(const UsbAudioOut::Config& config, std::string* error);
+    // The isochronous engine, so the MIDI reader can queue async URBs on
+    // the same descriptor and have this loop dispatch them.
+    UsbAudioOut& usbOut() { return mUsbOut; }
     bool usbActive() const { return mUsbActive.load(std::memory_order_acquire); }
 
     // The Oboe stream AND the USB sink, whichever is live.

@@ -160,6 +160,12 @@ std::atomic<int> gFifoResync{1};
 // `buffer`; this decides how that depth is DIVIDED, which is the slack --
 // (urbs - 1) x packets -- and is a variable in its own right.
 std::atomic<int> gOutPktsPerUrb{1};
+// MIDI IN URBs, each one wMaxPacketSize. 0 falls back to the synchronous
+// bulk ioctl, which has no queue at all and is what shipped until now.
+std::atomic<int> gMidiUrbs{4};
+// Microseconds of silence on a resync. Section 34 measured 2 ms as enough
+// to make the device discard its accumulated deviation.
+std::atomic<int> gResyncGapUs{4000};
 
 JNIEXPORT void JNICALL
 Java_be_mdw_bagosynths_NativeBridge_nativeSetInDepthMs(JNIEnv*, jobject, jint ms) {
@@ -171,7 +177,10 @@ Java_be_mdw_bagosynths_NativeBridge_nativeSetInDepthMs(JNIEnv*, jobject, jint ms
 JNIEXPORT void JNICALL
 Java_be_mdw_bagosynths_NativeBridge_nativeSetFifo(JNIEnv*, jobject, jint len,
                                                   jint preRoll, jint resync,
-                                                  jint inPkts, jint outPkts) {
+                                                  jint inPkts, jint outPkts,
+                                                  jint midiUrbs, jint gapUs) {
+    if (midiUrbs >= 0) gMidiUrbs.store(midiUrbs, std::memory_order_relaxed);
+    if (gapUs >= 0) gResyncGapUs.store(gapUs > 0 ? gapUs : 1, std::memory_order_relaxed);
     if (outPkts > 0) gOutPktsPerUrb.store(outPkts, std::memory_order_relaxed);
     if (len > 0) gFifoLen.store(len, std::memory_order_relaxed);
     if (preRoll > 0) gFifoPreRoll.store(preRoll, std::memory_order_relaxed);
@@ -990,6 +999,7 @@ Java_be_mdw_bagosynths_NativeBridge_nativeStartUsbAudio(JNIEnv* env, jobject, ji
     cfg.fifoLength = gFifoLen.load(std::memory_order_relaxed);
     cfg.fifoPreRoll = gFifoPreRoll.load(std::memory_order_relaxed);
     cfg.fifoResync = gFifoResync.load(std::memory_order_relaxed) != 0;
+    cfg.resyncGapUs = gResyncGapUs.load(std::memory_order_relaxed);
 
     std::string startErr;
     if (!engine().startUsb(cfg, &startErr)) {
@@ -1065,7 +1075,9 @@ Java_be_mdw_bagosynths_NativeBridge_nativeStartUsbMidi(JNIEnv* env, jobject, jin
     if (m.alt != 0 && !setAlt(fd, m.interfaceNumber, m.alt)) {
         return errString(env, "SET_INTERFACE to the UMP alternate setting failed");
     }
-    if (!engine().midi().openUsb(fd, m.in.address, m.in.maxPacket(), m.ump, port)) {
+    if (!engine().midi().openUsb(fd, m.in.address, m.in.maxPacket(), m.ump, port,
+                                 &engine().usbOut(),
+                                 gMidiUrbs.load(std::memory_order_relaxed))) {
         return errString(env, "could not start the MIDI reader");
     }
     return nullptr;

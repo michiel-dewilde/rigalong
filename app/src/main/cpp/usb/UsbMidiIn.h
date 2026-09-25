@@ -23,6 +23,7 @@
 #include <atomic>
 #include <cstdint>
 #include <thread>
+#include <vector>
 
 #include <bagosynths/UsbMidi.h>
 
@@ -31,7 +32,15 @@ public:
     ~UsbMidiIn() { stop(); }
 
     // `port`: the cable (1.0) or group (2.0) to listen to; -1 for all.
-    bool start(int fd, int endpoint, int maxPacket, bool ump, int port);
+    //
+    // `co` is the isochronous engine on the SAME descriptor, and passing a
+    // running one switches this reader from a synchronous ioctl with no queue
+    // to `urbs` async URBs of one wMaxPacketSize each, reaped by that engine's
+    // loop and handed back here. Pass nullptr, or urbs <= 0, for the old
+    // single-request path -- which is also the fallback when audio is not on
+    // this descriptor at all (MIDI on USB while audio is on ALSA).
+    bool start(int fd, int endpoint, int maxPacket, bool ump, int port,
+               class UsbAudioOut* co = nullptr, int urbs = 0);
     void stop();
     bool running() const { return mRunning.load(std::memory_order_acquire); }
 
@@ -70,6 +79,26 @@ public:
 
 private:
     void loop();
+    void consume(const uint8_t* buf, int n);
+    bool onReaped(struct usbdevfs_urb* u);
+    static bool reapThunk(void* ctx, struct usbdevfs_urb* u);
+    bool submitAll();
+    void freeUrbs();
+
+    // The async path: `kMaxMidiUrbs` buffers of one wMaxPacketSize, so a
+    // request is ALWAYS outstanding on this endpoint. The synchronous ioctl
+    // leaves it unarmed between the kernel completing one transfer and the
+    // next being submitted -- a window the user-space `gap` instrument cannot
+    // even see, because it measures from ioctl return to ioctl entry.
+    static constexpr int kMaxMidiUrbs = 8;
+    struct MidiUrb {
+        struct usbdevfs_urb* u = nullptr;
+        uint8_t* data = nullptr;
+        UsbMidiIn* owner = nullptr;   // usercontext points here
+    };
+    std::vector<MidiUrb> mUrbs;
+    class UsbAudioOut* mCo = nullptr;
+    bool mAsync = false;
     void push(const bagosynths::usbmidi::Message& m);
 
     int mFd = -1;

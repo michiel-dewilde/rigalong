@@ -125,6 +125,9 @@ bool UsbAudioOut::start(const Config& config, PullFn pull, FlushFn flush, void* 
     mFifoPreRoll = std::clamp(mCfg.fifoPreRoll > 0 ? mCfg.fifoPreRoll : mFifoLen / 2,
                               1, mFifoLen - 1);
     mFifoResync = mCfg.fifoResync;
+    mResyncGapUs = mCfg.resyncGapUs > 0 ? mCfg.resyncGapUs : 4000;
+    mInGap = false;
+    mGapUntilNs = 0;
     mFifoMin = 1 << 30; mFifoMax = 0;
     mOutIdle.clear();
     mOutIdle.reserve(static_cast<size_t>(mUrbs));
@@ -669,8 +672,25 @@ void UsbAudioOut::completeOut(Urb& b) {
 // resubmitted -- because an ask the FIFO does not hold yet is an ask that does
 // not exist. OUT is only PARKED: nothing about the output is decided until the
 // kernel's queue is empty. See the drain in reapLoop().
+// Is this URB's context one of ours? A range check on the two vectors, which is
+// O(1) and safe: they are contiguous and never resized after start().
+bool UsbAudioOut::ownsContext(const void* p) const {
+    auto within = [p](const std::vector<Urb>& v) {
+        return !v.empty() &&
+               p >= static_cast<const void*>(&v.front()) &&
+               p <= static_cast<const void*>(&v.back());
+    };
+    return within(mOut) || within(mIn);
+}
+
 bool UsbAudioOut::dispatch(void* reaped) {
     auto* u = static_cast<usbdevfs_urb*>(reaped);
+    // NOT OURS: hand it to whoever submitted it, before any cast that would
+    // read it as one of our Urbs. See setForeignReaper.
+    if (!ownsContext(u->usercontext)) {
+        ForeignFn fn = mForeignFn;
+        return fn != nullptr ? fn(mForeignCtx, u) : true;
+    }
     auto* b = static_cast<Urb*>(u->usercontext);
     if (b == nullptr || !mRunning.load(std::memory_order_acquire)) return true;
 
@@ -745,15 +765,16 @@ bool UsbAudioOut::serviceOut() {
     // IN queue has been drained: a depth of mFifoLen means the host is that many
     // packets behind, and with 8/4 that is 8 ms, about one OUT ring plus its
     // slack.
-    if (mSizeCount >= mFifoLen) {
+    if (mSizeCount >= mFifoLen && !mInGap) {
         if (mFifoResync) {
-            // Clear, not trim. Trimming to mFifoPreRoll would leave enough asks
-            // to fill every idle URB immediately, so there would be no gap at
-            // all and the whole mechanism would be a no-op that counted itself.
-            mFbDrop.fetch_add(mSizeCount, std::memory_order_relaxed);
-            mSizeHead = 0;
-            mSizeCount = 0;
-            mPreRoll = true;
+            // A TIMED gap, and the FIFO is deliberately NOT cleared. It goes on
+            // taking asks while the wire is quiet -- it is full, so pop-as-you-
+            // push keeps the newest -- and when the gap expires we trim to the
+            // working depth and answer with sizes from NOW. That gives the
+            // repair (a discontinuity) and the freshness (newest asks) without
+            // paying a full pre-roll of silence for them.
+            mGapUntilNs = nowNs() + mResyncGapUs * 1000;
+            mInGap = true;
             mResyncs.fetch_add(1, std::memory_order_relaxed);
         } else {
             while (mSizeCount > mFifoPreRoll) {
@@ -765,8 +786,29 @@ bool UsbAudioOut::serviceOut() {
         }
     }
 
-    // Nothing to submit into. The decision above still had to be taken, because
-    // the FIFO can fill while every OUT URB is in flight.
+    // IN THE GAP: submit nothing at all until the clock says so. The OUT URBs
+    // drain and park, the wire goes quiet, and the device discards whatever it
+    // had accumulated.
+    if (mInGap) {
+        if (nowNs() < mGapUntilNs) return true;
+        mInGap = false;
+        // Resume on the NEWEST asks at the working depth. The ones dropped here
+        // are frames the device asked for during the silence and can never be
+        // delivered, which is a deficit, which is the free direction.
+        while (mSizeCount > mFifoPreRoll) {
+            mSizeHead = (mSizeHead + 1) % kFifoCap;
+            --mSizeCount;
+            mFbDrop.fetch_add(1, std::memory_order_relaxed);
+        }
+        // The balance restarts here for the same reason it restarts after a
+        // pre-roll: for the device, a gap wipes the slate.
+        mBalMin = mFrames.load(std::memory_order_relaxed) -
+                  mInFramesTotal.load(std::memory_order_relaxed);
+        mSilenceFrames = mFlush ? std::max(0, mFlush(mCtx)) : 0;
+    }
+
+    // Nothing to submit into. The decisions above still had to be taken,
+    // because the FIFO can fill while every OUT URB is in flight.
     if (mOutIdle.empty()) return true;
 
     // PRE-ROLL. THE OUT STREAM IS WITHHELD ENTIRELY -- not one packet of a
