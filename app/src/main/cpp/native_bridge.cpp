@@ -188,12 +188,6 @@ Java_be_mdw_bagosynths_NativeBridge_nativeSetFifo(JNIEnv*, jobject, jint len,
     if (inPkts > 0) gInPktsPerUrb.store(inPkts, std::memory_order_relaxed);
 }
 
-// TEST ONLY: never send bit-exact digital silence on the OUT stream.
-JNIEXPORT void JNICALL
-Java_be_mdw_bagosynths_NativeBridge_nativeSetSilenceFloor(JNIEnv*, jobject, jboolean on) {
-    engine().setSilenceFloor(on == JNI_TRUE);
-}
-
 JNIEXPORT void JNICALL
 Java_be_mdw_bagosynths_NativeBridge_nativeSetUsbTone(JNIEnv*, jobject, jfloat hz) {
     engine().setUsbTone(hz);

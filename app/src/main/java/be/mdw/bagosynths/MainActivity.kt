@@ -203,7 +203,6 @@ class MainActivity : Activity() {
         filter.addAction("be.mdw.bagosynths.TONE")
         filter.addAction("be.mdw.bagosynths.INDEPTH")
         filter.addAction("be.mdw.bagosynths.FIFO")
-        filter.addAction("be.mdw.bagosynths.FLOOR")
         filter.addAction("be.mdw.bagosynths.DUMP")
         filter.addAction("be.mdw.bagosynths.HOLD")
         filter.addAction("be.mdw.bagosynths.CONCEAL")
@@ -1923,14 +1922,6 @@ class MainActivity : Activity() {
                     NativeBridge.nativeSetInDepthMs(ms)
                     android.util.Log.i("bos-ui", "feedback capture depth: $ms ms (restarting)")
                     resetAudioPath()
-                }
-                // Never send bit-exact digital silence: the last host-side
-                // idea that is not about timing.
-                //   ... .FLOOR --ei on 1
-                "be.mdw.bagosynths.FLOOR" -> {
-                    val on = intent.getIntExtra("on", 1) != 0
-                    NativeBridge.nativeSetSilenceFloor(on)
-                    android.util.Log.i("bos-ui", "silence floor: " + if (on) "ON" else "OFF")
                 }
                 //   ... .TONE --ef hz 440   usbhost's payload, this app's transport
                 "be.mdw.bagosynths.TONE" -> {

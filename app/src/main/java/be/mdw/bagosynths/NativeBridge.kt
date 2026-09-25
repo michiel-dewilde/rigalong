@@ -47,9 +47,6 @@ object NativeBridge {
     external fun nativeSetFifo(len: Int, preRoll: Int, resync: Int, inPkts: Int,
                                outPkts: Int, midiUrbs: Int, gapUs: Int)
 
-    /** Keeps the OUT stream off bit-exact zero, one LSB of triangle. TEST ONLY. */
-    external fun nativeSetSilenceFloor(on: Boolean)
-
     /** Replaces the USB payload with a tone, load and sizes unchanged. TEST ONLY. */
     external fun nativeSetUsbTone(hz: Float)
 
