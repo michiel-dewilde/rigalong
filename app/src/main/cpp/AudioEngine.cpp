@@ -845,7 +845,15 @@ void AudioEngine::logMidiChain() const {
     if (on == 0 && off == 0 && gotOn == 0 && gotOff == 0) return;   // nothing played
 
     LOGI("midi pkt=%llu msg=%llu on=%llu off=%llu -> on=%llu off=%llu "
-         "ringFull=%llu short=%llu undec=%llu filt=%llu sinkFull=%llu err=%llu(%d)",
+         "ringFull=%llu short=%llu undec=%llu filt=%llu sinkFull=%llu err=%llu(%d) "
+         // THE WINDOW IN WHICH NOTHING WAS QUEUED ON THE MIDI ENDPOINT, and
+         // the longest single bulk call. USBDEVFS_BULK is synchronous, so one
+         // request exists at a time and `gap` is how long endpoint 0x82 had
+         // none at all -- the audio IN side queues 24 URBs against exactly
+         // this. A gap in the tens of milliseconds means the device held its
+         // MIDI and handed it over in a burst, which is the shape section 28
+         // measured as a shrinker of the device's own margin.
+         "gap=%.1fms hold=%.1fms",
          static_cast<unsigned long long>(u.packets()),
          static_cast<unsigned long long>(u.messages()),
          static_cast<unsigned long long>(on),
@@ -857,7 +865,8 @@ void AudioEngine::logMidiChain() const {
          static_cast<unsigned long long>(u.undecoded()),
          static_cast<unsigned long long>(u.filtered()),
          static_cast<unsigned long long>(mMidi.sinkFull()),
-         static_cast<unsigned long long>(u.errors()), u.lastErrno());
+         static_cast<unsigned long long>(u.errors()), u.lastErrno(),
+         u.maxGapUs() / 1000.0, u.maxHoldUs() / 1000.0);
 }
 
 void AudioEngine::renderBlockIntoRing(int frames) {

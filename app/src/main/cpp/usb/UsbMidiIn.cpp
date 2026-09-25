@@ -10,6 +10,15 @@
 
 #include <cerrno>
 #include <cstring>
+#include <ctime>
+
+namespace {
+int64_t nowNs() {
+    timespec ts{};
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return static_cast<int64_t>(ts.tv_sec) * 1000000000LL + ts.tv_nsec;
+}
+}  // namespace
 
 #define LOG_TAG "bos-usb"
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
@@ -87,7 +96,21 @@ void UsbMidiIn::loop() {
     // Feeds the engine rather than the wire, so it sits with the render
     // thread. A MIDI byte read a millisecond late delays a note; a URB
     // submitted a millisecond late is audio that was never sent.
-    bos::raiseRenderPriority("usb midi reader", bos::kRenderNice);
+    // AT THE TRANSPORT'S OWN PRIORITY since 2026-09-25, not one band below.
+    //
+    // The old value was justified by "a MIDI byte read a millisecond late
+    // delays a note; a URB submitted a millisecond late is audio that was never
+    // sent", which is sound about LATENCY and wrong about this endpoint's
+    // QUEUE. There is exactly one bulk request outstanding at a time, so while
+    // this thread is descheduled nothing at all is queued on endpoint 0x82 and
+    // the device hands over a burst when it returns. Being a band below the
+    // reap thread makes that window longer precisely when the system is busy.
+    //
+    // It does not fix the shape -- a queue would -- but it bounds it, and it
+    // costs nothing: this thread blocks in an ioctl and does a few microseconds
+    // of decode per packet.
+    bos::raiseRenderPriority("usb midi reader", bos::kTransportNice);
+    mLastReturnNs = nowNs();
 
     uint8_t buf[512];
     const int len = mMaxPacket <= static_cast<int>(sizeof(buf)) ? mMaxPacket : static_cast<int>(sizeof(buf));
@@ -97,7 +120,25 @@ void UsbMidiIn::loop() {
         bt.len = static_cast<unsigned>(len);
         bt.timeout = 100;        // ms
         bt.data = buf;
+        const int64_t t0 = nowNs();
+        // The window during which NOTHING was queued on this endpoint: from the
+        // previous call returning to this one being submitted.
+        if (mLastReturnNs != 0) {
+            const int64_t gap = (t0 - mLastReturnNs) / 1000;
+            int64_t seen = mMaxGapUs.load(std::memory_order_relaxed);
+            while (gap > seen &&
+                   !mMaxGapUs.compare_exchange_weak(seen, gap,
+                                                    std::memory_order_relaxed)) {}
+        }
         const int n = ioctl(mFd, USBDEVFS_BULK, &bt);
+        mLastReturnNs = nowNs();
+        {
+            const int64_t held = (mLastReturnNs - t0) / 1000;
+            int64_t seen = mMaxHoldUs.load(std::memory_order_relaxed);
+            while (held > seen &&
+                   !mMaxHoldUs.compare_exchange_weak(seen, held,
+                                                     std::memory_order_relaxed)) {}
+        }
         if (n < 0) {
             const int e = errno;
             if (e == ETIMEDOUT || e == EINTR) continue;

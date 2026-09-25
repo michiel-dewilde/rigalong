@@ -63,6 +63,9 @@ public:
     uint64_t undecoded() const { return mUndecoded.load(std::memory_order_relaxed); }
     uint64_t filtered() const { return mFiltered.load(std::memory_order_relaxed); }
     uint64_t shortReads() const { return mShortReads.load(std::memory_order_relaxed); }
+    // Reset on read: each sample describes its own interval.
+    int64_t maxGapUs() const { return mMaxGapUs.exchange(0, std::memory_order_relaxed); }
+    int64_t maxHoldUs() const { return mMaxHoldUs.exchange(0, std::memory_order_relaxed); }
     int lastErrno() const { return mLastErrno.load(std::memory_order_relaxed); }
 
 private:
@@ -98,4 +101,25 @@ private:
     std::atomic<uint64_t> mFiltered{0};     // right device, wrong cable
     std::atomic<uint64_t> mShortReads{0};   // transfer not a multiple of 4
     std::atomic<int> mLastErrno{0};
+
+    // HOW LONG THIS ENDPOINT WENT WITH NO REQUEST OUTSTANDING, which is the
+    // one thing the MIDI path has never measured about itself.
+    //
+    // USBDEVFS_BULK is synchronous, so exactly ONE request exists at a time and
+    // between the return of one and the submission of the next there is nothing
+    // queued on endpoint 0x82 at all. The audio IN side queues 24 URBs for
+    // precisely this reason; this side queues none. Normally the window is
+    // microseconds -- but this thread runs at kRenderNice, BELOW the reap
+    // thread, and a deschedule makes the window unbounded. The device then
+    // holds its MIDI and hands it over in a BURST when we come back, and a
+    // burst of bulk transactions is exactly what section 28 measured as a
+    // shrinker of the device's own margin (13 frames with a bulk transfer in
+    // flight, and the bulk and iso buffers share one controller RAM window --
+    // section 29).
+    //
+    // So: measure it before changing anything. Reset on read, like the audio
+    // side's interval peaks.
+    mutable std::atomic<int64_t> mMaxGapUs{0};
+    mutable std::atomic<int64_t> mMaxHoldUs{0};   // longest single BULK call
+    int64_t mLastReturnNs = 0;                    // reader thread only
 };
