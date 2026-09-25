@@ -193,6 +193,8 @@ class MainActivity : Activity() {
         filter.addAction("be.mdw.bagosynths.DUMP")
         filter.addAction("be.mdw.bagosynths.MASTER")
         filter.addAction("be.mdw.bagosynths.SHARING")
+        filter.addAction("be.mdw.bagosynths.RATE")
+        filter.addAction("be.mdw.bagosynths.INPUT")
         filter.addAction("be.mdw.bagosynths.PARAM")
         filter.addAction("be.mdw.bagosynths.PANIC")
         filter.addAction("be.mdw.bagosynths.STRESS")
@@ -262,6 +264,25 @@ class MainActivity : Activity() {
 
     /** EXCLUSIVE by default; long-press Buffer to switch. See that handler. */
     private var wantExclusive = true
+
+    // ASK FOR SOMETHING THE DEVICE DOES NOT DECLARE, deliberately and only for
+    // a measurement. Zero means "use what the device declares", which is the
+    // shipped behaviour and the only behaviour a user ever gets.
+    //
+    // This exists because of what Android's policy dump says on the phone:
+    // the MMAP mix port that EXCLUSIVE comes from -- "mmap_no_irq_out" -- has
+    // exactly ONE profile, 48000 Hz and PCM_16_BIT, while the CP-88 port has
+    // exactly one profile, 44100 Hz and PCM_24_BIT_PACKED. So exclusive on
+    // this device is not merely "available at 48 kHz"; it is available ONLY
+    // through a port that cannot carry the piano's rate OR its word length,
+    // and the HAL therefore converts both. The question worth measuring is
+    // what that conversion costs in latency and quality -- not whether it is
+    // happening, which the dump already settles.
+    //
+    //   adb shell am broadcast -a be.mdw.bagosynths.RATE --ei hz 48000 --ei fmt 1
+    //   adb shell am broadcast -a be.mdw.bagosynths.RATE --ei hz 0 --ei fmt 0
+    private var rateOverride = 0
+    private var formatOverride = 0
 
     override fun onResume() {
         super.onResume()
@@ -372,7 +393,6 @@ class MainActivity : Activity() {
      * The CP-88's capture side. Input and output device ids are different objects
      * even for the same physical interface, so this cannot reuse the output id.
      */
-    @Suppress("unused")  // kept: useful if a future Android release allows full duplex
     private fun findCp88InputDeviceId(): Int {
         val am = getSystemService(Context.AUDIO_SERVICE) as AudioManager
         val inputs = am.getDevices(AudioManager.GET_DEVICES_INPUTS).filter {
@@ -1972,6 +1992,48 @@ class MainActivity : Activity() {
                     }
                     android.util.Log.i("bos-ui", "sharing: ${if (wantExclusive) "EXCLUSIVE" else "SHARED"}")
                 }
+                //   ... .RATE --ei hz 48000 --ei fmt 1    ask for what the MMAP
+                //                                          port wants, not what
+                //                                          the piano declares
+                "be.mdw.bagosynths.RATE" -> {
+                    rateOverride = intent.getIntExtra("hz", 0)
+                    formatOverride = intent.getIntExtra("fmt", 0)
+                    if (!effectiveMode(Use.AUDIO).direct) {
+                        NativeBridge.nativeStop()
+                        NativeBridge.nativeStart(findOutputDeviceId(), bufferBursts)
+                        NativeBridge.nativeResetPeaks()
+                    }
+                    android.util.Log.i("bos-ui", "rate override: " +
+                        (if (rateOverride > 0) "$rateOverride Hz" else "device's own") +
+                        ", format " +
+                        (if (formatOverride > 0) "$formatOverride" else "device's own"))
+                }
+                //   ... .INPUT --es dev cp88      measure over the WIRE, not the room
+                //   ... .INPUT --es dev mic       back to the microphone
+                //
+                // WHY THIS IS WORTH HAVING, beyond one experiment. Every latch
+                // verdict in this project comes from a microphone, and the
+                // microphone has now been the thing that was wrong four times:
+                // the rig's volume moved 8x between sessions, the phone reads an
+                // order of magnitude quieter than the tablet, and the round-trip
+                // window turned out to be a path property too. A room is not an
+                // instrument.
+                //
+                // The CP-88's capture endpoint might be one. If the piano mixes
+                // what the host sends into what it sends back, then pointing the
+                // probe at it measures the same click DIGITALLY -- full scale,
+                // no room, no distance, no volume control in between -- and the
+                // oracle stops being defeatable by someone talking.
+                //
+                // If it does NOT loop back, this reads silence and says so, and
+                // that is worth knowing once rather than assuming forever.
+                "be.mdw.bagosynths.INPUT" -> {
+                    val which = intent.getStringExtra("dev") ?: "mic"
+                    val id = if (which.lowercase().startsWith("cp"))
+                        findCp88InputDeviceId() else findBuiltinMicDeviceId()
+                    val ok = NativeBridge.nativeEnableInput(id)
+                    android.util.Log.i("bos-ui", "input device: $which -> id $id, open=$ok")
+                }
                 //   adb shell am broadcast -a be.mdw.bagosynths.MASTER --ef db -12
                 // The profile, including the per-engine held peaks. Scriptable
                 // because gain staging is measured by playing the SAME note on
@@ -2155,8 +2217,10 @@ class MainActivity : Activity() {
                 "${choice.name}  [CP-88, ALSA]"
             else -> "${choice.name}  [USB, ALSA]"
         }
-        NativeBridge.nativeSetPreferredRate(nativeRateOf(d))
-        NativeBridge.nativeSetPreferredFormat(nativeFormatOf(d))
+        NativeBridge.nativeSetPreferredRate(
+            if (rateOverride > 0) rateOverride else nativeRateOf(d))
+        NativeBridge.nativeSetPreferredFormat(
+            if (formatOverride > 0) formatOverride else nativeFormatOf(d))
         return d?.id ?: NativeBridge.DEVICE_UNSPECIFIED
     }
 
