@@ -193,6 +193,15 @@ Java_be_mdw_bagosynths_NativeBridge_nativeSetFifo(JNIEnv*, jobject, jint len,
     if (inPkts > 0) gInPktsPerUrb.store(inPkts, std::memory_order_relaxed);
 }
 
+// Live, and deliberately not part of nativeSetFifo: that call's fields are read
+// when the transport starts, and an A/B of a policy wants to be switchable
+// under a running stream rather than across a restart that changes other things
+// too.
+JNIEXPORT void JNICALL
+Java_be_mdw_bagosynths_NativeBridge_nativeSetEmptyResync(JNIEnv*, jobject, jint on) {
+    engine().usbOut().setEmptyResync(on != 0);
+}
+
 JNIEXPORT void JNICALL
 Java_be_mdw_bagosynths_NativeBridge_nativeSetUsbTone(JNIEnv*, jobject, jfloat hz) {
     engine().setUsbTone(hz);

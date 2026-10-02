@@ -115,6 +115,7 @@ bool UsbAudioOut::start(const Config& config, PullFn pull, FlushFn flush, void* 
     mBalRise = 0;
     mOutShort = 0; mOutOdd = 0;
     mOutDry = 0;
+    mOutEmpty = 0;
     mTrace.assign(kTraceCap, TraceEntry{});
     mTraceAt = 0;
     mTraceT0 = nowNs();
@@ -749,6 +750,34 @@ bool UsbAudioOut::serviceOut() {
         }
     }
 
+    // WAS THE QUEUE EMPTY? Asked on the state this call was ENTERED with, and
+    // asked here rather than lower down because everything below legitimately
+    // empties the queue on purpose.
+    //
+    // The two exclusions are not conveniences, they are the whole correctness
+    // of the test:
+    //
+    //   mPreRoll -- start-up, and every pass where the FIFO ran short. The
+    //               stream is withheld deliberately; an empty queue is the
+    //               intended state, not a fault.
+    //   mInGap   -- a resync gap in progress, which is deliberate silence. Note
+    //               the pass that ENDS a gap enters with mInGap still true, so
+    //               it is excluded too. Without that, ending a gap would be
+    //               scored as a dry event and -- with the trigger on -- would
+    //               immediately open another one, forever.
+    const bool outWasEmpty =
+            !mPreRoll && !mInGap && mOutIdle.size() == mOut.size();
+    if (outWasEmpty) {
+        mOutEmpty.fetch_add(1, std::memory_order_relaxed);
+        if (mOutEmptyResync.load(std::memory_order_relaxed) && mFifoResync) {
+            // Same repair as the FIFO-full path: a timed gap, the FIFO left
+            // taking asks, then a trim to the working depth on the way out.
+            mGapUntilNs = nowNs() + mResyncGapUs * 1000;
+            mInGap = true;
+            mResyncs.fetch_add(1, std::memory_order_relaxed);
+        }
+    }
+
     // THE FIFO IS FULL: OUT HAS FALLEN BEHIND IN. Two answers, and which one is
     // right is the open question of 2026-09-25.
     //
@@ -982,6 +1011,7 @@ UsbAudioOut::Stats UsbAudioOut::stats() const {
     s.outShort = mOutShort.load(std::memory_order_relaxed);
     s.outOdd = mOutOdd.load(std::memory_order_relaxed);
     s.outDry = mOutDry.load(std::memory_order_relaxed);
+    s.outEmpty = mOutEmpty.load(std::memory_order_relaxed);
     s.preRolls = mPreRolls.load(std::memory_order_relaxed);
     s.silenceFrames = mSilenceTotal.load(std::memory_order_relaxed);
     s.outTrims = mOutTrims.load(std::memory_order_relaxed);

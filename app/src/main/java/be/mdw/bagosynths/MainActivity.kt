@@ -205,6 +205,7 @@ class MainActivity : Activity() {
         filter.addAction("be.mdw.bagosynths.TONE")
         filter.addAction("be.mdw.bagosynths.INDEPTH")
         filter.addAction("be.mdw.bagosynths.FIFO")
+        filter.addAction("be.mdw.bagosynths.DRYRESYNC")
         filter.addAction("be.mdw.bagosynths.DUMP")
         filter.addAction("be.mdw.bagosynths.HOLD")
         filter.addAction("be.mdw.bagosynths.CONCEAL")
@@ -1937,6 +1938,15 @@ class MainActivity : Activity() {
                     // Microseconds of silence per resync, separate from the
                     // pre-roll depth.   ... .FIFO --ei gapus 4000
                     val gu = intent.getIntExtra("gapus", -1)
+                    // Whether an OBSERVED-empty OUT queue also opens a resync
+                    // gap -- Michiel's idea, 2026-10-02. Counted always as
+                    // outEmpty on the health line; acted on only when asked,
+                    // because there is a measured baseline to protect (resync
+                    // 0 of 10 against trim 5 of 6) and because a resync creates
+                    // ~4 ms of deliberate silence, which is four more missed
+                    // slots -- answering starvation with more absence has to be
+                    // shown rather than assumed.
+                    //   ... .DRYRESYNC --ei on 1   -- its OWN action, below
                     NativeBridge.nativeSetFifo(len, pre, res, pkt, opk, mu, gu)
                     if (dep > 0) NativeBridge.nativeSetInDepthMs(dep)
                     if (intent.hasExtra("buffer")) {
@@ -1953,6 +1963,26 @@ class MainActivity : Activity() {
                         "outPkts=$opk midiUrbs=$mu gapUs=$gu inDepth=$dep " +
                         "buffer=$usbBufferMs (restarting)")
                     resetAudioPath()
+                }
+                // Whether an OBSERVED-empty OUT queue also opens a resync gap.
+                //
+                // ITS OWN ACTION, and that is the point: FIFO ends in
+                // resetAudioPath(), which restarts the transport and zeroes
+                // every counter. Putting this there defeated the whole reason
+                // nativeSetEmptyResync applies live -- the first A/B of it
+                // measured across the restart and produced negative deltas
+                // (resync=-16, silence=-7364), which is the harness saying it
+                // measured across a reset rather than the device saying
+                // anything. Same error as the one removed from fillsweep.sh
+                // this morning, made again within hours in a new place.
+                //
+                //   adb shell am broadcast -a be.mdw.bagosynths.DRYRESYNC --ei on 1
+                "be.mdw.bagosynths.DRYRESYNC" -> {
+                    val on = intent.getIntExtra("on", 0)
+                    NativeBridge.nativeSetEmptyResync(on)
+                    android.util.Log.i("bos-ui",
+                        "empty-queue resync: " + if (on != 0) "ON" else "OFF" +
+                        " (live, no restart)")
                 }
                 //   ... .INDEPTH --ei ms 16   usbhost's feedback depth
                 "be.mdw.bagosynths.INDEPTH" -> {

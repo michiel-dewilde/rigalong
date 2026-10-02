@@ -313,6 +313,7 @@ public:
         int64_t outShort = 0;    // OUT packets the controller cut short; MUST stay 0
         int64_t outOdd = 0;      // OUT packets not a whole number of frames; MUST stay 0
         int64_t outDry = 0;      // reap gaps longer than the OUT ring: stream RESTARTS
+        int64_t outEmpty = 0;    // the queue was OBSERVED empty, not inferred
         int64_t preRolls = 0;    // times the OUT stream was withheld and restarted
         int64_t silenceFrames = 0;   // frames of pre-roll silence sent, cumulative
         int64_t outTrims = 0;        // times a full FIFO was cut back on an OUT reap
@@ -426,6 +427,11 @@ public:
     using ForeignFn = bool (*)(void* ctx, usbdevfs_urb* u);
     void setForeignReaper(ForeignFn fn, void* ctx) { mForeignFn = fn; mForeignCtx = ctx; }
     bool runningOn(int fd) const { return running() && mCfg.fd == fd; }
+
+    /** Whether an observed-empty OUT queue triggers the resync gap. */
+    void setEmptyResync(bool on) {
+        mOutEmptyResync.store(on, std::memory_order_relaxed);
+    }
 
     void injectStarve(int count) {
         mInjectStarve.store(count, std::memory_order_relaxed);
@@ -654,6 +660,46 @@ private:
     std::atomic<int64_t> mOutShort{0};
     std::atomic<int64_t> mOutOdd{0};
     std::atomic<int64_t> mOutDry{0};
+
+    // THE OUT QUEUE WAS OBSERVED EMPTY, which is a different instrument from
+    // mOutDry beside it. Michiel's, 2026-10-02.
+    //
+    // mOutDry asks "was our reap gap longer than the ring?" and infers
+    // emptiness from our own thread's lateness. This asks the thing itself: if
+    // every OUT URB is back in mOutIdle then nothing is queued on the endpoint,
+    // full stop. No clock, no geometry constant, no assumption about why.
+    //
+    // WHY THE PROXY IS NOT ENOUGH, and it is a real blind spot rather than a
+    // matter of taste: mOutDry compares against mOutRingUs, the duration of a
+    // FULL ring. The queue is often not full -- it rebuilds after every
+    // pre-roll, and whenever the FIFO runs short fewer URBs are submitted. With
+    // a half-filled queue a gap well under the ring empties it, and the proxy
+    // counts nothing at all.
+    //
+    // One thing worth being clear about, because it changes where the value is:
+    // with 6 URBs of 1 packet the queue IS the buffer, so a single missed slot
+    // cannot happen in isolation -- missing one slot already means the queue
+    // reached zero. So this does not detect something finer than the proxy
+    // detects coarsely; it detects the SAME event exactly, including the cases
+    // the proxy's threshold hides.
+    std::atomic<int64_t> mOutEmpty{0};
+
+    // Whether an observed-empty queue also triggers the resync gap. OFF by
+    // default, on purpose.
+    //
+    // The theory for turning it on is sound: the existing comment on mOutDry
+    // notes that a ring which EMPTIES is restarted at whatever frame the
+    // controller has reached, so after a dry event the FIFO's phase assumption
+    // against the device is already broken, and re-initialising to a known
+    // pre-roll state is precisely the repair.
+    //
+    // The reason not to default it on is that there is a measured baseline to
+    // protect -- resync 0 of 10 against trim 5 of 6 on the load route -- and a
+    // tension worth stating: the resync CREATES about 4 ms of deliberate
+    // silence, which is four more missed slots. If starving the device is the
+    // harm, answering it with more absence needs to be shown rather than
+    // assumed. So: counted always, acted on only when asked.
+    std::atomic<bool> mOutEmptyResync{false};
     // Reap thread only. Per direction, because the two queues are deliberately
     // different depths: measuring an IN URB against the OUT ring made `late`
     // meaningless the moment the feedback stream went deep.

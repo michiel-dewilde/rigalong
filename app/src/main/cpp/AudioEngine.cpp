@@ -1614,7 +1614,7 @@ AudioEngine::Stats AudioEngine::stats() const {
                  "inSize=%d..%d/%lld fbDrift=%lld fbDrop=%lld fbClamp=%lld "
                  "inLost=%lld zeroAvoided=%lld shaped=%lld bal=%lld/%lld rise=%lld "
                  "fifo=%d..%d preRoll=%lld resync=%lld trim=%lld silence=%lld "
-                 "outShort=%lld outOdd=%lld outDry=%lld%s%s",
+                 "outShort=%lld outOdd=%lld outDry=%lld outEmpty=%lld%s%s",
                  s.usbRunning ? "ok" : "DOWN",
                  static_cast<double>(s.outputPeak),
                  static_cast<double>(mCallbackPeak.load(std::memory_order_relaxed)),
@@ -1709,6 +1709,7 @@ AudioEngine::Stats AudioEngine::stats() const {
                  // duration -- `deficit` is the duration and it does not
                  // separate a run that latches from one that does not.
                  static_cast<long long>(u.outDry),
+                 static_cast<long long>(u.outEmpty),
                  why.empty() ? "" : " fatal=", why.c_str());
             logMidiChain();
         }
