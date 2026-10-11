@@ -50,7 +50,13 @@ data class RackSlot(
     val params: Map<String, Double> = emptyMap(),
     /** Its insert effect, or null. */
     val fx: RackFx? = null,
-)
+) {
+    /** The patch object this slot is stored as; equal content, equal hash, so a library patch is recognised. */
+    fun patch(e: RackEngine) = Patch(engine = e.key, preset = preset, program = program, params = params)
+
+    /** This slot taking [p]'s sound: its preset, program and values. */
+    fun withPatch(p: Patch) = copy(preset = p.preset, program = p.program, params = p.params)
+}
 
 /**
  * An engine's insert effect (M6): one of [TYPES], and its parameters by the
@@ -166,8 +172,7 @@ data class RackSong(
             wires["mix.out"] = Wire("mix.fx:out", "out:in")
         }
         for ((e, slot) in slots.toSortedMap()) {
-            val patch = store.putTyped(Patch(engine = e.key, preset = slot.preset, program = slot.program,
-                params = slot.params))
+            val patch = store.putTyped(slot.patch(e))
             nodes[e.key] = Node(kind = e.nodeType, patch = RefJ.of(patch, Patch.TYPE),
                 params = mapOf("Level" to slot.level))
             nodes["${e.key}.zone"] = Node(kind = "midi.zone")

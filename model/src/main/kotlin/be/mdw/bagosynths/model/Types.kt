@@ -179,8 +179,18 @@ data class LiveSet(
 @Serializable
 data class Setlist(
     val songs: List<RefJ> = emptyList(),
+    /**
+     * Per position, the library entry the song is (a weak link, "sha256:..."),
+     * or "" where unknown. Songs are referenced by content, so two entries with
+     * equal content are one object; this tells their positions apart, so an
+     * edit to one moves only its own. Absent in setlists written before it.
+     */
+    val entries: List<String> = emptyList(),
     @SerialName("@type") @EncodeDefault val type: String = TYPE,
 ) {
+    /** The entry at [position], or null where the setlist does not say. */
+    fun entryAt(position: Int): Digest? = entries.getOrNull(position)?.takeIf { it.isNotEmpty() }?.let { Digest.parse(it) }
+
     companion object { const val TYPE = "bagosynths.setlist/1" }
 }
 

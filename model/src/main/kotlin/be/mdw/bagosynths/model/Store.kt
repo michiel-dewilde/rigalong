@@ -6,6 +6,12 @@ import java.io.File
  * One version of a library entry (FORMAT.md section 4). The first version of an
  * entry has no [entry] and no [previous]; its own digest is the entry's
  * identity from then on. A version with no [target] marks the entry deleted.
+ *
+ * [previous] is a REFERENCE: the history travels with the entry (export, sync)
+ * and keeps its objects alive. [entry] and [derivedFrom] are WEAK LINKS, plain
+ * digest strings that closure, export and gc do not follow: an entry's identity
+ * and a fork's origin are known, but drag nothing along. So a version with no
+ * [previous] -- [Store.forgetHistory] -- orphans everything before it.
  */
 data class EntryVersion(
     val entry: Digest?,
@@ -16,10 +22,12 @@ data class EntryVersion(
     val time: String,
     val tags: List<String> = emptyList(),
     val description: String? = null,
+    /** The version of another entry this one was forked from (a weak link), or null. */
+    val derivedFrom: Digest? = null,
 ) {
     fun toJson(): Json.Obj = Json.obj(
         "@type" to Json.str(TYPE),
-        "entry" to entry?.let { Ref(it).toJson() },
+        "entry" to entry?.let { Json.str(it.toString()) },
         "name" to Json.str(name),
         "target" to target?.toJson(),
         "previous" to previous?.let { Ref(it).toJson() },
@@ -27,6 +35,7 @@ data class EntryVersion(
         "time" to Json.str(time),
         "tags" to tags.takeIf { it.isNotEmpty() }?.let { t -> Json.Arr(t.map { Json.str(it) }) },
         "description" to description?.let { Json.str(it) },
+        "derivedFrom" to derivedFrom?.let { Json.str(it.toString()) },
     )
 
     companion object {
@@ -36,7 +45,8 @@ data class EntryVersion(
             val o = j.obj()
             require(o["@type"]?.str() == TYPE) { "not an entry version" }
             return EntryVersion(
-                entry = o["entry"]?.let { Ref.fromJson(it).digest },
+                // A reference in versions written before 2026-10-11, a weak link since.
+                entry = o["entry"]?.let { if (it is Json.Str) Digest.parse(it.value) else Ref.fromJson(it).digest },
                 name = o.req("name").str(),
                 target = o["target"]?.let { Ref.fromJson(it) },
                 previous = o["previous"]?.let { Ref.fromJson(it).digest },
@@ -44,6 +54,7 @@ data class EntryVersion(
                 time = o.req("time").str(),
                 tags = o["tags"]?.arr()?.map { it.str() } ?: emptyList(),
                 description = o["description"]?.str(),
+                derivedFrom = (o["derivedFrom"] as? Json.Str)?.let { Digest.parse(it.value) },
             )
         }
     }
@@ -206,8 +217,20 @@ class Store(val root: File) {
 
     /** A new entry pointing at [target]. Returns the entry's identity. */
     fun create(name: String, target: Ref, author: String, time: String,
-               tags: List<String> = emptyList(), description: String? = null): Digest =
-        commit(EntryVersion(null, name, target, null, author, time, tags, description))
+               tags: List<String> = emptyList(), description: String? = null, derivedFrom: Digest? = null): Digest =
+        commit(EntryVersion(null, name, target, null, author, time, tags, description, derivedFrom))
+
+    /**
+     * Drops entry [id]'s history: a version with its current content and no
+     * [EntryVersion.previous]. Nothing before it travels with the entry any more
+     * (export, sync), and gc may reclaim it; a weak link to the forgotten
+     * version is kept as [EntryVersion.derivedFrom]. Not undoable.
+     */
+    fun forgetHistory(id: Digest, author: String, time: String): Digest {
+        val cur = entry(id) ?: error("no entry ${id.short}")
+        val v = cur.version
+        return commit(EntryVersion(id, v.name, v.target, null, author, time, v.tags, v.description, derivedFrom = cur.latest))
+    }
 
     /** A new version of entry [id]; members not given are carried over. */
     fun update(id: Digest, author: String, time: String, target: Ref? = null, name: String? = null,

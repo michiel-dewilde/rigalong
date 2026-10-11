@@ -17,6 +17,87 @@ class Library(dir: File, private val author: String) {
 
     private fun now() = Instant.now().toString()
 
+    // ------------------------------------------------------------ change sets
+
+    /**
+     * What one action changed, to undo it as one: every entry it wrote, with
+     * its latest version before (null: the action created it). A save that
+     * moved a patch, three songs and two setlists is one change.
+     * [kind] says what the action was (song, setlist, patch, ...), [name] on what.
+     */
+    data class ChangeSet(val kind: String, val name: String, val before: Map<Digest, Digest?>)
+
+    private var open: LinkedHashMap<Digest, Digest?>? = null
+    private val changesFile = File(dir, "changes.txt")
+
+    private fun <T> change(kind: String, name: String, body: () -> T): T {
+        if (open != null) return body()   // part of an action already under way
+        val rec = LinkedHashMap<Digest, Digest?>()
+        open = rec
+        try {
+            return body()
+        } finally {
+            open = null
+            if (rec.isNotEmpty()) pushChange(ChangeSet(kind, name, rec))
+        }
+    }
+
+    private fun create(name: String, target: Ref, author: String, time: String, derivedFrom: Digest? = null): Digest =
+        store.create(name, target, author, time, derivedFrom = derivedFrom).also { id -> open?.let { if (id !in it) it[id] = null } }
+
+    private fun update(id: Digest, author: String, time: String, target: Ref? = null, name: String? = null,
+                       delete: Boolean = false): Digest {
+        open?.let { if (id !in it) it[id] = store.entry(id)?.latest }
+        return store.update(id, author, time, target = target, name = name, delete = delete)
+    }
+
+    private fun readChanges(): MutableList<ChangeSet> {
+        if (!changesFile.exists()) return mutableListOf()
+        return changesFile.readLines().filter { it.isNotBlank() }.mapNotNull { line ->
+            val parts = line.split('\t')
+            if (parts.size < 3) return@mapNotNull null
+            val before = LinkedHashMap<Digest, Digest?>()
+            for (p in parts[2].split(';').filter { it.isNotEmpty() }) {
+                val (id, b) = p.split('=')
+                before[Digest(id)] = if (b == "-") null else Digest(b)
+            }
+            ChangeSet(parts[0], parts[1], before)
+        }.toMutableList()
+    }
+
+    private fun writeChanges(list: List<ChangeSet>) {
+        changesFile.writeText(list.takeLast(MAX_CHANGES).joinToString("") { c ->
+            val name = c.name.replace('\t', ' ').replace('\n', ' ')
+            "${c.kind}\t$name\t" + c.before.entries.joinToString(";") { (id, b) -> "${id.hex}=${b?.hex ?: "-"}" } + "\n"
+        })
+    }
+
+    private fun pushChange(c: ChangeSet) = writeChanges(readChanges() + c)
+
+    /** The last action that can be undone, or null. */
+    fun lastChange(): ChangeSet? = readChanges().lastOrNull()
+
+    /**
+     * Undoes the last action, all of it: every entry it wrote goes back to the
+     * version it had before, as a new version (the history keeps the undone
+     * one too); an entry it created is deleted. Returns what was undone.
+     */
+    fun undo(): ChangeSet? {
+        val list = readChanges()
+        val c = list.removeLastOrNull() ?: return null
+        for ((id, before) in c.before.entries.reversed()) {
+            if (store.entry(id) == null) continue
+            if (before == null) {
+                store.update(id, author, now(), delete = true)
+            } else {
+                val v = EntryVersion.fromJson(store.getJson(before))
+                store.update(id, author, now(), target = v.target, name = v.name, delete = v.target == null)
+            }
+        }
+        writeChanges(list)
+        return c
+    }
+
     data class SongEntry(val entry: Entry, val song: Song)
 
     fun songs(): List<SongEntry> = store.entries()
@@ -35,10 +116,10 @@ class Library(dir: File, private val author: String) {
     fun environment(id: Digest): Environment? =
         store.entry(id)?.version?.target?.let { store.getTyped(it.digest) }
 
-    fun saveEnvironment(entryId: Digest?, name: String, env: Environment): Digest {
+    fun saveEnvironment(entryId: Digest?, name: String, env: Environment): Digest = change("environment", name) {
         val target = Ref(store.putTyped(env), Environment.TYPE)
-        return if (entryId == null) store.create(name, target, author, now())
-        else store.update(entryId, author, now(), target = target, name = name)
+        if (entryId == null) create(name, target, author, now())
+        else update(entryId, author, now(), target = target, name = name)
     }
 
     fun setlist(id: Digest): Setlist? =
@@ -48,44 +129,70 @@ class Library(dir: File, private val author: String) {
     fun songsOf(setlistId: Digest): List<Pair<Entry?, Song>> {
         val sl = setlist(setlistId) ?: return emptyList()
         val byObject = songs().associateBy { it.entry.version.target!!.digest }
-        return sl.songs.map { r ->
+        return sl.songs.mapIndexed { i, r ->
             val d = r.toRef().digest
-            byObject[d]?.let { it.entry to it.song } ?: (null to store.getTyped(d))
+            val named = sl.entryAt(i)?.let { store.entry(it) }?.takeIf { it.version.target != null }
+            when {
+                named != null -> named to store.getTyped<Song>(d)
+                else -> byObject[d]?.let { it.entry to it.song } ?: (null to store.getTyped(d))
+            }
         }
     }
 
-    fun saveSong(entryId: Digest?, name: String, draft: RackSong): Digest {
+    fun saveSong(entryId: Digest?, name: String, draft: RackSong): Digest = change("song", name) {
         val song = draft.toObjects(store)
         val target = Ref(store.putTyped(song), Song.TYPE)
-        if (entryId == null) return store.create(name, target, author, now())
-        val previous = store.entry(entryId)?.version?.target?.digest
-        store.update(entryId, author, now(), target = target, name = name)
-        if (previous != null && previous != target.digest) rippleSetlists(previous, target.digest)
-        return entryId
-    }
-
-    private fun rippleSetlists(from: Digest, to: Digest) {
-        for (e in setlists()) {
-            val sl = store.getTyped<Setlist>(e.version.target!!.digest)
-            if (sl.songs.none { it.toRef().digest == from }) continue
-            val moved = sl.copy(songs = sl.songs.map { if (it.toRef().digest == from) RefJ.of(to, Song.TYPE) else it })
-            store.update(e.id, author, now(), target = Ref(store.putTyped(moved), Setlist.TYPE))
+        if (entryId == null) {
+            create(name, target, author, now())
+        } else {
+            val previous = store.entry(entryId)?.version?.target?.digest
+            update(entryId, author, now(), target = target, name = name)
+            if (previous != null && previous != target.digest) rippleSetlists(previous, target.digest, entryId)
+            entryId
         }
     }
 
-    fun saveSetlist(entryId: Digest?, name: String, songEntries: List<Digest>): Digest {
-        val refs = songEntries.mapNotNull { id -> store.entry(id)?.version?.target?.let { RefJ.of(it.digest, Song.TYPE) } }
-        val target = Ref(store.putTyped(Setlist(songs = refs)), Setlist.TYPE)
-        return if (entryId == null) store.create(name, target, author, now())
-        else store.update(entryId, author, now(), target = target, name = name)
+    /**
+     * Saves a song and, as the same change, the library patches it changed:
+     * [patchMoves] maps a library patch to its new content and the OTHER songs
+     * to move on to it (I8.13; which ones is the user's choice, I8.5).
+     */
+    fun saveSongAndPatches(entryId: Digest?, name: String, draft: RackSong,
+                           patchMoves: Map<Digest, Pair<Patch, Collection<Digest>>>): Digest = change("song", name) {
+        val id = saveSong(entryId, name, draft)
+        for ((patchId, move) in patchMoves) updatePatch(patchId, move.first, move.second)
+        id
+    }
+
+    /**
+     * Moves the positions of song entry [entry] that held [from] on to [to].
+     * A position that names another entry stays, even with equal content: two
+     * songs that happen to be the same object are still two songs.
+     */
+    private fun rippleSetlists(from: Digest, to: Digest, entry: Digest) {
+        for (e in setlists()) {
+            val sl = store.getTyped<Setlist>(e.version.target!!.digest)
+            fun mine(i: Int) = sl.songs[i].toRef().digest == from && (sl.entryAt(i) ?: entry) == entry
+            if (sl.songs.indices.none(::mine)) continue
+            val moved = sl.copy(songs = sl.songs.mapIndexed { i, r -> if (mine(i)) RefJ.of(to, Song.TYPE) else r })
+            update(e.id, author, now(), target = Ref(store.putTyped(moved), Setlist.TYPE))
+        }
+    }
+
+    fun saveSetlist(entryId: Digest?, name: String, songEntries: List<Digest>): Digest = change("setlist", name) {
+        val known = songEntries.mapNotNull { id -> store.entry(id)?.version?.target?.let { id to it } }
+        val refs = known.map { RefJ.of(it.second.digest, Song.TYPE) }
+        val target = Ref(store.putTyped(Setlist(songs = refs, entries = known.map { it.first.toString() })), Setlist.TYPE)
+        if (entryId == null) create(name, target, author, now())
+        else update(entryId, author, now(), target = target, name = name)
     }
 
     fun deleteEntry(id: Digest) {
-        store.update(id, author, now(), delete = true)
+        change("delete", store.entry(id)?.version?.name.orEmpty()) { update(id, author, now(), delete = true) }
     }
 
     fun rename(id: Digest, name: String) {
-        store.update(id, author, now(), name = name)
+        change("rename", name) { update(id, author, now(), name = name) }
     }
 
     /** An entry's versions, newest first (I8.3). */
@@ -99,10 +206,12 @@ class Library(dir: File, private val author: String) {
      */
     fun restore(id: Digest, version: Digest) {
         val v = EntryVersion.fromJson(store.getJson(version))
-        val before = store.entry(id)?.version?.target?.digest
-        store.update(id, author, now(), target = v.target, name = v.name, delete = v.target == null)
-        val after = v.target?.digest
-        if (v.target?.type == Song.TYPE && before != null && after != null && before != after) rippleSetlists(before, after)
+        change("restore", v.name) {
+            val before = store.entry(id)?.version?.target?.digest
+            update(id, author, now(), target = v.target, name = v.name, delete = v.target == null)
+            val after = v.target?.digest
+            if (v.target?.type == Song.TYPE && before != null && after != null && before != after) rippleSetlists(before, after, id)
+        }
     }
 
     /** A setlist holding some version of a song, and whether it is the latest (I8.5). */
@@ -113,7 +222,10 @@ class Library(dir: File, private val author: String) {
         val versions = history(songId).mapNotNull { it.second.target?.digest }.toSet()
         val latest = store.entry(songId)?.version?.target?.digest
         return setlists().mapNotNull { e ->
-            val held = store.getTyped<Setlist>(e.version.target!!.digest).songs.map { it.toRef().digest }
+            val sl = store.getTyped<Setlist>(e.version.target!!.digest)
+            // Positions that are this song: naming it, or naming nothing and holding one of its versions.
+            val held = sl.songs.indices.filter { i -> (sl.entryAt(i) ?: songId) == songId }
+                .map { sl.songs[it].toRef().digest }
             if (held.none { it in versions }) null else Use(e, latest in held)
         }
     }
@@ -124,18 +236,118 @@ class Library(dir: File, private val author: String) {
         val older = history(songId).mapNotNull { it.second.target?.digest }.toSet() - latest
         val e = store.entry(setlistId) ?: return
         val sl = store.getTyped<Setlist>(e.version.target!!.digest)
-        val moved = sl.copy(songs = sl.songs.map { if (it.toRef().digest in older) RefJ.of(latest, Song.TYPE) else it })
-        if (moved != sl) store.update(setlistId, author, now(), target = Ref(store.putTyped(moved), Setlist.TYPE))
+        val moved = sl.copy(songs = sl.songs.mapIndexed { i, r ->
+            if (r.toRef().digest in older && (sl.entryAt(i) ?: songId) == songId) RefJ.of(latest, Song.TYPE) else r
+        })
+        if (moved != sl) change("update", e.version.name) {
+            update(setlistId, author, now(), target = Ref(store.putTyped(moved), Setlist.TYPE))
+        }
     }
 
     /** Versions of [id] that came in by import and diverged from this tablet's (I8.31). */
     fun divergences(id: Digest): List<Digest> = store.divergences()[id].orEmpty()
 
     fun resolve(id: Digest, chosen: Digest) {
-        store.resolve(id, chosen, author, now())
+        change("resolve", store.entry(id)?.version?.name.orEmpty()) {
+            open?.let { if (id !in it) it[id] = store.entry(id)?.latest }
+            store.resolve(id, chosen, author, now())
+        }
+    }
+
+    // ------------------------------------------------------- library patches
+
+    /**
+     * Patches as library entries, to share between songs. A song's engine
+     * slot USES one when its patch object is one of the entry's versions --
+     * by content, so nothing extra is stored in songs: picking a library patch
+     * gives the slot exactly that object, and changing a value makes another.
+     */
+    fun patches(engine: String? = null): List<Pair<Entry, Patch>> = store.entries()
+        .filter { it.version.target?.type == Patch.TYPE }
+        .map { it to store.getTyped<Patch>(it.version.target!!.digest) }
+        .filter { engine == null || it.second.engine == engine }
+        .sortedBy { it.first.version.name.lowercase() }
+
+    /** A library patch, new or a new version; a new one may name the patch version it was forked from. */
+    fun savePatch(entryId: Digest?, name: String, patch: Patch, derivedFrom: Digest? = null): Digest = change("patch", name) {
+        val target = Ref(store.putTyped(patch), Patch.TYPE)
+        if (entryId == null) create(name, target, author, now(), derivedFrom)
+        else update(entryId, author, now(), target = target, name = name)
+    }
+
+    /** Where entry [id] was forked from: the other entry and its version then, if known here. */
+    fun origin(id: Digest): Pair<Entry, Digest>? {
+        val first = history(id).lastOrNull()?.second ?: return null
+        val from = first.derivedFrom ?: return null
+        val v = runCatching { EntryVersion.fromJson(store.getJson(from)) }.getOrNull() ?: return null
+        val src = store.entry(v.entry ?: from) ?: return null
+        return src to from
+    }
+
+    /**
+     * Stops dragging entry [id]'s history along (Store.forgetHistory): its
+     * current content stays, its earlier versions no longer travel with it.
+     * Not undoable, so it clears the undo steps that would need them.
+     */
+    fun forgetHistory(id: Digest) {
+        store.forgetHistory(id, author, now())
+        writeChanges(readChanges().filter { id !in it.before })
+    }
+
+    /** The library patch [patch] is a version of, and whether it is the latest; null if none. */
+    fun patchEntryOf(patch: Patch): Pair<Entry, Boolean>? {
+        val d = store.putTyped(patch)
+        val mine = patches(patch.engine)
+        mine.firstOrNull { it.first.version.target?.digest == d }?.let { return it.first to true }
+        mine.firstOrNull { (e, _) -> history(e.id).any { it.second.target?.digest == d } }?.let { return it.first to false }
+        return null
+    }
+
+    /** A song using a library patch, and whether it uses the patch's latest version. */
+    data class PatchUse(val song: Entry, val latest: Boolean)
+
+    fun songsUsingPatch(patchId: Digest): List<PatchUse> {
+        val versions = history(patchId).mapNotNull { it.second.target?.digest }.toSet()
+        val latest = store.entry(patchId)?.version?.target?.digest
+        return songs().mapNotNull { s ->
+            val used = s.song.nodes.values.mapNotNull { it.patch?.toRef()?.digest }
+            if (used.none { it in versions }) null else PatchUse(s.entry, latest in used)
+        }
+    }
+
+    /**
+     * A new version of library patch [patchId], and the songs in [songs] moved
+     * from its previous latest on to it -- each a new song version, its
+     * setlists following (I8.13). Songs on an older version, or not chosen,
+     * stay where they are (I8.5).
+     */
+    fun updatePatch(patchId: Digest, patch: Patch, songs: Collection<Digest>) {
+        val entry = store.entry(patchId) ?: return
+        change("patch", entry.version.name) {
+            val old = entry.version.target!!.digest
+            val new = store.putTyped(patch)
+            if (new != old) update(patchId, author, now(), target = Ref(new, Patch.TYPE))
+            for (sid in songs) {
+                val se = store.entry(sid) ?: continue
+                val before = se.version.target?.digest ?: continue
+                val song = store.getTyped<Song>(before)
+                if (song.nodes.values.none { it.patch?.toRef()?.digest == old }) continue
+                val moved = song.copy(nodes = song.nodes.mapValues { (_, n) ->
+                    if (n.patch?.toRef()?.digest == old) n.copy(patch = RefJ.of(new, Patch.TYPE)) else n
+                })
+                val after = store.putTyped(moved)
+                update(sid, author, now(), target = Ref(after, Song.TYPE))
+                rippleSetlists(before, after, sid)
+            }
+        }
     }
 
     fun rackSong(song: Song): RackSong? = RackSong.fromObjects(store, song)
+
+    companion object {
+        /** How many actions Undo can go back. */
+        const val MAX_CHANGES = 30
+    }
 
     /** First run: a setlist with three songs, so the stage view has something to play (S14.2). */
     fun seedIfEmpty(organRegistrations: List<String>) {

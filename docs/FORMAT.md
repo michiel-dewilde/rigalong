@@ -64,19 +64,29 @@ Each version of an entry is itself a JSON object:
 ```json
 {
   "@type": "bagosynths.entry/1",
-  "entry": {"@ref": "sha256:<first version of this entry>"},
+  "entry": "sha256:<first version of this entry>",
   "name": "Summer opener",
   "target": {"@ref": "sha256:...", "@type": "bagosynths.song/1"},
   "previous": {"@ref": "sha256:<the version this one replaces>"},
   "author": "Michiel De Wilde",
   "time": "2026-10-11T01:30:00Z",
   "tags": ["gig", "2026"],
-  "description": "..."
+  "description": "...",
+  "derivedFrom": "sha256:<a version of another entry this one was forked from>"
 }
 ```
 
 * The **first version** has no `entry` and no `previous`. Its own hash is the
   entry's identity from then on.
+* `previous` is a **reference**: the history travels with the entry (export,
+  sync) and keeps its objects. `entry` and `derivedFrom` are **weak links**:
+  plain digest strings, never followed by closure, export or garbage
+  collection. An entry knows its identity and where a fork came from without
+  dragging either along. (Versions written before 2026-10-11 hold `entry` as a
+  reference; readers accept both.)
+* **Forgetting history** is a version with the current content and no
+  `previous`: nothing before it travels with the entry any more, and it keeps
+  a weak `derivedFrom` to the version it cut off.
 * The only mutable state in a library is, per entry, which version is the
   latest.
 * Two versions with the same `previous` are a **divergence** (I8.21, I8.31):
@@ -105,7 +115,7 @@ schema version without changing what existing objects mean.
 | `bagosynths.patch/1` | `engine` (factory type name), `engineVersion`, `params` (parameter id -> value), and `state`: a reference to engine-specific bytes where the engine has its own patch format (a Surge patch, a DX7 voice, an SFZ instrument pack, a SoundFont plus preset number). Until packs are in the library (M9), `preset` names installed content instead: an SFZ instrument id, a Surge "Category/Name", a DX7 voice, a SoundFont file, an organ registration, a Plaits model |
 | `bagosynths.song/1` | `instances` (name -> {patch ref, island preference by port}), `graph` (nodes, typed pins, wires), `values` (song value per parameter), `recall` (mode per parameter), `liveSets` (ordered refs), `cp88` (optional), `tempo` (optional), `leadSheet` (optional ref), `stageLayout`, `switching` (incoming selection -> live set). Node kinds so far: the engines, `midi.zone`, the ports, `reverb` (where the engines meet) and `fx.<type>` (an insert effect, `<engine>.fx` after an engine or `mix.fx` on the whole mix: `delay`, `phaser`, `flanger`, `rotary`, `reverb`; parameters by the effect's own names, `<name> sync` = 1 for tempo sync) |
 | `bagosynths.liveset/1` | `name`, `enabled` (node -> bool), `wires` (wire -> on/gain), `overrides` (parameter -> value), `recall` (per-parameter override of the song's mode), `transitions`, `onSelect` (MIDI to send), `cp88` (leave / select page:set / own ref), `visibleControls`, `leadSheetPage` |
-| `bagosynths.setlist/1` | `songs` (ordered refs) |
+| `bagosynths.setlist/1` | `songs` (ordered refs); `entries`, per position the song's library entry as a weak link ("" where unknown), so two songs with equal content -- one object -- stay two songs and an edit moves only its own positions |
 | `bagosynths.environment/1` | `ports` (name, kind, width), `bindings` (port -> device match and settings), `externalSynths`, `switchingSources`, `pageTurner`, `clickPort` (null: the visual beat only), `clickContinuous`, `clickLevel`, `midiClockPort`, `stageScreen`, `retimers` (per device pair) |
 | `bagosynths.usbprofile/1` | `match` (vendor, product, optional bcdDevice), `fbx` (the members of `struct fbx_profile`), `measuredOn`, `notes` |
 | `bagosynths.pack/1` | `files` (relative path -> ref), `entry` (the instrument's main file), `licence`, `source` (where to fetch it again) |
