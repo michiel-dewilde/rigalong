@@ -224,6 +224,8 @@ data class ExternalSynth(
     val channel: Int = 1,
     /** CP-88 pages (1-40) the app may write songs into (I3.4). */
     val reservedPages: List<Int> = emptyList(),
+    /** Its own live set buttons select the app's live sets, its page kept silent elsewhere (S4.12). */
+    val selectsLiveSets: Boolean = false,
     val midnam: RefJ? = null,
 )
 
@@ -252,6 +254,12 @@ data class Environment(
     val clickContinuous: Boolean = false,
     /** Share of the stage screen given to the lead sheet, 0-1. */
     val sheetShare: Double = 0.6,
+    /** The page-turner keys turn lead-sheet pages (else live sets). */
+    val keysTurnPages: Boolean = true,
+    /** Do Not Disturb while the app is in front (S17.2). */
+    val doNotDisturb: Boolean = false,
+    /** The master volume: how loud the room needs it is a property of the room. */
+    val masterDb: Double? = null,
     @SerialName("@type") @EncodeDefault val type: String = TYPE,
 ) {
     companion object { const val TYPE = "bagosynths.environment/1" }

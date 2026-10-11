@@ -18,6 +18,10 @@ import be.mdw.bagosynths.model.RackSong
 import be.mdw.bagosynths.model.Song
 import be.mdw.bagosynths.model.getTyped
 
+/** Routing by the devices' own names; null name = automatic. Modes are IoMode names. */
+data class RoutingSpec(val audioName: String?, val audioMode: String, val midiName: String?, val midiMode: String,
+                       val bufferMs: Int)
+
 /** What the new UI needs from the activity that owns the engine and the routing. */
 interface EngineHost {
     /** Installed SFZ instruments: id to display name. */
@@ -42,6 +46,11 @@ interface EngineHost {
      * Returns the new instrument's id.
      */
     fun importInstrumentZip(input: java.io.InputStream, fileName: String): String
+    /** The routing in force, by the devices' own names (for environments). */
+    fun routingSpec(): RoutingSpec
+    fun applyRoutingSpec(spec: RoutingSpec)
+    /** The names of every audio output and MIDI port present now (S3.10). */
+    fun availableDevices(): Set<String>
     /** MEASURE (S20.3): a click through the device, heard on the tablet's mic; the result is in [statusLines]. */
     fun measureLatency()
     /** The master volume in dB, a global control: never recalled by a live set (I6.8). */
@@ -352,6 +361,9 @@ class SongPlayer(private val lib: AppLibrary, private val host: EngineHost, priv
     fun forwardKey() = if (keysTurnPages && sheetFile != null) pageForward() else nextLiveSet()
     fun backKey() = if (keysTurnPages && sheetFile != null) pageBack() else previousLiveSet()
 
+    /** Set by the UI: a Back gesture goes to the stage instead of leaving the app. */
+    var backToStage: (() -> Unit)? = null
+
     /** Whether the stage view is what is showing: page-turner keys act only there. */
     @Volatile var onStage = true
 
@@ -416,6 +428,13 @@ class SongPlayer(private val lib: AppLibrary, private val host: EngineHost, priv
     }
 
     fun learn(which: String?) { learning = which; watchControllers() }
+
+    fun setControllers(next: Int, previous: Int) {
+        ccNext = next
+        ccPrevious = previous
+        prefs.edit().putInt("switch.ccNext", ccNext).putInt("switch.ccPrevious", ccPrevious).apply()
+        watchControllers()
+    }
 
     fun clearController(which: String) {
         if (which == "next") ccNext = -1 else ccPrevious = -1

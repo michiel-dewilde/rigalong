@@ -42,6 +42,19 @@ class AppLibrary(dir: File, private val author: String) {
         .filter { it.version.target?.type == Setlist.TYPE }
         .sortedBy { it.version.name.lowercase() }
 
+    fun environments(): List<Entry> = store.entries()
+        .filter { it.version.target?.type == be.mdw.bagosynths.model.Environment.TYPE }
+        .sortedBy { it.version.name.lowercase() }
+
+    fun environment(id: Digest): be.mdw.bagosynths.model.Environment? =
+        store.entry(id)?.version?.target?.let { store.getTyped(it.digest) }
+
+    fun saveEnvironment(entryId: Digest?, name: String, env: be.mdw.bagosynths.model.Environment): Digest {
+        val target = Ref(store.putTyped(env), be.mdw.bagosynths.model.Environment.TYPE)
+        return if (entryId == null) store.create(name, target, author, now())
+        else store.update(entryId, author, now(), target = target, name = name)
+    }
+
     fun setlist(id: Digest): Setlist? =
         store.entry(id)?.version?.target?.let { store.getTyped<Setlist>(it.digest) }
 

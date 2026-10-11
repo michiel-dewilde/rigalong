@@ -197,6 +197,20 @@ class MainActivity : androidx.activity.ComponentActivity() {
             addView(composeView)
         })
         showNewUi(prefs().getBoolean("ui.new", true))
+        // A STRAY BACK GESTURE MUST NOT END THE INSTRUMENT MID-SONG (found the
+        // hard way on 2026-10-11): on the new UI, Back goes to the stage, and
+        // on the stage it does nothing. The prototype screen keeps Back as it was.
+        onBackPressedDispatcher.addCallback(this, object : androidx.activity.OnBackPressedCallback(true) {
+            override fun handleOnBackPressed() {
+                if (composeView.visibility == View.VISIBLE) {
+                    if (!player.onStage) player.backToStage?.invoke()
+                } else {
+                    isEnabled = false
+                    onBackPressedDispatcher.onBackPressed()
+                    isEnabled = true
+                }
+            }
+        })
         // Once the engine has its nodes: the demo setlist on first run (S14.2),
         // then back to where the last session was (S13.2).
         Handler(Looper.getMainLooper()).postDelayed({
@@ -2651,6 +2665,22 @@ class MainActivity : androidx.activity.ComponentActivity() {
             library = InstrumentLibrary.scan(listOf(root, privateDir))
             return id
         }
+        override fun routingSpec() = be.mdw.bagosynths.ui.RoutingSpec(
+            chosenOutputName, audioMode.name, chosenMidiName, midiMode.name, usbBufferMs)
+        override fun applyRoutingSpec(spec: be.mdw.bagosynths.ui.RoutingSpec) {
+            chosenOutputName = spec.audioName
+            chosenMidiName = spec.midiName
+            audioMode = IoMode.parse(spec.audioMode)
+            midiMode = IoMode.parse(spec.midiMode)
+            if (spec.bufferMs in UsbBuffers.choicesMs) usbBufferMs = spec.bufferMs
+            prefs().edit().putString("chosenOutputName", chosenOutputName)
+                .putString("chosenMidiName", chosenMidiName).apply()
+            saveModePrefs()
+            deniedDevices.clear()
+            applyRouting("environment")
+        }
+        override fun availableDevices(): Set<String> =
+            (outputChoices().map { it.name } + midiChoices().map { it.name }).toSet()
         override fun measureLatency() {
             // As the MEASURE broadcast: the input first, armed once it has settled.
             enableInputIfPermitted()

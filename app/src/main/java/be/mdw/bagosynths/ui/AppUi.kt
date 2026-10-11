@@ -104,6 +104,7 @@ fun AppUi(player: SongPlayer, lib: AppLibrary, host: EngineHost) {
         }
     }
     LaunchedEffect(screen) { player.onStage = screen == 0 }
+    LaunchedEffect(Unit) { player.backToStage = { screen = 0 } }
     LaunchedEffect(Unit) { player.watchControllers() }
     LaunchedEffect(Unit) {
         while (true) {
@@ -125,7 +126,7 @@ fun AppUi(player: SongPlayer, lib: AppLibrary, host: EngineHost) {
                     TestKeys()
                 }
                 2 -> LibraryScreen(player, lib, host, onOpened = { screen = 0 })
-                else -> SetupScreen(player, host)
+                else -> SetupScreen(player, host, lib)
             }
         }
     }

@@ -51,7 +51,7 @@ data class Routing(
  * routing the prototype screen had, without needing it.
  */
 @Composable
-fun SetupScreen(player: SongPlayer, host: EngineHost) {
+fun SetupScreen(player: SongPlayer, host: EngineHost, lib: AppLibrary) {
     var tick by remember { mutableIntStateOf(0) }
     var routing by remember { mutableStateOf(host.routing()) }
     var status by remember { mutableStateOf(host.statusLines()) }
@@ -77,6 +77,8 @@ fun SetupScreen(player: SongPlayer, host: EngineHost) {
     AdaptivePair(560.dp, first = { m ->
         Column(m.background(panel, RoundedCornerShape(10.dp)).padding(12.dp)
             .verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            EnvironmentSection(player, host, lib, accent, dim)
+            Spacer(Modifier.height(6.dp))
             Text(stringResource(R.string.audio_out), fontWeight = FontWeight.SemiBold)
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(routing.audioDevice, modifier = Modifier.weight(1f))
@@ -197,6 +199,55 @@ private fun decodeMidi(raw: IntArray): List<String> {
         }
         "$dir $what"
     }
+}
+
+/** Environments (S3.8, S3.10): saved rigs to switch between, and which ones fit what is plugged in. */
+@OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+@Composable
+private fun EnvironmentSection(player: SongPlayer, host: EngineHost, lib: AppLibrary, accent: Color, dim: Color) {
+    val prefs = androidx.compose.ui.platform.LocalContext.current
+        .getSharedPreferences("bagosynths", android.content.Context.MODE_PRIVATE)
+    var revision by remember { mutableIntStateOf(0) }
+    var current by remember { mutableStateOf(prefs.getString("env.current", null)) }
+    var suggested by remember { mutableStateOf<Set<String>?>(null) }
+    var newName by remember { mutableStateOf("") }
+    val envs = remember(revision) { lib.environments() }
+    Text(stringResource(R.string.environment), fontWeight = FontWeight.SemiBold)
+    androidx.compose.foundation.layout.FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        for (e in envs) {
+            val isCurrent = e.id.hex == current
+            val fits = suggested?.contains(e.id.hex) == true
+            OutlinedButton(onClick = {
+                lib.environment(e.id)?.let { Environments.apply(it, player, host) }
+                current = e.id.hex; prefs.edit().putString("env.current", current).apply()
+            }) { Text(e.version.name + (if (fits) "  ●" else ""), color = if (isCurrent) accent else Color.White) }
+        }
+    }
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        androidx.compose.material3.OutlinedTextField(value = newName, onValueChange = { newName = it }, singleLine = true,
+            label = { Text(stringResource(R.string.save_environment_as)) }, modifier = Modifier.weight(1f))
+        TextButton(enabled = newName.isNotBlank(), onClick = {
+            val id = lib.saveEnvironment(null, newName.trim(), Environments.capture(player, host))
+            current = id.hex; prefs.edit().putString("env.current", current).apply()
+            newName = ""; revision++
+        }) { Text(stringResource(R.string.save)) }
+    }
+    Row {
+        val cur = current
+        if (cur != null && envs.any { it.id.hex == cur }) {
+            TextButton(onClick = {
+                val e = envs.first { it.id.hex == cur }
+                lib.saveEnvironment(e.id, e.version.name, Environments.capture(player, host)); revision++
+            }) { Text(stringResource(R.string.update_environment)) }
+        }
+        TextButton(onClick = {
+            val available = host.availableDevices()
+            suggested = envs.filter { e -> lib.environment(e.id)?.let { Environments.fits(it, available) } == true }
+                .map { it.id.hex }.toSet()
+        }) { Text(stringResource(R.string.suggest_environment)) }
+    }
+    if (suggested != null) Text(stringResource(if (suggested!!.isEmpty()) R.string.no_environment_fits
+        else R.string.environments_fit), color = dim, fontSize = 12.sp)
 }
 
 @Composable

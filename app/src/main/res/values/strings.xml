@@ -114,6 +114,12 @@
     <string name="import_failed">Import failed: %1$s</string>
 
     <!-- setup -->
+    <string name="environment">Environment</string>
+    <string name="save_environment_as">Save this setup as</string>
+    <string name="update_environment">Update the current environment</string>
+    <string name="suggest_environment">Suggest from what is plugged in</string>
+    <string name="environments_fit">● every device it names is plugged in</string>
+    <string name="no_environment_fits">No saved environment fits what is plugged in.</string>
     <string name="audio_out">Audio out</string>
     <string name="next_device">Next device</string>
     <string name="usb_buffer">USB buffer</string>
