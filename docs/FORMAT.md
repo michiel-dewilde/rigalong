@@ -102,7 +102,7 @@ schema version without changing what existing objects mean.
 
 | `@type` | holds |
 |---|---|
-| `bagosynths.patch/1` | `engine` (factory type name), `engineVersion`, `params` (parameter id -> value), and `state`: a reference to engine-specific bytes where the engine has its own patch format (a Surge patch, a DX7 voice, an SFZ instrument pack, a SoundFont plus preset number) |
+| `bagosynths.patch/1` | `engine` (factory type name), `engineVersion`, `params` (parameter id -> value), and `state`: a reference to engine-specific bytes where the engine has its own patch format (a Surge patch, a DX7 voice, an SFZ instrument pack, a SoundFont plus preset number). Until packs are in the library (M9), `preset` names installed content instead: an SFZ instrument id, a Surge "Category/Name", a DX7 voice, a SoundFont file, an organ registration, a Plaits model |
 | `bagosynths.song/1` | `instances` (name -> {patch ref, island preference by port}), `graph` (nodes, typed pins, wires), `values` (song value per parameter), `recall` (mode per parameter), `liveSets` (ordered refs), `cp88` (optional), `tempo` (optional), `leadSheet` (optional ref), `stageLayout`, `switching` (incoming selection -> live set) |
 | `bagosynths.liveset/1` | `name`, `enabled` (node -> bool), `wires` (wire -> on/gain), `overrides` (parameter -> value), `recall` (per-parameter override of the song's mode), `transitions`, `onSelect` (MIDI to send), `cp88` (leave / select page:set / own ref), `visibleControls`, `leadSheetPage` |
 | `bagosynths.setlist/1` | `songs` (ordered refs) |

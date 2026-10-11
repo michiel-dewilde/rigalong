@@ -54,6 +54,12 @@ data class Patch(
     val state: RefJ? = null,
     /** Engine-specific choice within [state], e.g. a SoundFont preset number. */
     val program: Int? = null,
+    /**
+     * Installed content by name, until packs are in the library (PLAN.md M9):
+     * an SFZ instrument id, a Surge "Category/Name", a DX7 voice name, a
+     * SoundFont file name, an organ registration, a Plaits model.
+     */
+    val preset: String? = null,
     val engineVersion: String? = null,
     @SerialName("@type") @EncodeDefault val type: String = TYPE,
 ) {
