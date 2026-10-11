@@ -1075,12 +1075,19 @@ Java_be_mdw_bagosynths_NativeBridge_nativeMidiRecent(JNIEnv* env, jobject) {
     return out;
 }
 
+// Which controllers go into the selection ring (I10.4); learn: every one.
+JNIEXPORT void JNICALL
+Java_be_mdw_bagosynths_NativeBridge_nativeWatchControllers(JNIEnv*, jobject, jlong low, jlong high, jboolean learn) {
+    engine().midi().usbMutable().watchControllers(static_cast<uint64_t>(low), static_cast<uint64_t>(high),
+                                                  learn == JNI_TRUE);
+}
+
 // Program Changes received on the direct-USB MIDI input, each packed as
 // (channel << 24 | bank msb << 16 | bank lsb << 8 | program); empty if none.
 JNIEXPORT jintArray JNICALL
 Java_be_mdw_bagosynths_NativeBridge_nativeDrainPrograms(JNIEnv* env, jobject) {
-    uint32_t buf[32];
-    const int n = engine().midi().usb().drainPrograms(buf, 32);
+    uint32_t buf[64];
+    const int n = engine().midi().usb().drainPrograms(buf, 64);
     jintArray out = env->NewIntArray(n);
     if (n > 0) env->SetIntArrayRegion(out, 0, n, reinterpret_cast<const jint*>(buf));
     return out;

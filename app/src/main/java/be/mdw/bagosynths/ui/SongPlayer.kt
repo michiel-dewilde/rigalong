@@ -397,9 +397,59 @@ class SongPlayer(private val lib: AppLibrary, private val host: EngineHost, priv
      * set - 1. Set n selects live set n of the current song, whatever the
      * page. Called by the UI every 50 ms.
      */
+    // ------------------------------------------------- switching controllers
+
+    /** The controllers that step through live sets (I10.4), -1 when none. */
+    var ccNext by mutableIntStateOf(prefs.getInt("switch.ccNext", -1)); private set
+    var ccPrevious by mutableIntStateOf(prefs.getInt("switch.ccPrevious", -1)); private set
+    /** Which one the next controller press is learned into: "next", "previous", or null. */
+    var learning by mutableStateOf<String?>(null); private set
+    private val ccDown = BooleanArray(128)
+
+    fun watchControllers() {
+        var low = 0L
+        var high = 0L
+        for (cc in listOf(ccNext, ccPrevious)) {
+            if (cc in 0..63) low = low or (1L shl cc) else if (cc in 64..127) high = high or (1L shl (cc - 64))
+        }
+        runCatching { NativeBridge.nativeWatchControllers(low, high, learning != null) }
+    }
+
+    fun learn(which: String?) { learning = which; watchControllers() }
+
+    fun clearController(which: String) {
+        if (which == "next") ccNext = -1 else ccPrevious = -1
+        prefs.edit().putInt("switch.ccNext", ccNext).putInt("switch.ccPrevious", ccPrevious).apply()
+        watchControllers()
+    }
+
+    /** Where controller events from the MIDI path land; public for the STAGE test hook. */
+    fun onController(cc: Int, value: Int) {
+        val down = value >= 64
+        val pressed = down && !ccDown[cc]          // act on the press, once
+        ccDown[cc] = down
+        if (!pressed) return
+        val l = learning
+        if (l != null) {
+            if (l == "next") ccNext = cc else ccPrevious = cc
+            prefs.edit().putInt("switch.ccNext", ccNext).putInt("switch.ccPrevious", ccPrevious).apply()
+            learning = null
+            watchControllers()
+            return
+        }
+        when (cc) {
+            ccNext -> { forwardKey(); lastSelection = "CC $cc" }
+            ccPrevious -> { backKey(); lastSelection = "CC $cc" }
+        }
+    }
+
     fun pollSelections() {
         val pcs = runCatching { NativeBridge.nativeDrainPrograms() }.getOrNull() ?: return
         for (v in pcs) {
+            if (v ushr 31 == 1) {
+                onController((v shr 8) and 0x7F, v and 0x7F)
+                continue
+            }
             val msb = (v shr 16) and 0x7F
             val lsb = (v shr 8) and 0x7F
             val pc = v and 0x7F

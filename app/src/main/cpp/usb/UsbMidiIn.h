@@ -97,6 +97,16 @@ public:
     // page - 1, PC set - 1). One producer (push), one consumer (the UI's poll).
     int drainPrograms(uint32_t* out, int max) const;
 
+    // SWITCHING CONTROLLERS (I10.4): a controller in the watched set goes into
+    // the same ring as (1 << 31 | channel << 24 | cc << 8 | value), so a
+    // footswitch can step through live sets. Only watched numbers, so the mod
+    // wheel cannot flood the ring; in learn mode every controller goes in.
+    void watchControllers(uint64_t low, uint64_t high, bool learn) {
+        mWatchLow.store(low, std::memory_order_relaxed);
+        mWatchHigh.store(high, std::memory_order_relaxed);
+        mLearn.store(learn, std::memory_order_relaxed);
+    }
+
 private:
     void loop();
     void consume(const uint8_t* buf, int n);
@@ -149,7 +159,10 @@ private:
     std::atomic<uint32_t> mMonitorWrite{0};
     mutable std::atomic<uint32_t> mMonitorRead{0};
 
-    static constexpr uint32_t kPrograms = 32;
+    void pushProgramRing(uint32_t v);
+    std::atomic<uint64_t> mWatchLow{0}, mWatchHigh{0};
+    std::atomic<bool> mLearn{false};
+    static constexpr uint32_t kPrograms = 64;
     uint32_t mPrograms[kPrograms] = {};
     std::atomic<uint32_t> mProgramWrite{0};
     mutable std::atomic<uint32_t> mProgramRead{0};

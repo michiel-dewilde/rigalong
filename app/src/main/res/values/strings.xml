@@ -126,6 +126,13 @@
     <string name="midi_channel">MIDI channel</string>
     <string name="keys_note">The CP-88\'s own live set buttons select the current song\'s live sets (set n, live set n). Page turners and footswitches: Page Down / right arrow next live set, Page Up / left previous.</string>
     <string name="open_prototype">Open the prototype screen</string>
+    <string name="switching">Footswitches and MIDI controllers</string>
+    <string name="cc_next">Next live set</string>
+    <string name="cc_previous">Previous live set</string>
+    <string name="learn">Learn</string>
+    <string name="press_it">press it now…</string>
+    <string name="none">none</string>
+    <string name="switching_note">"A controller pressed (value 64 or more) steps through live sets, or turns lead-sheet pages when the page-turner setting says so. The CP-88's foot switch jacks can be assigned to a controller. Direct USB modes."</string>
     <string name="cp88_follows">"The CP-88's live set buttons select the song's live sets. Its reserved page then gets a silent sound wherever a live set does not give it one, so it never mixes in its own instruments."</string>
     <string name="rewrite_cp88_page">"Rewrite the CP-88's reserved page"</string>
     <string name="status">Status</string>

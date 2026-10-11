@@ -120,6 +120,15 @@ fun SetupScreen(player: SongPlayer, host: EngineHost) {
                 player.cp88Follows = it; follows = it; player.forgetCp88Page(); player.reload()
             }
             OutlinedButton(onClick = { player.forgetCp88Page(); player.reload() }) { Text(stringResource(R.string.rewrite_cp88_page)) }
+            Spacer(Modifier.height(6.dp))
+            Text(stringResource(R.string.switching), fontWeight = FontWeight.SemiBold)
+            ControllerRow(stringResource(R.string.cc_next), player.ccNext, player.learning == "next", accent, dim,
+                onLearn = { player.learn(if (player.learning == "next") null else "next") },
+                onClear = { player.clearController("next") })
+            ControllerRow(stringResource(R.string.cc_previous), player.ccPrevious, player.learning == "previous", accent, dim,
+                onLearn = { player.learn(if (player.learning == "previous") null else "previous") },
+                onClear = { player.clearController("previous") })
+            Text(stringResource(R.string.switching_note), color = dim, fontSize = 12.sp)
             Text(stringResource(R.string.keys_note), color = dim, fontSize = 12.sp)
             Spacer(Modifier.height(6.dp))
             Text(stringResource(R.string.stage), fontWeight = FontWeight.SemiBold)
@@ -187,6 +196,18 @@ private fun decodeMidi(raw: IntArray): List<String> {
             else -> if (b0 == 0xF0) "SysEx" else if (b0 == 0xF7) "SysEx end" else "%02X %02X %02X".format(b0, b1, b2)
         }
         "$dir $what"
+    }
+}
+
+@Composable
+private fun ControllerRow(label: String, cc: Int, learning: Boolean, accent: Color, dim: Color,
+                          onLearn: () -> Unit, onClear: () -> Unit) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Text(label, color = dim, modifier = Modifier.width(150.dp))
+        Text(if (learning) stringResource(R.string.press_it) else if (cc >= 0) "CC $cc" else stringResource(R.string.none),
+            color = if (learning) accent else Color.White, modifier = Modifier.width(140.dp))
+        TextButton(onClick = onLearn) { Text(stringResource(if (learning) R.string.cancel else R.string.learn)) }
+        if (cc >= 0) TextButton(onClick = onClear) { Text(stringResource(R.string.clear)) }
     }
 }
 

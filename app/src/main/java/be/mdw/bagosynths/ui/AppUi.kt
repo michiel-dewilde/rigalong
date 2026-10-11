@@ -104,6 +104,7 @@ fun AppUi(player: SongPlayer, lib: AppLibrary, host: EngineHost) {
         }
     }
     LaunchedEffect(screen) { player.onStage = screen == 0 }
+    LaunchedEffect(Unit) { player.watchControllers() }
     LaunchedEffect(Unit) {
         while (true) {
             player.pollSelections()

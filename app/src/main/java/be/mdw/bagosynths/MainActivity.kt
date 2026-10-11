@@ -1884,6 +1884,11 @@ class MainActivity : androidx.activity.ComponentActivity() {
                             .onFailure { android.util.Log.e("bos-stage", "sheet: $it") }
                     }
                     when (intent.getIntExtra("page", 0)) { 1 -> player.forwardKey(); -1 -> player.backKey() }
+                    // A controller event, as from a footswitch (I10.4): --ei cc 67 --ei value 127;
+                    // --es learn next|previous first to learn it.
+                    intent.getStringExtra("learn")?.let { player.learn(it) }
+                    intent.getStringExtra("clearcc")?.let { player.clearController(it) }
+                    if (intent.hasExtra("cc")) player.onController(intent.getIntExtra("cc", 0), intent.getIntExtra("value", 127))
                     // A zip in the app's own folder, installed as an instrument (I8.8):
                     //   --es instrument test-sine.zip
                     intent.getStringExtra("instrument")?.let { name ->

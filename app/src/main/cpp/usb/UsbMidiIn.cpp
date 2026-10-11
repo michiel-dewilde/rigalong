@@ -144,12 +144,15 @@ void UsbMidiIn::push(const bagosynths::usbmidi::Message& m) {
         if (type == 0xB0 && m.length >= 3 && m.bytes[1] == 0) mBankMsb[ch] = m.bytes[2];
         else if (type == 0xB0 && m.length >= 3 && m.bytes[1] == 32) mBankLsb[ch] = m.bytes[2];
         else if (type == 0xC0) {
-            const uint32_t w = mProgramWrite.load(std::memory_order_relaxed);
-            const uint32_t r = mProgramRead.load(std::memory_order_acquire);
-            if (w - r < kPrograms) {
-                mPrograms[w % kPrograms] = (uint32_t(ch) << 24) | (uint32_t(mBankMsb[ch]) << 16) |
-                                           (uint32_t(mBankLsb[ch]) << 8) | m.bytes[1];
-                mProgramWrite.store(w + 1, std::memory_order_release);
+            pushProgramRing((uint32_t(ch) << 24) | (uint32_t(mBankMsb[ch]) << 16) |
+                            (uint32_t(mBankLsb[ch]) << 8) | m.bytes[1]);
+        }
+        if (type == 0xB0 && m.length >= 3) {
+            const uint8_t cc = m.bytes[1];
+            const uint64_t mask = cc < 64 ? mWatchLow.load(std::memory_order_relaxed) >> cc
+                                          : mWatchHigh.load(std::memory_order_relaxed) >> (cc - 64);
+            if ((mask & 1u) || mLearn.load(std::memory_order_relaxed)) {
+                pushProgramRing((1u << 31) | (uint32_t(ch) << 24) | (uint32_t(cc) << 8) | m.bytes[2]);
             }
         }
     }
@@ -233,6 +236,15 @@ int UsbMidiIn::drainSysex(uint8_t* out, int max) const {
     }
     mSysexRead.store(r + 2 + static_cast<uint32_t>(len), std::memory_order_release);
     return result;
+}
+
+void UsbMidiIn::pushProgramRing(uint32_t v) {
+    const uint32_t w = mProgramWrite.load(std::memory_order_relaxed);
+    const uint32_t r = mProgramRead.load(std::memory_order_acquire);
+    if (w - r < kPrograms) {
+        mPrograms[w % kPrograms] = v;
+        mProgramWrite.store(w + 1, std::memory_order_release);
+    }
 }
 
 int UsbMidiIn::drainPrograms(uint32_t* out, int max) const {

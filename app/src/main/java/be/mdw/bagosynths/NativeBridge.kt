@@ -227,6 +227,9 @@ object NativeBridge {
     /** TEST: stall the USB reap loop once for [ms], to reproduce a starved IN queue. */
     external fun nativeUsbTestStall(ms: Int)
 
+    /** Controllers [low]/[high] (bit n = CC n, CC 64+n) go into the selection ring; [learn]: all of them. */
+    external fun nativeWatchControllers(low: Long, high: Long, learn: Boolean)
+
     /** The MIDI monitor: newest messages in and out, oldest first, then the running total. */
     external fun nativeMidiRecent(): IntArray
 

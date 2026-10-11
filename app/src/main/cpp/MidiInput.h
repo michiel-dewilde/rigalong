@@ -56,6 +56,7 @@ public:
 
     /** The direct-USB reader, for its counters. Null-safe to call when closed. */
     const UsbMidiIn& usb() const { return mUsb; }
+    UsbMidiIn& usbMutable() { return mUsb; }
 
     /** The direct-USB writer: started beside the reader when the MIDI streaming
      *  interface has an OUT endpoint, stopped with it. */
