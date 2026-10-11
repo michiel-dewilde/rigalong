@@ -47,7 +47,24 @@ data class RackPart(
     val channelIn: Int = 0,              // 0: any
 )
 
-data class RackLiveSet(val name: String, val parts: Map<RackEngine, RackPart> = emptyMap())
+/**
+ * What a live set does to the CP-88 (I4.7): leave it alone, select one of its
+ * stored sounds, or own a sound (stored in the library, written into the
+ * environment's reserved page when the song is selected).
+ */
+data class RackCp88(
+    val mode: String = "leave",          // leave | select | own
+    val page: Int = 1,
+    val set: Int = 1,
+    val sound: Digest? = null,           // mode own: the sound object
+    val soundName: String? = null,
+)
+
+data class RackLiveSet(
+    val name: String,
+    val parts: Map<RackEngine, RackPart> = emptyMap(),
+    val cp88: RackCp88 = RackCp88(),
+)
 
 /** A rack song as the form edits it. */
 data class RackSong(
@@ -85,7 +102,13 @@ data class RackSong(
                 overrides[e.zoneKey("transpose")] = part.transpose.toDouble()
                 overrides[e.zoneKey("channelIn")] = part.channelIn.toDouble()
             }
-            RefJ.of(store.putTyped(LiveSet(name = ls.name, overrides = overrides, wires = wireStates)), LiveSet.TYPE)
+            val cp = when (ls.cp88.mode) {
+                "select" -> Cp88Action("select", page = ls.cp88.page, set = ls.cp88.set)
+                "own" -> ls.cp88.sound?.let { Cp88Action("own", sound = RefJ.of(it, Cp88.MEDIA_TYPE)) }
+                else -> null
+            }
+            RefJ.of(store.putTyped(LiveSet(name = ls.name, overrides = overrides, wires = wireStates, cp88 = cp)),
+                LiveSet.TYPE)
         }
         return Song(nodes = nodes, wires = wires, liveSets = refs, tempo = tempo)
     }
@@ -113,7 +136,11 @@ data class RackSong(
                         channelIn = ls.overrides[e.zoneKey("channelIn")]?.toInt() ?: 0,
                     )
                 }
-                RackLiveSet(ls.name, parts)
+                val cp = ls.cp88?.let { a ->
+                    val d = a.sound?.toRef()?.digest
+                    RackCp88(a.mode, a.page ?: 1, a.set ?: 1, d, d?.let { store.get(it) }?.let(Cp88::name))
+                } ?: RackCp88()
+                RackLiveSet(ls.name, parts, cp)
             }
             return RackSong(slots, liveSets, song.tempo)
         }

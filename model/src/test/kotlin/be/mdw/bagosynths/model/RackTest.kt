@@ -50,6 +50,22 @@ class RackTest {
     }
 
     @Test
+    fun cp88ActionsRoundTrip() {
+        val sound = store.put(byteArrayOf(1, 2, 3))
+        val d = draft.copy(liveSets = listOf(
+            draft.liveSets[0].copy(cp88 = RackCp88("select", page = 3, set = 5)),
+            draft.liveSets[1].copy(cp88 = RackCp88("own", sound = sound)),
+        ))
+        val back = RackSong.fromObjects(store, d.toObjects(store))!!
+        assertEquals(RackCp88("select", 3, 5), back.liveSets[0].cp88)
+        assertEquals("own", back.liveSets[1].cp88.mode)
+        assertEquals(sound, back.liveSets[1].cp88.sound)
+        // The song reaches its CP-88 sound, so export carries it.
+        val c = store.closure(listOf(Ref(store.putTyped(d.toObjects(store)))))
+        assertTrue(sound in c.types.keys)
+    }
+
+    @Test
     fun theSameDraftIsTheSameSong() {
         assertEquals(store.putTyped(draft.toObjects(store)), store.putTyped(draft.toObjects(store)))
     }
