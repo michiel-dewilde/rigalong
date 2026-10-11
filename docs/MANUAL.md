@@ -177,7 +177,11 @@ Every setlist and song, with its history.
   * **Measure latency**: sends a click through your speakers and listens for
     it on the tablet's microphone;
   * the **MIDI monitor**: the last messages to and from the keyboard, the
-    first place to look when a pedal or button seems to do nothing.
+    first place to look when a pedal or button seems to do nothing;
+  * **Share diagnostics…**: the app keeps a log of the audio path, the CP-88
+    and the heat on the tablet (about ten hours of it). This button hands it,
+    with the app's own messages, to the share sheet: email it, or attach it
+    to an issue. It never leaves the tablet otherwise.
 
 ---
 

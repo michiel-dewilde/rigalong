@@ -144,7 +144,7 @@ class SongPlayer(private val lib: Library, private val host: EngineHost, private
         liveSetNames.addAll(liveSets.map { it.name })
         switcher = LiveSetSwitcher(s, liveSets)
         prefs.edit().putInt("stage.song", index).apply()
-        Log.i(TAG, "song ${index + 1} '${songNames.getOrNull(index)}': engines ${rack?.slots?.keys?.map { it.key }}, " +
+        note("song ${index + 1} '${songNames.getOrNull(index)}': engines ${rack?.slots?.keys?.map { it.key }}, " +
                 "live sets ${liveSets.map { it.name }}")
         setUpEngines()
         if (rack?.slots?.containsKey(RackEngine.HAMMOND) == true) refreshOrgan()
@@ -227,7 +227,7 @@ class SongPlayer(private val lib: Library, private val host: EngineHost, private
             cp88Status = if (failed == 0) "CP-88: page $reservedPage, $written slot(s) written, $kept unchanged"
             else "CP-88: could not write $failed slot(s) -- is it in a direct USB mode?"
         }
-        if (written + failed > 0) Log.i(TAG, cp88Status)
+        if (written + failed > 0) note(cp88Status)
     }
 
     /** Forget what the CP-88's reserved page holds, so the next song rewrites it all. */
@@ -469,6 +469,15 @@ class SongPlayer(private val lib: Library, private val host: EngineHost, private
         }.start()
     }
 
+    /** The diagnostic log (S19.2), set by the activity. */
+    var diagnostics: Diagnostics? = null
+
+    /** Logged, and kept in the diagnostic log: what is worth finding again after a gig. */
+    private fun note(msg: String) {
+        Log.i(TAG, msg)
+        diagnostics?.event(msg)
+    }
+
     /** What the last external selection was, for the stage view. */
     var lastSelection by mutableStateOf(""); private set
 
@@ -568,7 +577,7 @@ class SongPlayer(private val lib: Library, private val host: EngineHost, private
                 action?.mode == "select" -> selectCp88(action.page ?: 1, action.set ?: 1)
                 ownedSlots[i] != null -> selectCp88(reservedPage, ownedSlots[i]!!)
             }
-            Log.i(TAG, "MIDI out ready: the CP-88 brought in line ($cp88Status)")
+            note("MIDI out ready: the CP-88 brought in line ($cp88Status)")
         }
         midiOutWasReady = ready
     }

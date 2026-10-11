@@ -181,6 +181,14 @@ fun SetupScreen(player: SongPlayer, host: EngineHost, lib: Library) {
                 OutlinedButton(onClick = host::measureLatency) { Text(stringResource(R.string.measure)) }
             }
             Text(stringResource(R.string.measure_note), color = dim, fontSize = 12.sp)
+            val context = androidx.compose.ui.platform.LocalContext.current
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                OutlinedButton(onClick = {
+                    player.diagnostics?.share(context, listOf(host.routingSpec().toString()) + host.statusLines())
+                }) { Text(stringResource(R.string.share_diagnostics)) }
+                Text(stringResource(R.string.share_diagnostics_note), color = dim, fontSize = 12.sp,
+                    modifier = Modifier.padding(start = 10.dp))
+            }
             Spacer(Modifier.height(6.dp))
             Spacer(Modifier.height(6.dp))
             Text(stringResource(R.string.midi_monitor), fontWeight = FontWeight.SemiBold)

@@ -98,6 +98,8 @@
     <string name="search">Search</string>
     <string name="edit_patch">Patch…</string>
     <string name="done">Done</string>
+    <string name="share_diagnostics">Share diagnostics…</string>
+    <string name="share_diagnostics_note">The log of the audio path, the CP-88 and the heat, kept on this tablet. It leaves only when you send it, to whom you choose.</string>
     <string name="details">Details</string>
     <string name="delete_hold">Delete (hold)</string>
     <string name="name">Name</string>

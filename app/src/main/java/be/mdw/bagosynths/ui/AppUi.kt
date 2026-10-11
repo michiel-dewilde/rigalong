@@ -101,6 +101,7 @@ fun AppUi(player: SongPlayer, lib: Library, host: EngineHost) {
     LaunchedEffect(Unit) {
         while (true) {
             health = runCatching { host.healthLine() }.getOrDefault("")
+            player.diagnostics?.tick(host)
             delay(500)
         }
     }

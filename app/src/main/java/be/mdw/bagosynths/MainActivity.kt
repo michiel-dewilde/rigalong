@@ -190,6 +190,16 @@ class MainActivity : androidx.activity.ComponentActivity() {
         prototypeView = buildUi()
         appLibrary = Library(java.io.File(filesDir, "library"), Build.MODEL)
         player = be.mdw.bagosynths.ui.SongPlayer(appLibrary, engineHost, prefs())
+        val diagnostics = be.mdw.bagosynths.ui.Diagnostics(this)
+        player.diagnostics = diagnostics
+        diagnostics.event("app started")
+        // A crash is the one event a player cannot describe afterwards: its
+        // stack goes into the diagnostic log before Android ends the process.
+        val previousHandler = Thread.getDefaultUncaughtExceptionHandler()
+        Thread.setDefaultUncaughtExceptionHandler { t, e ->
+            runCatching { diagnostics.event("CRASH on ${t.name}: ${android.util.Log.getStackTraceString(e)}") }
+            previousHandler?.uncaughtException(t, e)
+        }
         composeView = androidx.compose.ui.platform.ComposeView(this).apply {
             setContent { be.mdw.bagosynths.ui.AppUi(player, appLibrary, engineHost) }
         }
