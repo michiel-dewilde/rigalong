@@ -7,6 +7,16 @@ them can still be revisited.
 
 ---
 
+## 0. Progress (updated 2026-10-11, night)
+
+| milestone | state |
+|---|---|
+| M0 | V1-V4 done; V6's 22-minute sequence clean on the fixed build after the first run found and fixed a hold cascade (LOG.md). Open: the hour soak and real playing (V6), FORMAT.md review. Everything is on `main`. |
+| M1 | Core done: `model/` (canonical JSON, SHA-256 store as OCI layout, entries and history, export/import, merge, typed objects of schema 1). Not yet: SQLite index (an in-memory scan serves for now), migration of the prototype's patches. |
+| M2 | First slice: switchable wires with note tracking and the MIDI zone in `engine/` (host-tested), the rack in `AudioEngine` (one zone and two switchable wires per engine), `LiveSetSwitcher` and `RackSong` in `model/` (tested). Not yet: arbitrary graphs and several instances of one engine, parameter metadata (D6), transition ramps. |
+| M3 | First slice: the new UI (Compose) beside the prototype -- stage view (setlist, songs, live set buttons, levels, panic) and a form-based song and setlist editor, resuming where it left off. Also: stage faders that move only by dragging (S17.4). Not yet: environment view, switching sources, strings in resources, edit lock, Do Not Disturb, the prototype's removal. |
+| M4 | The SysEx groundwork: USB MIDI out on the direct path, SysEx capture, all of V1-V4 answered. |
+
 ## 1. Shape of the plan
 
 **Twelve milestones, M0 to M11.** After each one, the app is installable and
@@ -56,7 +66,7 @@ LOG.md as found.
 | V3 | How long does writing one Live Set Sound into a slot take, and does the CP-88 keep playing cleanly while it lands? (R5.1) | Preloading the next song during the current one, M4 | **Done 2026-10-11:** 7,2 ms unpaced, read back identical; no drops in the CP-88 or the tablet while writing (LOG.md). |
 | V4 | Do slot writes persist across a power cycle (flash), and how fast is a write of a whole page? (R5.2) | Reserved pages and recovery (I13.3), M4 | **Known (Michiel): stored slots survive a power cycle.** A page writes in well under 0,1 s (V3). |
 | V5 | In ALSA mode, do the CP-88's input and output stay locked sample for sample through the HAL's 44,1-to-48 kHz conversion? (R3.6) | Audio inputs as one island in ALSA mode, M7 | Long run, count frames in against frames out. |
-| V6 | The remaining stress items from HANDOFF on the FIFO build: the full 22-minute sequence, an hour of heavy render load, real playing under load. | M0 exit | **First run 2026-10-11 found a hold cascade after a starved IN queue; fixed and proven (LOG.md). Rerun on the fixed build pending.** |
+| V6 | The remaining stress items from HANDOFF on the FIFO build: the full 22-minute sequence, an hour of heavy render load, real playing under load. | M0 exit | **22-minute sequence clean on the fixed build (2026-10-11, LOG.md)**, after the first run found and fixed a hold cascade. Still open: the hour soak, real playing under load. |
 | V7 | Is a retimer's latency and drift tracking good enough for a mic monitored by a singer? (I3.15 B) | Retimer defaults, M7 | Focusrite in, CP-88 out, measure round trip and long-run drift. |
 
 ## 4. Milestones

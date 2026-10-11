@@ -91,6 +91,12 @@ public:
     int drainSysex(uint8_t* out, int max) const;
     uint64_t sysexDropped() const { return mSysexDropped.load(std::memory_order_relaxed); }
 
+    // PROGRAM SELECTIONS: every Program Change, with the Bank Select MSB and LSB
+    // last seen on its channel, as (channel << 24 | msb << 16 | lsb << 8 | pc).
+    // How the app follows the CP-88's own live set buttons (V1: MSB 63, LSB
+    // page - 1, PC set - 1). One producer (push), one consumer (the UI's poll).
+    int drainPrograms(uint32_t* out, int max) const;
+
 private:
     void loop();
     void consume(const uint8_t* buf, int n);
@@ -142,6 +148,13 @@ private:
     uint32_t mMonitor[kMonitor] = {};
     std::atomic<uint32_t> mMonitorWrite{0};
     mutable std::atomic<uint32_t> mMonitorRead{0};
+
+    static constexpr uint32_t kPrograms = 32;
+    uint32_t mPrograms[kPrograms] = {};
+    std::atomic<uint32_t> mProgramWrite{0};
+    mutable std::atomic<uint32_t> mProgramRead{0};
+    uint8_t mBankMsb[16] = {};
+    uint8_t mBankLsb[16] = {};
 
     void sysexByte(uint8_t b);
     void sysexCommit();

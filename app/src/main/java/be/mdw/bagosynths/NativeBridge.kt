@@ -211,8 +211,21 @@ object NativeBridge {
     /** MIDI bytes to the device's MIDI OUT endpoint (direct USB). Bytes accepted, or -errno. */
     external fun nativeUsbMidiSend(data: ByteArray): Int
 
+    /**
+     * The rack (AudioEngine.h): engine [i]'s MIDI and audio wires, switched and
+     * ramped without a recompile. Order: sfizz, hammond, surge, dexed, plaits, fluid.
+     */
+    external fun nativeRackWire(i: Int, midiOn: Boolean, audioOn: Boolean, gain: Float)
+
+    /** Engine [i]'s MIDI zone (engine/include/bagosynths/MidiZone.h, `Param`). */
+    external fun nativeZoneParam(i: Int, param: Int, value: Float)
+    external fun nativeGetZoneParam(i: Int, param: Int): Float
+
     /** TEST: stall the USB reap loop once for [ms], to reproduce a starved IN queue. */
     external fun nativeUsbTestStall(ms: Int)
+
+    /** Program Changes received over direct USB: (channel << 24 | msb << 16 | lsb << 8 | program). */
+    external fun nativeDrainPrograms(): IntArray
 
     /** One complete SysEx message received over direct USB, or null if none is waiting. */
     external fun nativeUsbSysexDrain(): ByteArray?

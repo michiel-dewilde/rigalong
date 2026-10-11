@@ -16,6 +16,8 @@
 #include "RealtimePriority.h"
 #include "usb/UsbAudioOut.h"
 #include <bagosynths/Graph.h>
+#include <bagosynths/MidiZone.h>
+#include <bagosynths/Wire.h>
 #include "graph/HammondNode.h"
 #include "graph/SurgeNode.h"
 #include "graph/DexedNode.h"
@@ -423,6 +425,24 @@ private:
     bagosynths::PlaitsNode* mPlaits = nullptr;
     bagosynths::FluidNode* mFluid = nullptr;
     bagosynths::ReverbNode* mReverb = nullptr;
+
+    // THE RACK (PLAN.md M2, first slice): one zone and two switchable wires per
+    // engine, so a song's live sets can split, layer, transpose and route the
+    // fixed set of engines without a recompile. Index: kRack* below.
+    bagosynths::MidiZoneNode* mZone[6] = {};
+    std::shared_ptr<bagosynths::WireControl> mRackMidi[6];
+    std::shared_ptr<bagosynths::WireControl> mRackAudio[6];
+public:
+    // Rack positions, in the order the engines were always built.
+    enum { kRackSfizz, kRackHammond, kRackSurge, kRackDexed, kRackPlaits, kRackFluid, kRackSize };
+    bagosynths::MidiZoneNode* zone(int i) const { return i >= 0 && i < kRackSize ? mZone[i] : nullptr; }
+    void setRackWire(int i, bool midiOn, bool audioOn, float gain) {
+        if (i < 0 || i >= kRackSize || !mRackMidi[i]) return;
+        mRackMidi[i]->setOn(midiOn);
+        mRackAudio[i]->setOn(audioOn);
+        mRackAudio[i]->setGain(gain);
+    }
+private:
     // Not in the default patch any more; kept for the graph editor to place.
     bagosynths::LimiterNode* mLimiter = nullptr;
 

@@ -1024,10 +1024,41 @@ Java_be_mdw_bagosynths_NativeBridge_nativeUsbMidiSend(JNIEnv* env, jobject, jbyt
     return engine().midi().usbOut().send(bytes.data(), static_cast<int>(n));
 }
 
+// THE RACK (AudioEngine.h): per engine, its zone's parameters and the on/off
+// and gain of its two wires. Index order: sfizz, hammond, surge, dexed,
+// plaits, fluid.
+JNIEXPORT void JNICALL
+Java_be_mdw_bagosynths_NativeBridge_nativeRackWire(JNIEnv*, jobject, jint i, jboolean midiOn,
+                                                  jboolean audioOn, jfloat gain) {
+    engine().setRackWire(i, midiOn == JNI_TRUE, audioOn == JNI_TRUE, gain);
+}
+
+JNIEXPORT void JNICALL
+Java_be_mdw_bagosynths_NativeBridge_nativeZoneParam(JNIEnv*, jobject, jint i, jint param, jfloat value) {
+    if (bagosynths::MidiZoneNode* z = engine().zone(i)) z->setParam(param, value);
+}
+
+JNIEXPORT jfloat JNICALL
+Java_be_mdw_bagosynths_NativeBridge_nativeGetZoneParam(JNIEnv*, jobject, jint i, jint param) {
+    bagosynths::MidiZoneNode* z = engine().zone(i);
+    return z ? z->getParam(param) : 0.0f;
+}
+
 // TEST: stall the USB reap loop once for `ms` (a starved IN queue).
 JNIEXPORT void JNICALL
 Java_be_mdw_bagosynths_NativeBridge_nativeUsbTestStall(JNIEnv*, jobject, jint ms) {
     engine().usbOut().testStall(ms);
+}
+
+// Program Changes received on the direct-USB MIDI input, each packed as
+// (channel << 24 | bank msb << 16 | bank lsb << 8 | program); empty if none.
+JNIEXPORT jintArray JNICALL
+Java_be_mdw_bagosynths_NativeBridge_nativeDrainPrograms(JNIEnv* env, jobject) {
+    uint32_t buf[32];
+    const int n = engine().midi().usb().drainPrograms(buf, 32);
+    jintArray out = env->NewIntArray(n);
+    if (n > 0) env->SetIntArrayRegion(out, 0, n, reinterpret_cast<const jint*>(buf));
+    return out;
 }
 
 // One complete SysEx message received on the direct-USB MIDI input, or null.

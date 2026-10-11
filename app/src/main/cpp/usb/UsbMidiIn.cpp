@@ -137,6 +137,20 @@ void UsbMidiIn::push(const bagosynths::usbmidi::Message& m) {
         return;
     }
     for (int i = 0; i < m.length && i < 3; ++i) sysexByte(m.bytes[i]);
+    if (m.length >= 2) {
+        const uint8_t type = m.bytes[0] & 0xF0u, ch = m.bytes[0] & 0x0Fu;
+        if (type == 0xB0 && m.length >= 3 && m.bytes[1] == 0) mBankMsb[ch] = m.bytes[2];
+        else if (type == 0xB0 && m.length >= 3 && m.bytes[1] == 32) mBankLsb[ch] = m.bytes[2];
+        else if (type == 0xC0) {
+            const uint32_t w = mProgramWrite.load(std::memory_order_relaxed);
+            const uint32_t r = mProgramRead.load(std::memory_order_acquire);
+            if (w - r < kPrograms) {
+                mPrograms[w % kPrograms] = (uint32_t(ch) << 24) | (uint32_t(mBankMsb[ch]) << 16) |
+                                           (uint32_t(mBankLsb[ch]) << 8) | m.bytes[1];
+                mProgramWrite.store(w + 1, std::memory_order_release);
+            }
+        }
+    }
     if (m.length >= 1) {
         const uint8_t st = m.bytes[0];
         const bool note = (st & 0xF0u) == 0x80u || (st & 0xF0u) == 0x90u;
@@ -217,6 +231,15 @@ int UsbMidiIn::drainSysex(uint8_t* out, int max) const {
     }
     mSysexRead.store(r + 2 + static_cast<uint32_t>(len), std::memory_order_release);
     return result;
+}
+
+int UsbMidiIn::drainPrograms(uint32_t* out, int max) const {
+    uint32_t r = mProgramRead.load(std::memory_order_relaxed);
+    const uint32_t w = mProgramWrite.load(std::memory_order_acquire);
+    int n = 0;
+    while (r != w && n < max) out[n++] = mPrograms[r++ % kPrograms];
+    mProgramRead.store(r, std::memory_order_release);
+    return n;
 }
 
 int UsbMidiIn::drainMonitor(uint32_t* out, int max) const {

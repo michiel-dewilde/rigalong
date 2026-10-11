@@ -96,6 +96,26 @@ MIDI In --+--> sfizz    --+
 * A **MEASURE** button: emits a click through the CP-88, listens on the built-in
   mic, and reports the acoustic round trip — latency verifiable on any stage
 
+## The app in progress (2026-10)
+
+The prototype is becoming an app: [REQUIREMENTS.md](REQUIREMENTS.md) holds what
+it must do, [PLAN.md](PLAN.md) the milestones and where they stand, and
+[docs/FORMAT.md](docs/FORMAT.md) the library format.
+
+What runs today, beside the prototype screen (a button on each side switches):
+
+* **Stage**: a setlist's songs with previous/next, each song's live sets as
+  large buttons, a level fader per engine that moves only by dragging, panic,
+  and a health line from the audio path. It comes back where it was after a
+  restart.
+* **Songs**: a song is the rack of six engines -- which ones it uses, with
+  which patch, at what level -- and its live sets: per live set, which engines
+  play, over which keys, transposed how far, from which channel. Switching
+  live sets never strands a note: a note-off follows its note-on, a pedal-up
+  its pedal-down, and an engine switched off lets its tails ring.
+* **Library**: setlists and songs are content-addressed library entries with
+  history; a setlist exports to, and imports from, an OCI Image Layout tar.
+
 ## Build
 
 Builds and runs. Working toolchain: **AGP 8.13.2, Gradle 8.14.5, JDK 21, Kotlin

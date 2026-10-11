@@ -33,7 +33,7 @@ import android.widget.TextView
  * worse fit here: this screen exists to report on the audio thread, and every
  * frame the UI renders is a frame competing with it.
  */
-class MainActivity : Activity() {
+class MainActivity : androidx.activity.ComponentActivity() {
 
     private companion object {
         /** The USB permission answer. Explicit to this package; see requestUsbPermission. */
@@ -183,7 +183,28 @@ class MainActivity : Activity() {
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         // Before buildUi, so the buttons are built with the right faces on them.
         loadPrefs()
-        setContentView(buildUi())
+        // Two screens in one frame while M3 is under way: the new UI (Compose,
+        // ui/AppUi.kt) and the prototype's, which still owns routing and the
+        // engine panels. The new one is the default; each has a way to the other.
+        prototypeView = buildUi()
+        appLibrary = be.mdw.bagosynths.ui.AppLibrary(java.io.File(filesDir, "library"), Build.MODEL)
+        player = be.mdw.bagosynths.ui.SongPlayer(appLibrary, engineHost, prefs())
+        composeView = androidx.compose.ui.platform.ComposeView(this).apply {
+            setContent { be.mdw.bagosynths.ui.AppUi(player, appLibrary, engineHost) }
+        }
+        setContentView(android.widget.FrameLayout(this).apply {
+            addView(prototypeView)
+            addView(composeView)
+        })
+        showNewUi(prefs().getBoolean("ui.new", true))
+        // Once the engine has its nodes: the demo setlist on first run (S14.2),
+        // then back to where the last session was (S13.2).
+        Handler(Looper.getMainLooper()).postDelayed({
+            runCatching {
+                appLibrary.seedIfEmpty(NativeBridge.nativeOrganPresetNames().toList())
+                player.resume()
+            }.onFailure { android.util.Log.e("bos-ui", "new UI start: $it") }
+        }, 2500)
 
         usbThread.start()
         usbHandler = Handler(usbThread.looper)
@@ -212,6 +233,7 @@ class MainActivity : Activity() {
         filter.addAction("be.mdw.bagosynths.ROUTE")
         filter.addAction("be.mdw.bagosynths.SYSEX")
         filter.addAction("be.mdw.bagosynths.USBSTALL")
+        filter.addAction("be.mdw.bagosynths.STAGE")
         if (Build.VERSION.SDK_INT >= 33) {
             registerReceiver(debugReceiver, filter, Context.RECEIVER_EXPORTED)
         } else {
@@ -418,9 +440,10 @@ class MainActivity : Activity() {
         return (named ?: inputs.firstOrNull())?.id ?: NativeBridge.DEVICE_UNSPECIFIED
     }
 
+    @Deprecated("ComponentActivity's own callback; this app asks with the platform API")
     override fun onRequestPermissionsResult(
         requestCode: Int,
-        permissions: Array<out String>,
+        permissions: Array<String>,
         grantResults: IntArray
     ) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
@@ -1844,6 +1867,14 @@ class MainActivity : Activity() {
                 // TEST: one stall of the USB reap loop (a starved IN queue):
                 //   adb shell am broadcast -a be.mdw.bagosynths.USBSTALL --ei ms 600
                 "be.mdw.bagosynths.USBSTALL" -> NativeBridge.nativeUsbTestStall(intent.getIntExtra("ms", 600))
+                // The stage, without the screen (1-based):
+                //   adb shell am broadcast -a be.mdw.bagosynths.STAGE --ei song 2 --ei liveset 3
+                "be.mdw.bagosynths.STAGE" -> {
+                    val song = intent.getIntExtra("song", 0)
+                    val ls = intent.getIntExtra("liveset", 0)
+                    if (song > 0) player.selectSong(song - 1)
+                    if (ls > 0) player.selectLiveSet(ls - 1)
+                }
                 "be.mdw.bagosynths.SYSEX" -> sysexExchange(
                     intent.getStringExtra("hex").orEmpty(),
                     intent.getIntExtra("gap", 20),
@@ -2453,12 +2484,50 @@ class MainActivity : Activity() {
 
     // --------------------------------------------------------------------- UI
 
+    // ------------------------------------------------------------ the new UI
+
+    private lateinit var prototypeView: View
+    private lateinit var composeView: androidx.compose.ui.platform.ComposeView
+    private lateinit var appLibrary: be.mdw.bagosynths.ui.AppLibrary
+    private lateinit var player: be.mdw.bagosynths.ui.SongPlayer
+
+    private fun showNewUi(on: Boolean) {
+        val was = composeView.visibility == View.VISIBLE
+        composeView.visibility = if (on) View.VISIBLE else View.GONE
+        prototypeView.visibility = if (on) View.GONE else View.VISIBLE
+        prefs().edit().putBoolean("ui.new", on).apply()
+        // The prototype knows nothing of zones and wires: hand it the rack
+        // neutral, and take the song back on the way in.
+        if (was && !on) runCatching { player.releaseRack() }
+        if (!was && on) runCatching { player.reload() }
+    }
+
+    private val engineHost = object : be.mdw.bagosynths.ui.EngineHost {
+        override fun instruments() = library.map { it.id to "${it.name} (${it.sizeLabel})" }
+        override fun selectInstrument(id: String) {
+            library.firstOrNull { it.id == id }?.let { selectInstrument(it) }
+        }
+        override fun currentInstrument() = currentInstrument?.id
+        override fun showPrototype() = showNewUi(false)
+        override fun healthLine(): String {
+            val lines = statusView.text.toString().lines()
+            val pick = lines.filter { l -> listOf("state", "path", "usb", "xruns").any { l.trimStart().startsWith(it) } }
+                .joinToString("   ") { it.trim().replace(Regex("\\s+"), " ") }
+            val bad = lines.any { it.contains("WRONG") || it.contains("failed") || it.contains("STALLED") }
+            return (if (bad) "! " else "") + pick
+        }
+    }
+
     private fun buildUi(): View {
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setBackgroundColor(Color.parseColor("#14161A"))
             setPadding(48, 48, 48, 48)
         }
+        root.addView(Button(this).apply {
+            text = "← New UI"
+            setOnClickListener { showNewUi(true) }
+        })
 
         root.addView(TextView(this).apply {
             text = "Bag-O-Synths"

@@ -3,6 +3,8 @@ import javax.inject.Inject
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
+    // The new UI (PLAN.md D5): Compose, adaptive for tablet and phone.
+    id("org.jetbrains.kotlin.plugin.compose")
 }
 
 android {
@@ -59,6 +61,7 @@ android {
 
     buildFeatures {
         prefab = true        // required to consume Oboe's prefab package
+        compose = true
     }
 
     externalNativeBuild {
@@ -198,4 +201,12 @@ androidComponents {
 
 dependencies {
     implementation("com.google.oboe:oboe:1.9.3")
+    implementation(project(":model"))
+
+    // The new UI. All Apache-2.0 and free software, fine for F-Droid (I18.3).
+    implementation(platform("androidx.compose:compose-bom:2024.12.01"))
+    implementation("androidx.compose.ui:ui")
+    implementation("androidx.compose.foundation:foundation")
+    implementation("androidx.compose.material3:material3")
+    implementation("androidx.activity:activity-compose:1.9.3")
 }

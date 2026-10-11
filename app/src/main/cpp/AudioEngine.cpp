@@ -1789,18 +1789,21 @@ bool AudioEngine::rebuildGraph(std::string* error) {
         // free. See HANDOFF section 10d -- past a certain count this has to
         // become "skip the provably silent", and the number that decides when
         // is measured, not guessed.
-        mGraph.connect(idMidi, 0, idSfizz, 0);
-        mGraph.connect(idMidi, 0, idHammond, 0);
-        mGraph.connect(idMidi, 0, idSurge, 0);
-        mGraph.connect(idMidi, 0, idDexed, 0);
-        mGraph.connect(idMidi, 0, idPlaits, 0);
-        mGraph.connect(idMidi, 0, idFluid, 0);
-        mGraph.connect(idSfizz, 0, idReverb, 0);
-        mGraph.connect(idHammond, 0, idReverb, 0);
-        mGraph.connect(idSurge, 0, idReverb, 0);
-        mGraph.connect(idDexed, 0, idReverb, 0);
-        mGraph.connect(idPlaits, 0, idReverb, 0);
-        mGraph.connect(idFluid, 0, idReverb, 0);
+        // THE RACK: MIDI In -> zone -> engine and engine -> reverb, each
+        // engine-side wire switchable (Wire.h), so a live set can split, layer
+        // and route without a recompile and without stranding a held note.
+        // The zones are added AFTER every existing node, so the prototype's
+        // saved patches, which address nodes by ordinal, still line up.
+        const bagosynths::NodeId engines[kRackSize] = {idSfizz, idHammond, idSurge,
+                                                       idDexed, idPlaits, idFluid};
+        for (int i = 0; i < kRackSize; ++i) {
+            auto z = std::make_unique<bagosynths::MidiZoneNode>();
+            mZone[i] = z.get();
+            const bagosynths::NodeId idZone = mGraph.addNode(std::move(z));
+            mGraph.connect(idMidi, 0, idZone, 0);
+            mRackMidi[i] = mGraph.connectSwitchable(idZone, 0, engines[i], 0);
+            mRackAudio[i] = mGraph.connectSwitchable(engines[i], 0, idReverb, 0);
+        }
         mGraph.connect(idReverb, 0, idOut, 0);
 
         mGraph.setMidiEntry(idMidi);
