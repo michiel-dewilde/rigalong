@@ -2550,6 +2550,26 @@ class MainActivity : androidx.activity.ComponentActivity() {
         }
     }
 
+    /**
+     * The tablet's heat (REQUIREMENTS S16.2): Android's thermal status, and from
+     * API 30 its headroom forecast (1.0 = throttling begins). Hot from
+     * "moderate" on, which is where sustained performance starts to give.
+     */
+    private fun thermal(): Pair<String, Boolean> {
+        val pm = getSystemService(Context.POWER_SERVICE) as android.os.PowerManager
+        val status = pm.currentThermalStatus
+        val name = when (status) {
+            android.os.PowerManager.THERMAL_STATUS_NONE -> "cool"
+            android.os.PowerManager.THERMAL_STATUS_LIGHT -> "warm"
+            android.os.PowerManager.THERMAL_STATUS_MODERATE -> "HOT"
+            android.os.PowerManager.THERMAL_STATUS_SEVERE -> "VERY HOT"
+            else -> "THROTTLING"
+        }
+        val headroom = if (Build.VERSION.SDK_INT >= 30) pm.getThermalHeadroom(10).takeIf { !it.isNaN() } else null
+        val text = "heat $name" + (headroom?.let { " (%.0f %% of the limit in 10 s)".format(it * 100) } ?: "")
+        return text to (status >= android.os.PowerManager.THERMAL_STATUS_MODERATE)
+    }
+
     private fun showNewUi(on: Boolean) {
         val was = composeView.visibility == View.VISIBLE
         composeView.visibility = if (on) View.VISIBLE else View.GONE
@@ -2572,10 +2592,11 @@ class MainActivity : androidx.activity.ComponentActivity() {
             val lines = statusView.text.toString().lines()
             val pick = lines.filter { l -> listOf("state", "path", "usb", "xruns").any { l.trimStart().startsWith(it) } }
                 .joinToString("   ") { it.trim().replace(Regex("\\s+"), " ") }
-            val bad = lines.any { it.contains("WRONG") || it.contains("failed") || it.contains("STALLED") }
-            return (if (bad) "! " else "") + pick
+            val (heat, hot) = thermal()
+            val bad = hot || lines.any { it.contains("WRONG") || it.contains("failed") || it.contains("STALLED") }
+            return (if (bad) "! " else "") + heat + "   " + pick
         }
-        override fun statusLines() = statusView.text.toString().lines()
+        override fun statusLines() = statusView.text.toString().lines() + listOf("", thermal().first)
         override fun routing(): be.mdw.bagosynths.ui.Routing {
             val (a, m) = effectiveModes(resolveAudio(), resolveMidi())
             return be.mdw.bagosynths.ui.Routing(
