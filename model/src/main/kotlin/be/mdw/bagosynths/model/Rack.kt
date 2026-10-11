@@ -88,10 +88,54 @@ data class RackCp88(
     val soundName: String? = null,
 )
 
+/**
+ * A program change sent when the live set is selected (I6.7), for any
+ * keyboard or sound module on the MIDI out: channel 1-16, program 1-128, and a
+ * bank select before it when given (MSB, then LSB, 0-127).
+ */
+data class RackProgram(val channel: Int = 1, val program: Int = 1, val bankMsb: Int? = null, val bankLsb: Int? = null) {
+    fun bytes(): ByteArray {
+        val ch = (channel - 1).coerceIn(0, 15)
+        val out = ArrayList<Int>()
+        bankMsb?.let { out += listOf(0xB0 or ch, 0x00, it.coerceIn(0, 127)) }
+        bankLsb?.let { out += listOf(0xB0 or ch, 0x20, it.coerceIn(0, 127)) }
+        out += listOf(0xC0 or ch, (program - 1).coerceIn(0, 127))
+        return ByteArray(out.size) { out[it].toByte() }
+    }
+
+    fun hex(): String = bytes().joinToString("") { "%02x".format(it.toInt() and 0xFF) }
+
+    companion object {
+        /** Reads back what [hex] wrote; null for anything else. */
+        fun parse(hex: String): RackProgram? {
+            if (hex.length % 2 != 0) return null
+            val b = runCatching { (hex.indices step 2).map { hex.substring(it, it + 2).toInt(16) } }.getOrNull() ?: return null
+            var i = 0
+            var msb: Int? = null
+            var lsb: Int? = null
+            var ch: Int? = null
+            while (i + 2 < b.size && (b[i] and 0xF0) == 0xB0) {
+                if (ch != null && (b[i] and 0x0F) != ch) return null
+                ch = b[i] and 0x0F
+                when (b[i + 1]) {
+                    0x00 -> msb = b[i + 2]
+                    0x20 -> lsb = b[i + 2]
+                    else -> return null
+                }
+                i += 3
+            }
+            if (i + 2 != b.size || (b[i] and 0xF0) != 0xC0 || (ch != null && (b[i] and 0x0F) != ch)) return null
+            return RackProgram((b[i] and 0x0F) + 1, b[i + 1] + 1, msb, lsb)
+        }
+    }
+}
+
 data class RackLiveSet(
     val name: String,
     val parts: Map<RackEngine, RackPart> = emptyMap(),
     val cp88: RackCp88 = RackCp88(),
+    /** Sent to the MIDI out when this live set is selected, or null. */
+    val program: RackProgram? = null,
 )
 
 /** A rack song as the form edits it. */
@@ -159,8 +203,9 @@ data class RackSong(
                 "own" -> ls.cp88.sound?.let { Cp88Action("own", sound = RefJ.of(it, Cp88.MEDIA_TYPE)) }
                 else -> null
             }
-            RefJ.of(store.putTyped(LiveSet(name = ls.name, overrides = overrides, wires = wireStates, cp88 = cp)),
-                LiveSet.TYPE)
+            val sends = listOfNotNull(ls.program?.let { MidiSend(port = "Keys", hex = it.hex()) })
+            RefJ.of(store.putTyped(LiveSet(name = ls.name, overrides = overrides, wires = wireStates, cp88 = cp,
+                onSelect = sends)), LiveSet.TYPE)
         }
         return Song(nodes = nodes, wires = wires, liveSets = refs, tempo = tempo,
             leadSheet = leadSheet?.let { RefJ.of(it, LEAD_SHEET_TYPE) })
@@ -198,7 +243,7 @@ data class RackSong(
                     val d = a.sound?.toRef()?.digest
                     RackCp88(a.mode, a.page ?: 1, a.set ?: 1, d, d?.let { store.get(it) }?.let(Cp88::name))
                 } ?: RackCp88()
-                RackLiveSet(ls.name, parts, cp)
+                RackLiveSet(ls.name, parts, cp, ls.onSelect.firstNotNullOfOrNull { RackProgram.parse(it.hex) })
             }
             return RackSong(slots, liveSets, song.tempo, song.leadSheet?.toRef()?.digest,
                 song.nodes["mix"]?.params ?: emptyMap(),

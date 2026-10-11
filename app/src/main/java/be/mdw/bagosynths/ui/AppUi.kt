@@ -631,6 +631,27 @@ private fun LiveSetCard(song: RackSong, i: Int, ls: RackLiveSet, player: SongPla
                 }
             }
         }
+        // Any other keyboard or module (I6.7): a program change, with an optional bank, on select.
+        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.horizontalScroll(rememberScrollState())) {
+            val pc = ls.program
+            Checkbox(checked = pc != null, onCheckedChange = { on ->
+                put(ls.copy(program = if (on) be.mdw.bagosynths.model.RackProgram() else null))
+            })
+            Text(stringResource(R.string.program_change), modifier = Modifier.width(150.dp))
+            if (pc != null) {
+                fun putPc(n: be.mdw.bagosynths.model.RackProgram) = put(ls.copy(program = n))
+                NumberField(stringResource(R.string.channel_short), pc.channel, 1..16) { putPc(pc.copy(channel = it)) }
+                NumberField(stringResource(R.string.program_short), pc.program, 1..128) { putPc(pc.copy(program = it)) }
+                Checkbox(checked = pc.bankMsb != null, onCheckedChange = { on ->
+                    putPc(pc.copy(bankMsb = if (on) 0 else null, bankLsb = if (on) pc.bankLsb ?: 0 else null))
+                })
+                Text(stringResource(R.string.bank), color = Dim, fontSize = 12.sp)
+                pc.bankMsb?.let { msb ->
+                    NumberField(stringResource(R.string.bank_msb), msb, 0..127) { putPc(pc.copy(bankMsb = it)) }
+                    NumberField(stringResource(R.string.bank_lsb), pc.bankLsb ?: 0, 0..127) { putPc(pc.copy(bankLsb = it)) }
+                }
+            }
+        }
         // The CP-88 (I4.7): leave it, select one of its sounds, or own one.
         val cp = ls.cp88
         Row(verticalAlignment = Alignment.CenterVertically) {

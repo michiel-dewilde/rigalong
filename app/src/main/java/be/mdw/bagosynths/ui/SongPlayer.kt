@@ -836,7 +836,14 @@ class SongPlayer(private val lib: Library, private val host: EngineHost, private
                 "select" -> selectCp88(c.action.page ?: 1, c.action.set ?: 1)
                 "own" -> ownedSlots[pendingLiveSet]?.let { selectCp88(reservedPage, it) }
             }
-            is Change.Enable, is Change.Send -> Unit   // not in the rack slice yet
+            // On-select MIDI (I6.7): to the keyboard's MIDI out, in the direct modes.
+            is Change.Send -> {
+                val bytes = runCatching { ByteArray(c.hex.length / 2) { c.hex.substring(it * 2, it * 2 + 2).toInt(16).toByte() } }
+                    .getOrNull()
+                val r = bytes?.let { runCatching { NativeBridge.nativeUsbMidiSend(it) }.getOrDefault(-1) } ?: -1
+                if (r < 0) note("on-select MIDI ${c.hex} not sent ($r): no MIDI out in this mode")
+            }
+            is Change.Enable -> Unit   // not in the rack slice yet
         }
         for (e in RackEngine.entries) if (rack?.slots?.containsKey(e) == true) playing[e] = midiOn[e.rackIndex]
     }

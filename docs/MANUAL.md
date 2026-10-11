@@ -99,6 +99,9 @@ song being edited:
     ring out.
 
   Copy a live set to make the next one quickly.
+* **Program change**, per live set: for any other keyboard or sound module
+  on the MIDI out, a program (and, if it needs one, a bank) sent on its
+  channel when the live set is selected. Direct USB modes.
 * **CP-88**, per live set:
   * **Leave**: the keyboard plays whatever it has;
   * **Select**: switching to this live set selects one of its stored sounds
