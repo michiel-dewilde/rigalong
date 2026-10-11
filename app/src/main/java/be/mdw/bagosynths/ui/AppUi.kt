@@ -118,7 +118,11 @@ fun AppUi(player: SongPlayer, lib: AppLibrary, host: EngineHost) {
             Spacer(Modifier.height(8.dp))
             when (screen) {
                 0 -> StageScreen(player, host)
-                1 -> SongsScreen(player, lib, host)
+                1 -> Column(Modifier.fillMaxSize()) {
+                    Box(Modifier.weight(1f)) { SongsScreen(player, lib, host) }
+                    Spacer(Modifier.height(8.dp))
+                    TestKeys()
+                }
                 2 -> LibraryScreen(player, lib, onOpened = { screen = 0 })
                 else -> SetupScreen(player, host)
             }

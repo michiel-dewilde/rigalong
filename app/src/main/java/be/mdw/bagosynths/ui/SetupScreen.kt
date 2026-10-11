@@ -2,6 +2,7 @@ package be.mdw.bagosynths.ui
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -64,6 +65,8 @@ fun SetupScreen(player: SongPlayer, host: EngineHost) {
     val panel = Color(0xFF1A1D23)
     val dim = Color(0xFF8A919C)
     val accent = Color(0xFF3FB68B)
+    Column(Modifier.fillMaxSize()) {
+    Box(Modifier.weight(1f)) {
     AdaptivePair(560.dp, first = { m ->
         Column(m.background(panel, RoundedCornerShape(10.dp)).padding(12.dp)
             .verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -136,6 +139,10 @@ fun SetupScreen(player: SongPlayer, host: EngineHost) {
             for (line in status) Text(line, fontFamily = FontFamily.Monospace, fontSize = 13.sp)
         }
     })
+    }
+    Spacer(Modifier.height(8.dp))
+    TestKeys()
+    }
     // Read so that the +/- buttons above, which change plain preferences, recompose.
     if (tick < 0) Text("")
 }
