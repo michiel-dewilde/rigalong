@@ -124,12 +124,17 @@ fun SetupScreen(player: SongPlayer, host: EngineHost, lib: AppLibrary) {
             OutlinedButton(onClick = { player.forgetCp88Page(); player.reload() }) { Text(stringResource(R.string.rewrite_cp88_page)) }
             Spacer(Modifier.height(6.dp))
             Text(stringResource(R.string.switching), fontWeight = FontWeight.SemiBold)
-            ControllerRow(stringResource(R.string.cc_next), player.ccNext, player.learning == "next", accent, dim,
-                onLearn = { player.learn(if (player.learning == "next") null else "next") },
-                onClear = { player.clearController("next") })
-            ControllerRow(stringResource(R.string.cc_previous), player.ccPrevious, player.learning == "previous", accent, dim,
-                onLearn = { player.learn(if (player.learning == "previous") null else "previous") },
-                onClear = { player.clearController("previous") })
+            for (action in SongPlayer.CONTROLLER_ACTIONS) {
+                val label = stringResource(when (action) {
+                    "next" -> R.string.cc_next
+                    "previous" -> R.string.cc_previous
+                    "tap" -> R.string.cc_tap
+                    else -> R.string.cc_click
+                })
+                ControllerRow(label, player.controllers[action] ?: -1, player.learning == action, accent, dim,
+                    onLearn = { player.learn(if (player.learning == action) null else action) },
+                    onClear = { player.clearController(action) })
+            }
             Text(stringResource(R.string.switching_note), color = dim, fontSize = 12.sp)
             Text(stringResource(R.string.keys_note), color = dim, fontSize = 12.sp)
             Spacer(Modifier.height(6.dp))

@@ -138,9 +138,10 @@ Every setlist and song, with its history.
     default). Its eight sounds are overwritten.
   * the **MIDI channel** it listens on.
   * whether its **live set buttons select the app's live sets**.
-* **Footswitches and MIDI controllers**: a controller for the next and one
-  for the previous live set (or lead-sheet page). Press **Learn**, then the
-  pedal.
+* **Footswitches and MIDI controllers**: a controller each for the next and
+  the previous live set (or lead-sheet page), tap tempo, and the count-in or
+  click. Press **Learn**, then the pedal. A controller does one thing: learning
+  it for another takes it away from the first.
 * **Stage**: Do Not Disturb while the app is in front. Notifications and
   calls are silenced; alarms and media are not. Android asks you once to
   allow it.

@@ -236,7 +236,7 @@ data class SwitchSource(
     val kind: String,
     val channel: Int? = null,
     val number: Int? = null,
-    /** select | next | previous | nextSong | previousSong | pageForward | pageBack | panic */
+    /** select | next | previous | tap | click | nextSong | previousSong | pageForward | pageBack | panic */
     val action: String = "select",
 )
 

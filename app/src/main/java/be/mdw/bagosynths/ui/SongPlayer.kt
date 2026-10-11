@@ -471,25 +471,34 @@ class SongPlayer(private val lib: AppLibrary, private val host: EngineHost, priv
     /** What the last external selection was, for the stage view. */
     var lastSelection by mutableStateOf(""); private set
 
-    /**
-     * Follows the CP-88's own live set buttons (V1, LOG.md 2026-10-11): a
-     * selection arrives as Bank Select MSB 63, LSB page - 1, Program Change
-     * set - 1. Set n selects live set n of the current song, whatever the
-     * page. Called by the UI every 50 ms.
-     */
     // ------------------------------------------------- switching controllers
 
-    /** The controllers that step through live sets (I10.4), -1 when none. */
-    var ccNext by mutableIntStateOf(prefs.getInt("switch.ccNext", -1)); private set
-    var ccPrevious by mutableIntStateOf(prefs.getInt("switch.ccPrevious", -1)); private set
-    /** Which one the next controller press is learned into: "next", "previous", or null. */
+    /**
+     * Controller -> action (I10.4, I12.3): "next" and "previous" step through
+     * live sets (or turn pages), "tap" taps the tempo, "click" starts and stops
+     * the click. -1 = none.
+     */
+    val controllers = androidx.compose.runtime.mutableStateMapOf<String, Int>().apply {
+        for (a in CONTROLLER_ACTIONS) put(a, prefs.getInt(controllerKey(a), -1))
+    }
+    val ccNext get() = controllers["next"] ?: -1
+    val ccPrevious get() = controllers["previous"] ?: -1
+    /** Which action the next controller press is learned into, or null. */
     var learning by mutableStateOf<String?>(null); private set
     private val ccDown = BooleanArray(128)
+
+    private fun controllerKey(action: String) = "switch.cc" + action.replaceFirstChar { it.uppercase() }
+
+    private fun saveControllers() {
+        val e = prefs.edit()
+        for (a in CONTROLLER_ACTIONS) e.putInt(controllerKey(a), controllers[a] ?: -1)
+        e.apply()
+    }
 
     fun watchControllers() {
         var low = 0L
         var high = 0L
-        for (cc in listOf(ccNext, ccPrevious)) {
+        for (cc in controllers.values) {
             if (cc in 0..63) low = low or (1L shl cc) else if (cc in 64..127) high = high or (1L shl (cc - 64))
         }
         runCatching { NativeBridge.nativeWatchControllers(low, high, learning != null) }
@@ -497,16 +506,16 @@ class SongPlayer(private val lib: AppLibrary, private val host: EngineHost, priv
 
     fun learn(which: String?) { learning = which; watchControllers() }
 
-    fun setControllers(next: Int, previous: Int) {
-        ccNext = next
-        ccPrevious = previous
-        prefs.edit().putInt("switch.ccNext", ccNext).putInt("switch.ccPrevious", ccPrevious).apply()
+    /** All of them at once, as an environment brings them; an action left out has none. */
+    fun setControllers(map: Map<String, Int>) {
+        for (a in CONTROLLER_ACTIONS) controllers[a] = map[a] ?: -1
+        saveControllers()
         watchControllers()
     }
 
     fun clearController(which: String) {
-        if (which == "next") ccNext = -1 else ccPrevious = -1
-        prefs.edit().putInt("switch.ccNext", ccNext).putInt("switch.ccPrevious", ccPrevious).apply()
+        controllers[which] = -1
+        saveControllers()
         watchControllers()
     }
 
@@ -518,16 +527,22 @@ class SongPlayer(private val lib: AppLibrary, private val host: EngineHost, priv
         if (!pressed) return
         val l = learning
         if (l != null) {
-            if (l == "next") ccNext = cc else ccPrevious = cc
-            prefs.edit().putInt("switch.ccNext", ccNext).putInt("switch.ccPrevious", ccPrevious).apply()
+            // One controller, one action: learning it here takes it from any other.
+            for (a in CONTROLLER_ACTIONS) if (controllers[a] == cc) controllers[a] = -1
+            controllers[l] = cc
+            saveControllers()
             learning = null
             watchControllers()
             return
         }
-        when (cc) {
-            ccNext -> { forwardKey(); lastSelection = "CC $cc" }
-            ccPrevious -> { backKey(); lastSelection = "CC $cc" }
+        when (CONTROLLER_ACTIONS.firstOrNull { controllers[it] == cc }) {
+            "next" -> forwardKey()
+            "previous" -> backKey()
+            "tap" -> tap()
+            "click" -> toggleClick()
+            else -> return
         }
+        lastSelection = "CC $cc"
     }
 
     private var midiOutWasReady = false
@@ -557,6 +572,12 @@ class SongPlayer(private val lib: AppLibrary, private val host: EngineHost, priv
         midiOutWasReady = ready
     }
 
+    /**
+     * Follows the CP-88's own live set buttons (V1, LOG.md 2026-10-11): a
+     * selection arrives as Bank Select MSB 63, LSB page - 1, Program Change
+     * set - 1. Set n selects live set n of the current song, whatever the
+     * page. Called by the UI every 50 ms.
+     */
     fun pollSelections() {
         watchMidiOut()
         // A count-in ends on its own; the visual beat stops with the last click heard.
@@ -762,6 +783,8 @@ class SongPlayer(private val lib: AppLibrary, private val host: EngineHost, priv
 
     companion object {
         private const val TAG = "bos-stage"
+        /** What a switching controller can be taught (I10.4, I12.3). */
+        val CONTROLLER_ACTIONS = listOf("next", "previous", "tap", "click")
         const val ORGAN_LESLIE = 37
         const val ORGAN_PERC = 27
         val ORGAN_STAGE_PARAMS = (0..8).toList() + listOf(ORGAN_PERC, ORGAN_LESLIE)

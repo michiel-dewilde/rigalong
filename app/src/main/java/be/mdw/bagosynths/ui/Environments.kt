@@ -34,10 +34,9 @@ object Environments {
             externalSynths = listOf(ExternalSynth(
                 name = "CP-88", kind = "cp88", midiOut = KEYS, midiIn = KEYS, channel = player.cp88Channel,
                 reservedPages = listOf(player.reservedPage), selectsLiveSets = player.cp88Follows)),
-            switching = listOfNotNull(
-                player.ccNext.takeIf { it >= 0 }?.let { SwitchSource(KEYS, "cc", number = it, action = "next") },
-                player.ccPrevious.takeIf { it >= 0 }?.let { SwitchSource(KEYS, "cc", number = it, action = "previous") },
-            ),
+            switching = SongPlayer.CONTROLLER_ACTIONS.mapNotNull { a ->
+                player.controllers[a]?.takeIf { it >= 0 }?.let { SwitchSource(KEYS, "cc", number = it, action = a) }
+            },
             twoUp = player.sheetTwoUp,
             halfTurn = player.sheetHalfTurn,
             keysTurnPages = player.keysTurnPages,
@@ -62,9 +61,8 @@ object Environments {
             cp.reservedPages.firstOrNull()?.let { player.reservedPage = it }
             player.cp88Follows = cp.selectsLiveSets
         }
-        player.setControllers(
-            next = env.switching.firstOrNull { it.kind == "cc" && it.action == "next" }?.number ?: -1,
-            previous = env.switching.firstOrNull { it.kind == "cc" && it.action == "previous" }?.number ?: -1)
+        player.setControllers(env.switching.filter { it.kind == "cc" && it.number != null }
+            .associate { it.action to it.number!! })
         player.sheetTwoUp = env.twoUp
         player.sheetHalfTurn = env.halfTurn
         player.keysTurnPages = env.keysTurnPages
