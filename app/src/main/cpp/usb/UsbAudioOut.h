@@ -298,4 +298,5 @@ private:
     std::atomic<int64_t> mMaxGapNs{0};
     std::atomic<int64_t> mStartNs{0};
     mutable std::atomic<int64_t> mRateAsked{0}, mRateNs{0};   // stats() only
+    mutable std::atomic<float> mRateLast{0.0f};                // the last full-second measurement
 };

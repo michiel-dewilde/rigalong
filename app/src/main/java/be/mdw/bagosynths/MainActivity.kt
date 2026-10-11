@@ -1877,6 +1877,13 @@ class MainActivity : androidx.activity.ComponentActivity() {
                     val ls = intent.getIntExtra("liveset", 0)
                     if (song > 0) player.selectSong(song - 1)
                     if (ls > 0) player.selectLiveSet(ls - 1)
+                    // A file in the app's own folder as the song's lead sheet:
+                    //   --es sheet leadsheet-test.pdf   --ei page +1 / -1 (a page-turner key)
+                    intent.getStringExtra("sheet")?.let { name ->
+                        runCatching { player.attachSheetForTest(java.io.File(getExternalFilesDir(null), name)) }
+                            .onFailure { android.util.Log.e("bos-stage", "sheet: $it") }
+                    }
+                    when (intent.getIntExtra("page", 0)) { 1 -> player.forwardKey(); -1 -> player.backKey() }
                 }
                 // TEST: the CP-88 path end to end (SongPlayer.cp88SelfTest):
                 //   adb shell am broadcast -a be.mdw.bagosynths.CP88SELFTEST --ei liveset 1

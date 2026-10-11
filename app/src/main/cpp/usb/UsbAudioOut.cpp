@@ -744,15 +744,27 @@ UsbAudioOut::Stats UsbAudioOut::stats() const {
         const double wireMs = (static_cast<double>(s.outBytes) / mOutFrameBytes) * 1000.0 / mCfg.rate;
         s.deficitMs = static_cast<float>(wallMs - wireMs);
 
-        // The device's rate as it asks for frames, over the interval since the
-        // previous call (or since the start).
+        // The device's rate as it asks for frames, over AT LEAST A SECOND.
+        // Several callers poll stats(), so "since the previous call" was often
+        // tens of milliseconds -- against IN completions that come back in
+        // bursts -- and the figure wandered 40-48 kHz while frames advanced at
+        // exactly 44 100/s (LOG.md 2026-10-11). Between windows the last full
+        // measurement is reported.
         const int64_t asked = mAskedFrames.load(std::memory_order_relaxed);
-        const int64_t prevAsked = mRateAsked.exchange(asked, std::memory_order_relaxed);
-        int64_t prevNs = mRateNs.exchange(now, std::memory_order_relaxed);
-        if (prevNs == 0 || prevNs < start) prevNs = start;
-        if (now > prevNs && asked >= prevAsked) {
-            s.feedbackRate = static_cast<float>((asked - prevAsked) * 1e9 / (now - prevNs));
+        int64_t prevNs = mRateNs.load(std::memory_order_relaxed);
+        if (prevNs == 0 || prevNs < start) {
+            mRateNs.store(start, std::memory_order_relaxed);
+            mRateAsked.store(0, std::memory_order_relaxed);
+            prevNs = start;
         }
+        const int64_t prevAsked = mRateAsked.load(std::memory_order_relaxed);
+        if (now - prevNs >= 1000000000LL && asked >= prevAsked) {
+            mRateLast.store(static_cast<float>((asked - prevAsked) * 1e9 / (now - prevNs)),
+                            std::memory_order_relaxed);
+            mRateAsked.store(asked, std::memory_order_relaxed);
+            mRateNs.store(now, std::memory_order_relaxed);
+        }
+        s.feedbackRate = mRateLast.load(std::memory_order_relaxed);
     }
     return s;
 }

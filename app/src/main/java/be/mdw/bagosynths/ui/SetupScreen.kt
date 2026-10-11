@@ -105,6 +105,11 @@ fun SetupScreen(player: SongPlayer, host: EngineHost) {
                 Text(player.cp88Channel.toString(), modifier = Modifier.width(32.dp))
                 TextButton(onClick = { player.cp88Channel = player.cp88Channel + 1; tick++ }) { Text("+") }
             }
+            var follows by remember { mutableStateOf(player.cp88Follows) }
+            SetupToggle(stringResource(R.string.cp88_follows), follows, accent, dim) {
+                player.cp88Follows = it; follows = it; player.forgetCp88Page(); player.reload()
+            }
+            OutlinedButton(onClick = { player.forgetCp88Page(); player.reload() }) { Text(stringResource(R.string.rewrite_cp88_page)) }
             Text(stringResource(R.string.keys_note), color = dim, fontSize = 12.sp)
             Spacer(Modifier.height(6.dp))
             Text(stringResource(R.string.stage), fontWeight = FontWeight.SemiBold)

@@ -344,6 +344,22 @@ Interpreted
 
 Stated (2026-10-11)
 
+* S4.12 (2026-10-11) **When the CP-88's buttons select the app's live sets, the
+  CP-88 must not mix in its own instruments.** Pressing set n also switches the
+  CP-88 to that slot, so wherever a song does not give the CP-88 a sound of
+  its own, the slot must hold a silent ("empty") sound.
+
+Interpreted (built 2026-10-11)
+
+* I4.19 When the CP-88 follows (a Setup switch, on by default), live set n owns
+  slot n of the reserved page. Opening a song writes the whole page: a live
+  set's own sound where it has one, a silent sound (all three sections off,
+  volume 0) everywhere else -- except live sets that select a sound elsewhere.
+  A live set that leaves the CP-88 alone selects its silent slot. Slots
+  already holding the same sound are not rewritten, to spare the flash.
+* I4.20 Consequence: a song has at most 8 live sets that the CP-88's buttons
+  can reach (one page), and at most 8 own sounds.
+
 * S4.10 A CP-88 patch is stored and hashed as the **byte-exact bulk dump**.
   cp-liveset's YAML is the view: what the editor shows and what import and
   export accept.
@@ -1048,3 +1064,4 @@ Risk
 | 2026-10-11 | Language, diagnostics and help (19). "Retained" and "Open questions" renumbered 20 and 21 | Round 16 |
 | 2026-10-11 | Carried over from the prototype (20): six engines, MEASURE, test keyboard confirmed; MIDI monitor added; both orientations everywhere (replaces "landscape tablet UI") | Round 17 |
 | 2026-10-11 | Portrait stage view derived from the landscape layout (S15.4); the four project rules A20.1-A20.4 confirmed | Round 18 |
+| 2026-10-11 | The CP-88's page is kept silent where songs do not use it (S4.12, I4.19, I4.20) | Michiel, during the unattended session |

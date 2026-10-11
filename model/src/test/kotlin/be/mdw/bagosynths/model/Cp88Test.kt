@@ -60,6 +60,13 @@ class Cp88Test {
     }
 
     @Test
+    fun theSilentSoundIsWholeAndNamed() {
+        assertEquals(19, Cp88.split(Cp88.SILENT).size)
+        assertEquals("Silent", Cp88.name(Cp88.SILENT))
+        assertContentEquals(Cp88.SILENT, Cp88.normalize(Cp88.retarget(Cp88.SILENT, 40, 3)))
+    }
+
+    @Test
     fun anIncompleteSoundIsRefused() {
         assertFailsWith<IllegalArgumentException> { Cp88.normalize(slot40x8.dropLast(1)) }
     }

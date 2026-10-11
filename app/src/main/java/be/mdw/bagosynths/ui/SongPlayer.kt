@@ -131,7 +131,7 @@ class SongPlayer(private val lib: AppLibrary, private val host: EngineHost, priv
         taps.clear()
         sheetFile = s.leadSheet?.toRef()?.digest?.let { java.io.File(lib.store.root, "blobs/sha256/${it.hex}") }
             ?.takeIf { it.exists() }
-        writeOwnedSounds(liveSets)
+        writeSongPage(liveSets)
         if (liveSets.isNotEmpty()) selectLiveSet(liveSet.coerceIn(0, liveSets.size - 1))
     }
 
@@ -141,6 +141,9 @@ class SongPlayer(private val lib: AppLibrary, private val host: EngineHost, priv
         val changes = sw.select(index)
         pendingLiveSet = index
         apply(changes)
+        // A live set that leaves the CP-88 alone, while its buttons select live
+        // sets: put it on this live set's slot, which holds silence.
+        if (cp88Follows && changes.none { it is Change.Cp88 }) ownedSlots[index]?.let { selectCp88(reservedPage, it) }
         liveSetIndex = index
         Log.i(TAG, "live set ${index + 1} '${liveSetNames[index]}': ${changes.size} changes: " +
                 changes.joinToString("; ") { c -> when (c) {
@@ -160,26 +163,55 @@ class SongPlayer(private val lib: AppLibrary, private val host: EngineHost, priv
      * selected (S5.3, S4.11), one set each in live set order, so a live set
      * switch is only a Program Change. 7 ms a sound (V3), so done here.
      */
-    private fun writeOwnedSounds(liveSets: List<LiveSet>) {
+    /**
+     * Whether the CP-88's own live set buttons select the app's live sets
+     * (set n, live set n). Then its reserved page must hold, in every slot a
+     * song does not give a sound of its own, a SILENT sound: pressing set n
+     * switches the CP-88 to that slot too, and it must not mix in its own
+     * instruments (Michiel, 2026-10-11).
+     */
+    var cp88Follows: Boolean
+        get() = prefs.getBoolean("cp88.follow", true)
+        set(v) { prefs.edit().putBoolean("cp88.follow", v).apply() }
+
+    /**
+     * The song's page on the CP-88, written when the song is selected (S5.3,
+     * S4.11): live set n owns slot n of the reserved page. A live set that owns
+     * a sound gets it; when the CP-88 follows, every other slot gets the silent
+     * sound. 7 ms a sound (V3); a slot already holding the same sound is not
+     * written again, which spares the CP-88's flash ([forgetCp88Page] resets that).
+     */
+    private fun writeSongPage(liveSets: List<LiveSet>) {
         ownedSlots.clear()
-        var slot = 1
         var written = 0
+        var kept = 0
         var failed = 0
-        for ((i, ls) in liveSets.withIndex()) {
-            val a = ls.cp88 ?: continue
-            if (a.mode != "own") continue
-            val d = a.sound?.toRef()?.digest ?: continue
-            val bytes = lib.store.get(d) ?: continue
-            if (slot > 8) { cp88Status = "more than 8 owned CP-88 sounds in this song: the rest are not written"; break }
+        val follows = cp88Follows
+        for (i in 0 until minOf(8, liveSets.size)) {
+            val a = liveSets[i].cp88
+            val own = if (a?.mode == "own") a.sound?.toRef()?.digest?.let { lib.store.get(it) } else null
+            val bytes = own ?: if (follows && a?.mode != "select") Cp88.SILENT else continue
+            val slot = i + 1
+            val key = "cp88.slot.$reservedPage.$slot"
+            val digest = Digest.of(bytes).hex
+            if (prefs.getString(key, null) == digest) { ownedSlots[i] = slot; kept++; continue }
             val ok = Cp88.retarget(bytes, reservedPage, slot).all { NativeBridge.nativeUsbMidiSend(it) > 0 }
-            if (ok) { ownedSlots[i] = slot; written++ } else failed++
-            slot++
+            if (ok) { ownedSlots[i] = slot; written++; prefs.edit().putString(key, digest).apply() } else failed++
         }
-        if (written + failed > 0) {
-            cp88Status = if (failed == 0) "CP-88: $written sound(s) written to page $reservedPage"
-            else "CP-88: could not write $failed sound(s) -- is it in a direct USB mode?"
-            Log.i(TAG, cp88Status)
+        if (liveSets.size > 8 && liveSets.drop(8).any { it.cp88?.mode == "own" }) {
+            cp88Status = "only live sets 1-8 can own a CP-88 sound (one page)"
+        } else if (written + failed > 0) {
+            cp88Status = if (failed == 0) "CP-88: page $reservedPage, $written slot(s) written, $kept unchanged"
+            else "CP-88: could not write $failed slot(s) -- is it in a direct USB mode?"
         }
+        if (written + failed > 0) Log.i(TAG, cp88Status)
+    }
+
+    /** Forget what the CP-88's reserved page holds, so the next song rewrites it all. */
+    fun forgetCp88Page() {
+        val e = prefs.edit()
+        for (n in 1..8) e.remove("cp88.slot.$reservedPage.$n")
+        e.apply()
     }
 
     private fun selectCp88(page: Int, set: Int) {
@@ -274,6 +306,16 @@ class SongPlayer(private val lib: AppLibrary, private val host: EngineHost, priv
     var sheetHalfTurn by mutableStateOf(prefs.getBoolean("sheet.halfTurn", true))
     var keysTurnPages by mutableStateOf(prefs.getBoolean("sheet.keysTurnPages", true))
 
+    /** TEST (PROVISIONAL.md): attach [file] as the current song's lead sheet, as the editor does. */
+    fun attachSheetForTest(file: java.io.File) {
+        val id = songEntries.getOrNull(songIndex) ?: return
+        val r = rack ?: return
+        val name = songNames.getOrNull(songIndex) ?: return
+        lib.saveSong(id, name, r.copy(leadSheet = storePdf(file.readBytes())))
+        reload()
+        Log.i(TAG, "lead sheet attached to '$name': ${sheetFile?.name}, ${file.length()} B")
+    }
+
     /** A PDF into the library; returns its object. */
     fun storePdf(bytes: ByteArray): Digest {
         require(bytes.size > 4 && String(bytes, 0, 4, Charsets.US_ASCII) == "%PDF") { "not a PDF" }
@@ -327,7 +369,7 @@ class SongPlayer(private val lib: AppLibrary, private val host: EngineHost, priv
                     rack = draft
                     switcher = LiveSetSwitcher(song, liveSets)
                     liveSetNames.clear(); liveSetNames.addAll(liveSets.map { it.name })
-                    writeOwnedSounds(liveSets)
+                    writeSongPage(liveSets)
                     selectLiveSet(liveSet - 1)
                     Log.i(TAG, "selftest: live set $liveSet selected; $cp88Status")
                 }
@@ -350,7 +392,7 @@ class SongPlayer(private val lib: AppLibrary, private val host: EngineHost, priv
             val msb = (v shr 16) and 0x7F
             val lsb = (v shr 8) and 0x7F
             val pc = v and 0x7F
-            if (msb == 63) {
+            if (msb == 63 && cp88Follows) {
                 // Our own selection coming back is not the player choosing.
                 val sent = lastSent
                 if (sent != null && sent.first == lsb + 1 && sent.second == pc + 1 &&
