@@ -31,36 +31,8 @@ object NativeBridge {
     /** CLEAR_FEATURE(ENDPOINT_HALT) on both streaming endpoints. */
     external fun nativeUsbClearHalt(fd: Int, raw: ByteArray): Boolean
 
-    /** TEST ONLY: emit N genuinely zero-length OUT packets, bypassing the invariant. */
-    external fun nativeInjectRawZero(count: Int)
-
-    /** The next [count] OUT packets carry exactly [frames] frames. TEST ONLY. */
-    external fun nativeInjectSize(count: Int, frames: Int)
-
-    /** The next [count] OUT packets carry what was asked plus [delta]. TEST ONLY. */
-    external fun nativeInjectBias(count: Int, delta: Int)
-
-    /** The next [count] OUT packets skip the feedback queue. TEST ONLY. */
-    external fun nativeInjectStarve(count: Int)
-
-    /** The size FIFO's geometry and its full-FIFO policy; -1 leaves a field alone. */
-    external fun nativeSetFifo(len: Int, preRoll: Int, resync: Int, inPkts: Int,
-                               outPkts: Int, midiUrbs: Int, gapUs: Int)
-
-    /** Whether an OBSERVED-empty OUT queue also opens a resync gap. Live. */
-    external fun nativeSetEmptyResync(on: Int)
-
-    /** Replaces the USB payload with a tone, load and sizes unchanged. TEST ONLY. */
-    external fun nativeSetUsbTone(hz: Float)
-
-    /** Feedback capture depth in ms, applied at the next transport start. */
-    external fun nativeSetInDepthMs(ms: Int)
-
-    /** Writes the per-packet wire trace to [path]. TEST ONLY. */
-    external fun nativeDumpUsbTrace(path: String)
-
-    /** Delays OUT resubmission only, [count] times, [us] each. TEST ONLY. */
-    external fun nativeHoldOut(us: Int, count: Int, every: Int)
+    /** The output device whose AAudio callback thread hosts the USB reap loop; 0 = own thread. */
+    external fun nativeSetUsbHostDevice(id: Int)
 
     external fun nativeResetPeaks()
     external fun nativeTestNote(note: Int, velocity: Int)
@@ -236,6 +208,15 @@ object NativeBridge {
     /** `port` is the cable (MIDI 1.0) or group (MIDI 2.0). Null on success. */
     external fun nativeStartUsbMidi(fd: Int, raw: ByteArray, preferUmp: Boolean, port: Int): String?
 
+    /** MIDI bytes to the device's MIDI OUT endpoint (direct USB). Bytes accepted, or -errno. */
+    external fun nativeUsbMidiSend(data: ByteArray): Int
+
+    /** TEST: stall the USB reap loop once for [ms], to reproduce a starved IN queue. */
+    external fun nativeUsbTestStall(ms: Int)
+
+    /** One complete SysEx message received over direct USB, or null if none is waiting. */
+    external fun nativeUsbSysexDrain(): ByteArray?
+
     /** Builds the graph if no sink has, so the instrument loaders have nodes. */
     external fun nativePrepareGraph()
 
@@ -383,14 +364,12 @@ object NativeBridge {
         // --- direct USB -------------------------------------------------------
         val usbActive get() = v.getOrElse(27) { 0f }.toInt() == 1
         val usbRunning get() = v.getOrElse(28) { 0f }.toInt() == 1
-        /**
-         * Wall time minus the audio the controller says it put on the wire. It
-         * settles at a constant and stays; GROWTH is a hole the device heard as
-         * silence, however healthy everything else reads.
-         */
+        /** Wall time minus the audio the controller says it put on the wire. */
         val usbDeficitMs get() = v.getOrElse(29) { 0f }
-        val usbLate get() = v.getOrElse(30) { 0f }.toInt()
-        val usbStarved get() = v.getOrElse(31) { 0f }.toInt()
+        /** Holds: each a short silence by design, never a latch. */
+        val usbHolds get() = v.getOrElse(30) { 0f }.toInt()
+        /** Holds whose alt cycle was refused, so the FIFO was not emptied. Must stay 0. */
+        val usbAltErrors get() = v.getOrElse(31) { 0f }.toInt()
         val usbErrors get() = v.getOrElse(32) { 0f }.toInt()
         val usbFeedbackRate get() = v.getOrElse(33) { 0f }
         val usbMaxGapMs get() = v.getOrElse(34) { 0f }

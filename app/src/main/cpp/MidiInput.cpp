@@ -47,6 +47,7 @@ bool MidiInput::openUsb(int fd, int endpoint, int maxPacket, bool ump, int port,
 
 void MidiInput::close() {
     if (mUsbOpen.exchange(false, std::memory_order_acq_rel)) mUsb.stop();
+    mUsbOut.stop();
     AMidiOutputPort* port = mPort.exchange(nullptr, std::memory_order_acq_rel);
     if (port != nullptr) {
         AMidiOutputPort_close(port);

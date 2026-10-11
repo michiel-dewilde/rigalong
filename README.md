@@ -264,8 +264,13 @@ cannot own half a device and share the other half.
 runs through Qualcomm's DSP offload -- the transfer ring is handed to the audio
 DSP, where neither the app nor the kernel can see it. The direct modes take the
 DSP, the HAL and AudioFlinger out of the data path: the app talks to the
-endpoints itself, with implicit or explicit feedback as the device requires.
-See `cp88-usb-audio-halt/` in the workspace for the investigation behind this.
+endpoints itself. Direct audio drives **implicit-feedback devices** (the
+CP-88 is one) with fbx, a transport built so that no delay of this process can
+latch the device: every packet is the size the device asked for, every append
+is proven contiguous, and anything it cannot prove becomes a short silence
+(a *hold*) instead of a gap the device could misread. See
+`app/src/main/cpp/usb/UsbAudioOut.h`, and in the workspace `tools/fbx/` and
+`CP88-USB-AUDIO.md` for the device behaviour behind every rule.
 
 **Which direct mode.** Prefer **USB device**. In **USB interface** mode for
 audio the ALSA card survives, so Android still lists the device as an output --
@@ -290,9 +295,14 @@ streaming endpoint instead, so AudioControl is left alone.
   DSP behind it, to release the interface before claiming it. Leaving one hands
   every interface back and waits for Android to see the device again.
 
-**Buffer.** In the direct modes the buffer is the audio in flight on the wire:
-4, 8 or 16 ms, in the Audio long-press menu, default **8 ms**. It is the whole
+**Buffer.** In the direct modes the buffer is the audio queued on the wire:
+6 or 8 ms, in the Audio long-press menu, default **6 ms**. It is the whole
 output latency of that stage -- there is no mixer or resampler underneath it.
+It decides how often the transport holds, never whether the device latches:
+on the tablet plugged in directly, at 6 ms, none at rest and ~2 a minute under
+64-voice sweeps on every engine. That rests on the reap loop running on a
+borrowed AAudio callback thread -- SCHED_FIFO, which an app cannot get for a
+thread of its own; it plays silence on the built-in speaker while it does.
 (The Buffer button itself sets AAudio bursts and applies to ALSA mode only.)
 
 ## Master volume
@@ -366,7 +376,7 @@ simply runs without it.
 | Field | What to watch for |
 |---|---|
 | `path` | In ALSA mode, must say `AAudio EXCLUSIVE LOW_LATENCY`; anything else means the fast path was refused. In a direct mode it reads `USB direct (...)` with the buffer and the device's measured clock. |
-| `usb` | Direct modes only. **`deficit` is the one to watch**: a constant is healthy, and GROWTH is audio the device never received -- a hole it heard as silence, however healthy every other number reads. `late`, `starved` and `errors` should stay at 0. |
+| `usb` | Direct modes only. `holds`: short silences taken by design whenever the transport could not prove the next packet joins the stream; the log line `usb hold:` gives each one's reason. **`alt errors` must stay 0**: a hold whose FIFO reset was refused. `errors` counts OUT packets not sent whole and IN packets with no size; `deficit` grows by the silence of every hold. |
 | `rate` | 44100. The CP-88 does not do 48 kHz. |
 | `burst` | ~89 frames / 2.0 ms on this rig. |
 | `latency` | 5–10 ms depending on buffer size. |

@@ -61,11 +61,6 @@ constexpr int kRenderNice = -16;
  * `what` names the thread in the log.
  */
 void raiseRenderPriority(const char* what, int niceValue = kTransportNice);
-/** Pins the calling thread to the transport core. No-op unless one is set. */
-void pinToTransportCore(const char* what);
-
-/** Keeps the calling thread OFF the transport core. No-op unless one is set. */
-void pinOffTransportCore(const char* what);
 
 /**
  * Android's Performance Hint session (ADPF), the supported way to tell the

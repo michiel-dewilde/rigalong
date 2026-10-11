@@ -198,16 +198,6 @@ class MainActivity : Activity() {
         filter.addAction("be.mdw.bagosynths.PARAM")
         filter.addAction("be.mdw.bagosynths.PANIC")
         filter.addAction("be.mdw.bagosynths.STRESS")
-        filter.addAction("be.mdw.bagosynths.ZLP")
-        filter.addAction("be.mdw.bagosynths.SIZE")
-        filter.addAction("be.mdw.bagosynths.BIAS")
-        filter.addAction("be.mdw.bagosynths.STARVE")
-        filter.addAction("be.mdw.bagosynths.TONE")
-        filter.addAction("be.mdw.bagosynths.INDEPTH")
-        filter.addAction("be.mdw.bagosynths.FIFO")
-        filter.addAction("be.mdw.bagosynths.DRYRESYNC")
-        filter.addAction("be.mdw.bagosynths.DUMP")
-        filter.addAction("be.mdw.bagosynths.HOLD")
         filter.addAction("be.mdw.bagosynths.CONCEAL")
         filter.addAction("be.mdw.bagosynths.REINIT")
         filter.addAction("be.mdw.bagosynths.RESETPEAKS")
@@ -220,6 +210,8 @@ class MainActivity : Activity() {
         filter.addAction("be.mdw.bagosynths.DEVHEALTH")
         filter.addAction("be.mdw.bagosynths.PANIC")
         filter.addAction("be.mdw.bagosynths.ROUTE")
+        filter.addAction("be.mdw.bagosynths.SYSEX")
+        filter.addAction("be.mdw.bagosynths.USBSTALL")
         if (Build.VERSION.SDK_INT >= 33) {
             registerReceiver(debugReceiver, filter, Context.RECEIVER_EXPORTED)
         } else {
@@ -1404,6 +1396,7 @@ class MainActivity : Activity() {
         // 5. Audio, then MIDI.
         if (aMode.direct && audio?.usb != null) {
             val s = sessions.getValue(audio.usb.deviceName)
+            applyUsbHost()
             val err = NativeBridge.nativeStartUsbAudio(s.fd, s.raw, usbBufferMs, 0)
             if (err == null) {
                 directAudioOn = audio.usb.deviceName
@@ -1433,6 +1426,20 @@ class MainActivity : Activity() {
             runOnUiThread { lastMidiAttempt = 0L; openMidi() }
         }
         if (routingStatus.startsWith("waiting") || routingStatus.startsWith("routing")) status("")
+    }
+
+    /**
+     * Whether the direct-USB reap loop borrows an AAudio callback thread -- the
+     * only way an app gets SCHED_FIFO here -- and on which device: the built-in
+     * speaker, never the instrument the loop is driving. It plays silence.
+     */
+    private var usbHostOnAAudio = true
+
+    private fun applyUsbHost() {
+        val am = getSystemService(Context.AUDIO_SERVICE) as android.media.AudioManager
+        val speaker = am.getDevices(android.media.AudioManager.GET_DEVICES_OUTPUTS)
+            .firstOrNull { it.type == AudioDeviceInfo.TYPE_BUILTIN_SPEAKER }
+        NativeBridge.nativeSetUsbHostDevice(if (usbHostOnAAudio) speaker?.id ?: 0 else 0)
     }
 
     /** Stops whichever audio sink is running, returning streaming interfaces to alt 0. */
@@ -1779,6 +1786,46 @@ class MainActivity : Activity() {
     }
 
     /**
+     * Sends MIDI over direct USB and logs every SysEx that comes back, on its
+     * own thread: a bulk dump answer takes some 0,4 s and must not hold up the
+     * UI. Replies are logged under `bos-sysex` with their time since the first
+     * byte went out.
+     */
+    private fun sysexExchange(hex: String, gapMs: Int, waitMs: Int) {
+        Thread({
+            while (NativeBridge.nativeUsbSysexDrain() != null) { /* discard stale replies */ }
+            val messages = hex.split('|').map { part ->
+                part.trim().split(Regex("\\s+")).filter { it.isNotEmpty() }
+                    .map { it.toInt(16).toByte() }.toByteArray()
+            }.filter { it.isNotEmpty() }
+            val t0 = System.nanoTime()
+            var bytes = 0
+            for ((i, m) in messages.withIndex()) {
+                val r = NativeBridge.nativeUsbMidiSend(m)
+                if (r < 0) {
+                    android.util.Log.e("bos-sysex", "send ${i + 1}/${messages.size} failed: $r")
+                    return@Thread
+                }
+                bytes += r
+                if (gapMs > 0 && i < messages.size - 1) Thread.sleep(gapMs.toLong())
+            }
+            val sentMs = (System.nanoTime() - t0) / 1e6
+            android.util.Log.i("bos-sysex", "sent ${messages.size} msg(s), $bytes B in ${"%.1f".format(sentMs)} ms")
+            val end = t0 + (sentMs * 1e6).toLong() + waitMs * 1_000_000L
+            var count = 0
+            while (System.nanoTime() < end) {
+                val rx = NativeBridge.nativeUsbSysexDrain()
+                if (rx == null) { Thread.sleep(2); continue }
+                count++
+                val at = (System.nanoTime() - t0) / 1e6
+                android.util.Log.i("bos-sysex", "rx ${"%.1f".format(at)} ms ${rx.size} B " +
+                        rx.joinToString(" ") { "%02X".format(it.toInt() and 0xFF) })
+            }
+            android.util.Log.i("bos-sysex", "done: $count repl${if (count == 1) "y" else "ies"}")
+        }, "bos-sysex").start()
+    }
+
+    /**
      * Debug triggers, scriptable so an unattended run needs no taps:
      *   adb shell am broadcast -a be.mdw.bagosynths.NOTE --ei note 48 --ei vel 90
      *   adb shell am broadcast -a be.mdw.bagosynths.ROUTE \
@@ -1791,6 +1838,16 @@ class MainActivity : Activity() {
             when (intent?.action) {
                 // A note, so that an unattended soak can make the rig do WORK
                 // rather than push silence.
+                // MIDI out over direct USB, and the SysEx that comes back:
+                //   adb shell am broadcast -a be.mdw.bagosynths.SYSEX                 //       --es hex "F0 43 20 7F 1C 08 0E 7F 00 F7" --ei wait 1500
+                // Several messages separated by '|' go out `gap` ms apart.
+                // TEST: one stall of the USB reap loop (a starved IN queue):
+                //   adb shell am broadcast -a be.mdw.bagosynths.USBSTALL --ei ms 600
+                "be.mdw.bagosynths.USBSTALL" -> NativeBridge.nativeUsbTestStall(intent.getIntExtra("ms", 600))
+                "be.mdw.bagosynths.SYSEX" -> sysexExchange(
+                    intent.getStringExtra("hex").orEmpty(),
+                    intent.getIntExtra("gap", 20),
+                    intent.getIntExtra("wait", 1500))
                 "be.mdw.bagosynths.NOTE" -> NativeBridge.nativeTestNote(
                     intent.getIntExtra("note", 48),
                     intent.getIntExtra("vel", 90))
@@ -1891,124 +1948,6 @@ class MainActivity : Activity() {
                         android.util.Log.i("bos-ui",
                             "reinit level $level in $ms ms" + (err?.let { " FAILED: $it" } ?: ""))
                     }
-                }
-                // TEST ONLY: the deterministic latch. One is enough.
-                //   adb shell am broadcast -a be.mdw.bagosynths.ZLP --ei count 1
-                "be.mdw.bagosynths.ZLP" -> {
-                    val n = intent.getIntExtra("count", 1)
-                    android.util.Log.i("bos-ui", "inject: $n RAW zero-length packet(s)")
-                    NativeBridge.nativeInjectRawZero(n)
-                }
-                // TEST ONLY: ask the device what, exactly, it refuses.
-                //   ... .SIZE --ei n 1 --ei frames 1   is one frame fatal too?
-                //   ... .BIAS --ei n 10000 --ei delta 1   10 s of 2,3 % surplus
-                "be.mdw.bagosynths.SIZE" -> {
-                    val n = intent.getIntExtra("n", 1)
-                    val f = intent.getIntExtra("frames", 0)
-                    android.util.Log.i("bos-ui", "inject: $n OUT packets forced to $f frames")
-                    NativeBridge.nativeInjectSize(n, f)
-                }
-                //   ... .HOLD --ei ms 200 --ei times 20   OUT off the wire only
-                "be.mdw.bagosynths.HOLD" -> {
-                    val ms = intent.getIntExtra("ms", 100)
-                    val k = intent.getIntExtra("times", 1)
-                    android.util.Log.i("bos-ui", "inject: $k OUT holds of $ms ms")
-                    NativeBridge.nativeHoldOut(ms * 1000, k, intent.getIntExtra("every", 1))
-                }
-                //   ... .DUMP    the last ~65 s of packets, to a file
-                "be.mdw.bagosynths.DUMP" -> {
-                    val f = java.io.File(getExternalFilesDir(null), "wire.txt")
-                    NativeBridge.nativeDumpUsbTrace(f.absolutePath)
-                    android.util.Log.i("bos-ui", "wire trace: ${f.absolutePath} (${f.length()} bytes)")
-                }
-                // The size FIFO and what it does when it fills. The two arms
-                // of the 2026-09-25 experiment, one broadcast each:
-                //   ... .FIFO --ei len 8  --ei preroll 4  --ei resync 1 --ei inpkts 1 --ei indepth 8
-                //   ... .FIFO --ei len 48 --ei preroll 24 --ei resync 0 --ei inpkts 8 --ei indepth 1024
-                "be.mdw.bagosynths.FIFO" -> {
-                    val len = intent.getIntExtra("len", -1)
-                    val pre = intent.getIntExtra("preroll", -1)
-                    val res = intent.getIntExtra("resync", -1)
-                    val pkt = intent.getIntExtra("inpkts", -1)
-                    val dep = intent.getIntExtra("indepth", -1)
-                    val opk = intent.getIntExtra("outpkts", -1)
-                    // MIDI IN URBs; 0 is the old synchronous bulk ioctl.
-                    //   ... .FIFO --ei midiurbs 4
-                    val mu = intent.getIntExtra("midiurbs", -1)
-                    // Microseconds of silence per resync, separate from the
-                    // pre-roll depth.   ... .FIFO --ei gapus 4000
-                    val gu = intent.getIntExtra("gapus", -1)
-                    // Whether an OBSERVED-empty OUT queue also opens a resync
-                    // gap -- Michiel's idea, 2026-10-02. Counted always as
-                    // outEmpty on the health line; acted on only when asked,
-                    // because there is a measured baseline to protect (resync
-                    // 0 of 10 against trim 5 of 6) and because a resync creates
-                    // ~4 ms of deliberate silence, which is four more missed
-                    // slots -- answering starvation with more absence has to be
-                    // shown rather than assumed.
-                    //   ... .DRYRESYNC --ei on 1   -- its OWN action, below
-                    NativeBridge.nativeSetFifo(len, pre, res, pkt, opk, mu, gu)
-                    if (dep > 0) NativeBridge.nativeSetInDepthMs(dep)
-                    if (intent.hasExtra("buffer")) {
-                        val ms = intent.getIntExtra("buffer", UsbBuffers.DEFAULT_MS)
-                        // PERSISTED, or the next app start silently reverts to
-                        // the stored preference and a swept value is lost.
-                        if (ms in 2..64) {
-                            usbBufferMs = ms
-                            prefs().edit().putInt("usbBufferMs", ms).apply()
-                        }
-                    }
-                    android.util.Log.i("bos-ui",
-                        "fifo: len=$len preRoll=$pre resync=$res inPkts=$pkt " +
-                        "outPkts=$opk midiUrbs=$mu gapUs=$gu inDepth=$dep " +
-                        "buffer=$usbBufferMs (restarting)")
-                    resetAudioPath()
-                }
-                // Whether an OBSERVED-empty OUT queue also opens a resync gap.
-                //
-                // ITS OWN ACTION, and that is the point: FIFO ends in
-                // resetAudioPath(), which restarts the transport and zeroes
-                // every counter. Putting this there defeated the whole reason
-                // nativeSetEmptyResync applies live -- the first A/B of it
-                // measured across the restart and produced negative deltas
-                // (resync=-16, silence=-7364), which is the harness saying it
-                // measured across a reset rather than the device saying
-                // anything. Same error as the one removed from fillsweep.sh
-                // this morning, made again within hours in a new place.
-                //
-                //   adb shell am broadcast -a be.mdw.bagosynths.DRYRESYNC --ei on 1
-                "be.mdw.bagosynths.DRYRESYNC" -> {
-                    val on = intent.getIntExtra("on", 0)
-                    NativeBridge.nativeSetEmptyResync(on)
-                    android.util.Log.i("bos-ui",
-                        "empty-queue resync: " + if (on != 0) "ON" else "OFF" +
-                        " (live, no restart)")
-                }
-                //   ... .INDEPTH --ei ms 16   usbhost's feedback depth
-                "be.mdw.bagosynths.INDEPTH" -> {
-                    val ms = intent.getIntExtra("ms", 1024)
-                    NativeBridge.nativeSetInDepthMs(ms)
-                    android.util.Log.i("bos-ui", "feedback capture depth: $ms ms (restarting)")
-                    resetAudioPath()
-                }
-                //   ... .TONE --ef hz 440   usbhost's payload, this app's transport
-                "be.mdw.bagosynths.TONE" -> {
-                    val hz = intent.getFloatExtra("hz", 0f)
-                    NativeBridge.nativeSetUsbTone(hz)
-                    android.util.Log.i("bos-ui", "usb payload: " +
-                        if (hz > 0f) "synthetic tone ${hz} Hz" else "the engine")
-                }
-                //   ... .STARVE --ei n 4     the dry-queue path, on demand
-                "be.mdw.bagosynths.STARVE" -> {
-                    val n = intent.getIntExtra("n", 1)
-                    android.util.Log.i("bos-ui", "inject: $n starved OUT packets")
-                    NativeBridge.nativeInjectStarve(n)
-                }
-                "be.mdw.bagosynths.BIAS" -> {
-                    val n = intent.getIntExtra("n", 1)
-                    val d = intent.getIntExtra("delta", 1)
-                    android.util.Log.i("bos-ui", "inject: $n OUT packets biased by $d frames")
-                    NativeBridge.nativeInjectBias(n, d)
                 }
                 //   adb shell am broadcast -a be.mdw.bagosynths.CONCEAL --ei on 0
                 "be.mdw.bagosynths.CONCEAL" -> {
@@ -2146,17 +2085,17 @@ class MainActivity : Activity() {
                 "be.mdw.bagosynths.ROUTE" -> {
                     intent.getStringExtra("audio")?.let { setModeQuiet(Use.AUDIO, IoMode.parse(it)) }
                     intent.getStringExtra("midi")?.let { setModeQuiet(Use.MIDI, IoMode.parse(it)) }
-                    // Packets per OUT URB, same total depth. See the sweep in
-                    // LOG.md: the division is a variable in its own right.
-                    //   ... --ei pkts 2
+                    //   ... --ei aaudio 0|1   reap loop on an AAudio callback thread
+                    if (intent.hasExtra("aaudio")) {
+                        usbHostOnAAudio = intent.getIntExtra("aaudio", 1) != 0
+                        applyUsbHost()
+                        android.util.Log.i("bos-ui", "usb reap loop on AAudio: $usbHostOnAAudio")
+                    }
+                    //   ... --ei buffer 6   the direct-USB depth, ms
                     if (intent.hasExtra("buffer")) {
-                        // ANY value here, not just the three the UI offers.
-                        // This used to accept only UsbBuffers.choicesMs and
-                        // ignore everything else IN SILENCE, so a sweep asking
-                        // for 6 ms quietly ran at 8 and was recorded as a 6 ms
-                        // result. The button row still offers 4/8/16; this is
-                        // the debug path and its whole purpose is to try
-                        // values the UI does not.
+                        // ANY value here, not just the ones the UI offers: this
+                        // is the debug path, for values the UI does not. Below
+                        // 4 the transport raises it to 4.
                         val ms = intent.getIntExtra("buffer", UsbBuffers.DEFAULT_MS)
                         if (ms in 2..64) {
                             usbBufferMs = ms
@@ -2936,11 +2875,11 @@ class MainActivity : Activity() {
             if (s.usbActive) {
                 appendLine("path       USB direct (${aMode.label})  buffer $usbBufferMs ms  " +
                     "device clock ${"%.1f".format(s.usbFeedbackRate)} Hz")
-                // The deficit is the one to watch: a constant is healthy, and
-                // GROWTH is audio the device never received -- a hole it heard
-                // as silence, however healthy every other number reads.
-                appendLine("usb        deficit ${"%.1f".format(s.usbDeficitMs)} ms   " +
-                    "late ${s.usbLate}   starved ${s.usbStarved}   errors ${s.usbErrors}   " +
+                // A hold is a short silence by design (the transport emptying
+                // the device's FIFO after something it could not prove); alt
+                // errors are holds that could not, and must stay 0.
+                appendLine("usb        holds ${s.usbHolds}   alt errors ${s.usbAltErrors}   " +
+                    "errors ${s.usbErrors}   deficit ${"%.1f".format(s.usbDeficitMs)} ms   " +
                     "max gap ${"%.1f".format(s.usbMaxGapMs)} ms")
             } else {
                 appendLine("path       ${if (s.usesAAudio) "AAudio" else "OpenSLES"}  " +

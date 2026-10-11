@@ -7,6 +7,7 @@
 
 #include <bagosynths/Graph.h>
 #include "usb/UsbMidiIn.h"
+#include "usb/UsbMidiOut.h"
 
 // Native MIDI input via AMidi (API 29+).
 //
@@ -56,6 +57,10 @@ public:
     /** The direct-USB reader, for its counters. Null-safe to call when closed. */
     const UsbMidiIn& usb() const { return mUsb; }
 
+    /** The direct-USB writer: started beside the reader when the MIDI streaming
+     *  interface has an OUT endpoint, stopped with it. */
+    UsbMidiOut& usbOut() { return mUsbOut; }
+
 private:
     static constexpr int kMaxMessagesPerBlock = 64;
     static constexpr int kBufferBytes = 256;
@@ -66,6 +71,7 @@ private:
     std::atomic<AMidiOutputPort*> mPort{nullptr};
 
     UsbMidiIn mUsb;
+    UsbMidiOut mUsbOut;
     std::atomic<bool> mUsbOpen{false};
     std::atomic<uint64_t> mMessageCount{0};
     std::atomic<uint64_t> mNoteOnOut{0};

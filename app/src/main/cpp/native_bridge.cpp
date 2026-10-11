@@ -3,11 +3,13 @@
 #include <android/log.h>
 
 #include <algorithm>
+#include <cmath>
 #include <memory>
 #include <string>
 #include <vector>
 
 #include "AudioEngine.h"
+#include "RealtimePriority.h"
 #include "usb/UsbControl.h"
 
 #include <linux/usbdevice_fs.h>
@@ -126,100 +128,17 @@ Java_be_mdw_bagosynths_NativeBridge_nativeSetConcealment(JNIEnv*, jobject, jbool
     engine().setConcealment(on == JNI_TRUE);
 }
 
-JNIEXPORT void JNICALL
-Java_be_mdw_bagosynths_NativeBridge_nativeInjectRawZero(JNIEnv*, jobject, jint count) {
-    engine().injectUsbRawZero(count);
-}
+// MIDI IN URBs, each one wMaxPacketSize, reaped by the audio transport's loop
+// while direct audio runs on the same descriptor.
+constexpr int kMidiUrbs = 4;
+
+// The output device whose AAudio callback thread hosts the USB reap loop (the
+// built-in speaker); 0 for an own thread. Applies at the next start.
+std::atomic<int> gHostDevice{0};
 
 JNIEXPORT void JNICALL
-Java_be_mdw_bagosynths_NativeBridge_nativeInjectSize(JNIEnv*, jobject, jint count,
-                                                    jint frames) {
-    engine().injectUsbSize(count, frames);
-}
-
-JNIEXPORT void JNICALL
-Java_be_mdw_bagosynths_NativeBridge_nativeInjectBias(JNIEnv*, jobject, jint count,
-                                                    jint delta) {
-    engine().injectUsbBias(count, delta);
-}
-
-JNIEXPORT void JNICALL
-Java_be_mdw_bagosynths_NativeBridge_nativeInjectStarve(JNIEnv*, jobject, jint count) {
-    engine().injectUsbStarve(count);
-}
-
-// THE FEEDBACK DEPTH, AND THE FIFO GEOMETRY BESIDE IT. All settable from a
-// broadcast, because the two policies below differ in five numbers and an A/B
-// that needs a rebuild between arms is an A/B nobody runs twice.
-//
-//   resync (default):  in 24 ms, fifo 24/20, a full FIFO forces a gap
-//                      -- latched 0 of 10
-//   trim (section 36): in 1024 ms, fifo 48/24, a full FIFO is trimmed
-//                      -- latched 4 of 7, and 5 of 6 at the SAME 12/8 geometry
-std::atomic<int> gInDepthMs{24};
-std::atomic<int> gInPktsPerUrb{1};
-std::atomic<int> gFifoLen{24};
-std::atomic<int> gFifoPreRoll{20};
-std::atomic<int> gFifoResync{1};
-// Packets per OUT URB. Latency is urbs x packets x period and is set by
-// `buffer`; this decides how that depth is DIVIDED, which is the slack --
-// (urbs - 1) x packets -- and is a variable in its own right.
-std::atomic<int> gOutPktsPerUrb{1};
-// MIDI IN URBs, each one wMaxPacketSize. 0 falls back to the synchronous
-// bulk ioctl, which has no queue at all and is what shipped until now.
-std::atomic<int> gMidiUrbs{4};
-// Microseconds of silence on a resync. Section 34 measured 2 ms as enough
-// to make the device discard its accumulated deviation.
-std::atomic<int> gResyncGapUs{4000};
-
-JNIEXPORT void JNICALL
-Java_be_mdw_bagosynths_NativeBridge_nativeSetInDepthMs(JNIEnv*, jobject, jint ms) {
-    gInDepthMs.store(ms > 0 ? ms : 24, std::memory_order_relaxed);
-}
-
-// The whole size-FIFO geometry in one call, so the resync and trim policies can
-// be swapped from a broadcast. -1 leaves a field alone.
-JNIEXPORT void JNICALL
-Java_be_mdw_bagosynths_NativeBridge_nativeSetFifo(JNIEnv*, jobject, jint len,
-                                                  jint preRoll, jint resync,
-                                                  jint inPkts, jint outPkts,
-                                                  jint midiUrbs, jint gapUs) {
-    if (midiUrbs >= 0) gMidiUrbs.store(midiUrbs, std::memory_order_relaxed);
-    if (gapUs >= 0) gResyncGapUs.store(gapUs > 0 ? gapUs : 1, std::memory_order_relaxed);
-    if (outPkts > 0) gOutPktsPerUrb.store(outPkts, std::memory_order_relaxed);
-    if (len > 0) gFifoLen.store(len, std::memory_order_relaxed);
-    if (preRoll > 0) gFifoPreRoll.store(preRoll, std::memory_order_relaxed);
-    if (resync >= 0) gFifoResync.store(resync, std::memory_order_relaxed);
-    if (inPkts > 0) gInPktsPerUrb.store(inPkts, std::memory_order_relaxed);
-}
-
-// Live, and deliberately not part of nativeSetFifo: that call's fields are read
-// when the transport starts, and an A/B of a policy wants to be switchable
-// under a running stream rather than across a restart that changes other things
-// too.
-JNIEXPORT void JNICALL
-Java_be_mdw_bagosynths_NativeBridge_nativeSetEmptyResync(JNIEnv*, jobject, jint on) {
-    engine().usbOut().setEmptyResync(on != 0);
-}
-
-JNIEXPORT void JNICALL
-Java_be_mdw_bagosynths_NativeBridge_nativeSetUsbTone(JNIEnv*, jobject, jfloat hz) {
-    engine().setUsbTone(hz);
-}
-
-JNIEXPORT void JNICALL
-Java_be_mdw_bagosynths_NativeBridge_nativeDumpUsbTrace(JNIEnv* env, jobject, jstring path) {
-    const char* p = env->GetStringUTFChars(path, nullptr);
-    if (p != nullptr) {
-        engine().dumpUsbTrace(p);
-        env->ReleaseStringUTFChars(path, p);
-    }
-}
-
-JNIEXPORT void JNICALL
-Java_be_mdw_bagosynths_NativeBridge_nativeHoldOut(JNIEnv*, jobject, jint us,
-                                                  jint count, jint every) {
-    engine().holdUsbOut(us, count, every);
+Java_be_mdw_bagosynths_NativeBridge_nativeSetUsbHostDevice(JNIEnv*, jobject, jint id) {
+    gHostDevice.store(id, std::memory_order_relaxed);
 }
 
 JNIEXPORT void JNICALL
@@ -776,14 +695,13 @@ Java_be_mdw_bagosynths_NativeBridge_nativeGetStats(JNIEnv* env, jobject) {
             s.stalledSeconds,                        // 24
             static_cast<jfloat>(s.timestampOk),      // 25
             static_cast<jfloat>(s.streamState),      // 26
-            // Direct USB. usbDeficitMs is the one to watch: wall time minus
-            // audio actually put on the wire. A constant is healthy; growth is
-            // a hole, however well everything else reads.
+            // Direct USB. Holds are short silences by design; altErrors are
+            // holds that could not empty the device's FIFO and must stay 0.
             static_cast<jfloat>(s.usbActive),        // 27
             static_cast<jfloat>(s.usbRunning),       // 28
             s.usbDeficitMs,                          // 29
-            static_cast<jfloat>(s.usbLate),          // 30
-            static_cast<jfloat>(s.usbStarved),       // 31
+            static_cast<jfloat>(s.usbHolds),         // 30
+            static_cast<jfloat>(s.usbAltErrors),     // 31
             static_cast<jfloat>(s.usbErrors),        // 32
             s.usbFeedbackRate,                       // 33
             s.usbMaxGapMs,                           // 34
@@ -928,6 +846,11 @@ Java_be_mdw_bagosynths_NativeBridge_nativeStartUsbAudio(JNIEnv* env, jobject, ji
     if (c == nullptr) return errString(env, "no configuration");
     const usb::AudioOutPlan p = usb::planAudioOut(*c);
     if (!p.ok) return errString(env, p.why);
+    // The transport echoes the device's own asks (UsbAudioOut.h); a device
+    // without implicit feedback has none to echo.
+    if (p.feedback != usb::Feedback::Implicit) {
+        return errString(env, "direct USB needs an implicit-feedback device; use ALSA");
+    }
 
     // --- idle first -----------------------------------------------------------
     // Whatever streamed here before -- the kernel, or the DSP behind it -- may
@@ -936,7 +859,7 @@ Java_be_mdw_bagosynths_NativeBridge_nativeStartUsbAudio(JNIEnv* env, jobject, ji
     // zero-bandwidth setting, before the clock is touched: the order
     // snd-usb-audio uses, and the one devices are tested against.
     setAlt(fd, p.interfaceNumber, 0);
-    if (p.feedback == usb::Feedback::Implicit) setAlt(fd, p.feedbackInterface, 0);
+    setAlt(fd, p.feedbackInterface, 0);
 
     // --- the rate -----------------------------------------------------------
     std::vector<uint32_t> rates = p.discreteRates;
@@ -966,8 +889,7 @@ Java_be_mdw_bagosynths_NativeBridge_nativeStartUsbAudio(JNIEnv* env, jobject, ji
     if (!setAlt(fd, p.interfaceNumber, p.alt)) {
         return errString(env, "SET_INTERFACE on the playback interface failed");
     }
-    if (p.feedback == usb::Feedback::Implicit &&
-        !setAlt(fd, p.feedbackInterface, p.feedbackAlt)) {
+    if (!setAlt(fd, p.feedbackInterface, p.feedbackAlt)) {
         setAlt(fd, p.interfaceNumber, 0);
         return errString(env, "SET_INTERFACE on the feedback interface failed");
     }
@@ -976,49 +898,33 @@ Java_be_mdw_bagosynths_NativeBridge_nativeStartUsbAudio(JNIEnv* env, jobject, ji
     UsbAudioOut::Config cfg;
     cfg.fd = fd;
     cfg.highSpeed = highSpeed(fd);
+    cfg.outIface = p.interfaceNumber;
+    cfg.outAlt = p.alt;
     cfg.outEp = p.out.address;
     cfg.outMaxPacket = p.out.bytesPerService();
     cfg.outInterval = p.out.interval;
-    cfg.feedback = static_cast<int>(p.feedback);
-    cfg.fbEp = p.feedbackEp.address;
-    cfg.fbMaxPacket = p.feedbackEp.bytesPerService();
-    cfg.fbInterval = p.feedbackEp.interval;
-    if (p.feedback == usb::Feedback::Implicit) {
-        // The capture side's own frame size, which need not match playback's.
-        if (const auto* in = c->find(p.feedbackInterface, p.feedbackAlt)) {
-            cfg.fbFrameBytes = std::max(1, in->channels) * std::max(1, in->subslotBytes);
-        }
+    cfg.inIface = p.feedbackInterface;
+    cfg.inAlt = p.feedbackAlt;
+    cfg.inEp = p.feedbackEp.address;
+    cfg.inMaxPacket = p.feedbackEp.bytesPerService();
+    // The capture side's own frame size, which need not match playback's.
+    if (const auto* in = c->find(p.feedbackInterface, p.feedbackAlt)) {
+        cfg.inFrameBytes = std::max(1, in->channels) * std::max(1, in->subslotBytes);
     }
     cfg.channels = p.channels;
     cfg.subslotBytes = p.subslotBytes;
     cfg.rate = static_cast<int>(rate);
-    cfg.bufferMs = bufferMs;
-    // THE LAST BIG STRUCTURAL DIFFERENCE FROM usbhost, and it has never been
-    // varied. usbhost queues 8 IN URBs, 16 ms; this queues 512, 1024 ms. That
-    // is 64x the isochronous IN ring for the controller to walk every frame,
-    // on the same device as the OUT endpoint that must not miss its deadline.
-    // Settable so it can be A/B'd against usbhost's own depth.
-    cfg.inBufferMs = gInDepthMs.load(std::memory_order_relaxed);
-    // ONE PACKET PER OUT URB, EIGHT PER IN URB. Not symmetry, and not taste:
-    // the OUT number buys slack and the IN number saves wake-ups.
-    //
-    // Slack -- how long this process may be away before the wire goes silent --
-    // is `(urbs - 1) x packets`, measured exactly linear. At the same 8 ms of
-    // latency, 8x1 / 4x2 / 2x4 give 7 / 6 / 4 ms of it, so the finest division
-    // of the same depth is simply the best one. The old 2 came with a note that
-    // 1 ms URBs "are worse", which was measured against a transport that
-    // invented a size when it fell behind; this one cannot.
-    cfg.packetsPerUrb = gOutPktsPerUrb.load(std::memory_order_relaxed);
-    cfg.inPacketsPerUrb = gInPktsPerUrb.load(std::memory_order_relaxed);
-    cfg.fifoLength = gFifoLen.load(std::memory_order_relaxed);
-    cfg.fifoPreRoll = gFifoPreRoll.load(std::memory_order_relaxed);
-    cfg.fifoResync = gFifoResync.load(std::memory_order_relaxed) != 0;
-    cfg.resyncGapUs = gResyncGapUs.load(std::memory_order_relaxed);
+    // The buffer is the queue: one packet per service interval.
+    const double periodUs = (cfg.highSpeed ? 125.0 : 1000.0) *
+                            (1 << (std::clamp<int>(p.out.interval, 1, 16) - 1));
+    cfg.depth = std::max(1, static_cast<int>(std::lround(bufferMs * 1000.0 / periodUs)));
+    cfg.profile = UsbAudioOut::profileFor(d.vendorId, d.productId);
+    cfg.hostDeviceId = gHostDevice.load(std::memory_order_relaxed);
 
     std::string startErr;
     if (!engine().startUsb(cfg, &startErr)) {
         setAlt(fd, p.interfaceNumber, 0);
-        if (p.feedback == usb::Feedback::Implicit) setAlt(fd, p.feedbackInterface, 0);
+        setAlt(fd, p.feedbackInterface, 0);
         return errString(env, startErr.empty() ? "direct USB start failed" : startErr);
     }
     return nullptr;
@@ -1090,11 +996,50 @@ Java_be_mdw_bagosynths_NativeBridge_nativeStartUsbMidi(JNIEnv* env, jobject, jin
         return errString(env, "SET_INTERFACE to the UMP alternate setting failed");
     }
     if (!engine().midi().openUsb(fd, m.in.address, m.in.maxPacket(), m.ump, port,
-                                 &engine().usbOut(),
-                                 gMidiUrbs.load(std::memory_order_relaxed))) {
+                                 &engine().usbOut(), kMidiUrbs)) {
         return errString(env, "could not start the MIDI reader");
     }
+    // The OUT endpoint of the same streaming interface, if it has one: MIDI 1.0
+    // only, so a UMP setting leaves the writer stopped.
+    if (!m.ump) {
+        if (const usb::AltSetting* a = c->find(m.interfaceNumber, m.alt < 0 ? 0 : m.alt)) {
+            for (const usb::Endpoint& e : a->endpoints) {
+                if (!e.isIn() && (e.transferType() == 2 || e.transferType() == 3)) {
+                    engine().midi().usbOut().start(fd, e.address, e.maxPacket(), port < 0 ? 0 : port);
+                    break;
+                }
+            }
+        }
+    }
     return nullptr;
+}
+
+// Sends MIDI bytes (complete messages, SysEx included) to the device's MIDI
+// OUT endpoint in a direct-USB mode. Returns bytes accepted, or -errno.
+JNIEXPORT jint JNICALL
+Java_be_mdw_bagosynths_NativeBridge_nativeUsbMidiSend(JNIEnv* env, jobject, jbyteArray data) {
+    const jsize n = env->GetArrayLength(data);
+    std::vector<uint8_t> bytes(static_cast<size_t>(n));
+    env->GetByteArrayRegion(data, 0, n, reinterpret_cast<jbyte*>(bytes.data()));
+    return engine().midi().usbOut().send(bytes.data(), static_cast<int>(n));
+}
+
+// TEST: stall the USB reap loop once for `ms` (a starved IN queue).
+JNIEXPORT void JNICALL
+Java_be_mdw_bagosynths_NativeBridge_nativeUsbTestStall(JNIEnv*, jobject, jint ms) {
+    engine().usbOut().testStall(ms);
+}
+
+// One complete SysEx message received on the direct-USB MIDI input, or null.
+JNIEXPORT jbyteArray JNICALL
+Java_be_mdw_bagosynths_NativeBridge_nativeUsbSysexDrain(JNIEnv* env, jobject) {
+    uint8_t buf[4096];
+    int n;
+    do { n = engine().midi().usb().drainSysex(buf, sizeof buf); } while (n < 0);
+    if (n == 0) return nullptr;
+    jbyteArray out = env->NewByteArray(n);
+    env->SetByteArrayRegion(out, 0, n, reinterpret_cast<const jbyte*>(buf));
+    return out;
 }
 
 JNIEXPORT void JNICALL

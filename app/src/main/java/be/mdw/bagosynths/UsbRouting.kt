@@ -107,70 +107,25 @@ object ModeRule {
 }
 
 /**
- * The direct-mode buffer choices, in milliseconds of transport slack.
+ * The direct-mode buffer choices: the OUT queue depth in milliseconds, one
+ * packet each on the CP-88. This is the whole of the transport's latency.
  *
- * 4 ms since 2026-09-23, down from 8. This is the latency the direct-USB path
- * is actually made of -- unlike the AAudio buffer it is ours end to end, so it
- * is the one knob here worth the smallest value that survives.
+ * Depth does not decide whether the device latches -- the transport cannot
+ * latch it at any depth -- only how often it HOLDS: a hold is a ~10 ms silence
+ * taken whenever the reap thread was too late to prove the next packet joins
+ * the stream without a gap. Measured 2026-10-04 on the tablet, CP-88 plugged in
+ * directly, at 6 ms, judged at the CP-88's line out:
  *
- * IT WAS ALSO A LATCH EXPERIMENT, AND THAT QUESTION IS NOW CLOSED. 4 ms was one
- * of two suspects for THE LATCH, the other being the unsmoothed gain step. Both
- * have since been tested directly: the depth was swept against the fault and it
- * latches 3 of 3 at 8 ms as readily as at 4, with one of those trials at
- * `starved=0 late=33 deficit=70 ms` -- an essentially undisturbed transport.
- * Depth shifts how often a disturbance appears; it is not what the device
- * objects to. See MEASUREMENTS.md 5j-5l.
+ *     reap loop on its own thread, nice -19:   13 dropouts a minute at rest
+ *     reap loop on an AAudio callback, FIFO:    0 at rest, ~2 a minute under
+ *                                               64-voice sweeps on every engine
  *
- * So this value stands on latency alone, which is the reason to want it.
+ * The second is what runs (UsbAudioOut::Config::hostDeviceId). 4 ms is the
+ * floor the proof allows at all and is not offered; 8 ms buys margin under
+ * load for 2 ms of key-to-note latency.
  */
 object UsbBuffers {
-    // 16 ms is gone: it is more latency than a player will accept, so offering
-    // it only invites choosing it. 6 ms is in because it was never actually
-    // testable before -- the debug route silently ignored any value outside
-    // this list, so a sweep that asked for 6 ms quietly ran at 8 and was
-    // written down as a 6 ms result.
-    //
-    // Measured under a deliberately brutal stress (90 rounds of 64 voices
-    // against 16 CPU spinners), 2026-09-23:
-    //   4 ms  survived 0 of 3, deficit 3335-4467 ms
-    //   8 ms  survived 2 of 4, deficit 1296-1949 ms
-    // 4 ms stays a choice because that stress is far past playing, but it is
-    // the worst of them and the gap is structural rather than statistical: the
-    // endpoint holds half as much audio when the reap thread is descheduled
-    // for 100-300 ms, so it runs dry about twice as often.
-    val choicesMs = intArrayOf(4, 6, 8)
-    // 6 ms: three URBs of two packets. A middle ground, and it needs one,
-    // because 4 ms measured as the worst of the three and 8 ms is more delay
-    // than a player should pay by default.
-    //
-    // Honest about its status: 6 ms had NEVER been measured when it was chosen
-    // as the default. Every earlier attempt to test it silently ran at 8,
-    // because the debug route ignored any value outside choicesMs without
-    // saying so. Whatever numbers sit beside it now were taken after that was
-    // fixed.
-    // 6 ms since 2026-09-25, and for the first time on this list it is a
-    // MEASURED choice rather than a guess -- the note above admits 6 had never
-    // been tested when it was last the default.
-    //
-    // Two things changed the arithmetic. One packet per URB, so 6 ms is SIX
-    // URBs with five staying queued -- 5 ms of slack, where the old 6 ms had 4
-    // and the old 4 ms had 2. And the transport now answers a reap thread that
-    // has fallen behind by breaking the stream on purpose, so slack no longer
-    // buys "audio not lost", it buys FEWER DELIBERATE GAPS.
-    //
-    // That is what it was chosen on. Intensive piano, no spinners, 60 rounds of
-    // 16 voices sweeping cold Salamander samples:
-    //
-    //     4 ms (3 ms slack)  20 resyncs, 213 ms of silence
-    //     6 ms (5 ms slack)   8 resyncs,  76 ms of silence
-    //     8 ms (7 ms slack)   2 resyncs,  49 ms of silence
-    //
-    // And in Michiel's own playing, 1,9 resyncs per minute at 4 ms against 1,1
-    // at 6 ms. 8 ms is quieter still and stays on the list, but 6 ms is where
-    // the curve turns and it costs 2 ms of key-to-note latency, not 4.
-    //
-    // Latching is NOT what decides this: 4x1, 6x1, 8x1 and 4x2 ms all measured
-    // 0 of 10 with the resync policy. This knob is about seams, not the wedge.
+    val choicesMs = intArrayOf(6, 8)
     const val DEFAULT_MS = 6
 }
 

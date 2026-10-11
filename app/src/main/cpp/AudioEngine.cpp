@@ -440,12 +440,11 @@ bool AudioEngine::startUsb(const UsbAudioOut::Config& config, std::string* error
     mRenderRun.store(true, std::memory_order_release);
     mRenderThread = std::thread([this] { renderLoop(); });
 
-    if (!mUsbOut.start(config, &AudioEngine::pullBytesForUsb,
-                       &AudioEngine::flushBytesForUsb, this, error)) {
+    if (!mUsbOut.start(config, &AudioEngine::pullBytesForUsb, this, error)) {
         closeStream();
         return false;
     }
-    LOGI("direct USB output running: %d Hz, %d ms", config.rate, config.bufferMs);
+    LOGI("direct USB output running: %d Hz, depth %d", config.rate, mUsbOut.depth());
     return true;
 }
 
@@ -984,6 +983,18 @@ void AudioEngine::updateInstrumentGates(int frames) {
 // the ring or the parser did, and ringFull/short/undec/sinkFull say which.
 void AudioEngine::logMidiChain() const {
     const UsbMidiIn& u = mMidi.usb();
+    uint32_t mon[64];
+    const int nm = u.drainMonitor(mon, 64);
+    if (nm > 0) {
+        char line[64 * 10 + 1];
+        int p = 0;
+        for (int i = 0; i < nm && p < static_cast<int>(sizeof line) - 10; ++i) {
+            const int len = static_cast<int>(mon[i] >> 24);
+            p += snprintf(line + p, sizeof line - p, len >= 3 ? " %02X%02X%02X" : len == 2 ? " %02X%02X" : " %02X",
+                          (mon[i] >> 16) & 0xFF, (mon[i] >> 8) & 0xFF, mon[i] & 0xFF);
+        }
+        LOGI("midi monitor:%s", line);
+    }
     const uint64_t on = u.noteOns(), off = u.noteOffs();
     const uint64_t gotOn = mMidi.noteOnsOut(), gotOff = mMidi.noteOffsOut();
     if (on == 0 && off == 0 && gotOn == 0 && gotOff == 0) return;   // nothing played
@@ -1547,61 +1558,46 @@ AudioEngine::Stats AudioEngine::stats() const {
         // never rebuild it.
         s.running = (s.running != 0 && s.usbRunning != 0) ? 1 : 0;
         s.sampleRate = static_cast<int32_t>(rate);
-        s.burstFrames = mUsbOut.framesPerUrb();
-        s.bufferFrames = mUsbOut.framesPerUrb() * mUsbOut.urbCount();
-        // What sits between the render thread and the wire: the URBs in flight
-        // plus the ring's reserve. There is no HAL latency to ask for here, and
-        // nothing hidden below it.
+        // One packet is the burst; the queue is the depth.
+        s.burstFrames = static_cast<int32_t>(std::lround(mUsbOut.nominalFrames()));
+        s.bufferFrames = static_cast<int32_t>(std::lround(mUsbOut.nominalFrames() * mUsbOut.depth()));
+        // What sits between the render thread and the wire: the queued packets
+        // plus the ring's reserve. There is no HAL latency to ask for here.
         s.latencyMs = static_cast<float>(1000.0 * s.bufferFrames / rate) +
                       mRingFillMs.load(std::memory_order_relaxed);
         s.sharingMode = -1;
         s.performanceMode = -1;
         s.usesAAudio = 0;
         s.usbDeficitMs = u.deficitMs;
-        s.usbLate = static_cast<int32_t>(u.late);
-        s.usbStarved = static_cast<int32_t>(u.starved);
-        s.usbErrors = static_cast<int32_t>(u.outErrors + u.inErrors);
+        s.usbHolds = static_cast<int32_t>(u.holds);
+        s.usbAltErrors = static_cast<int32_t>(u.altErrors);
+        s.usbErrors = static_cast<int32_t>(u.outLost + u.inBad);
         s.usbFeedbackRate = u.feedbackRate;
         s.usbMaxGapMs = u.maxGapMs;
 
-        // THE HOLE LOG. A latch is an EVENT -- a burst of late URBs inside a
-        // few tens of milliseconds -- and the 10 s heartbeat below averages it
-        // into invisibility: by the time it prints, `late` has stopped moving
-        // and all that is left is a number that has always been there. This
-        // fires on the TRANSITION instead, at whatever rate stats() is polled
-        // (4 Hz from the UI), which is what makes the moment of the latch
-        // visible at all.
-        //
-        // Costs nothing when nothing is wrong: three comparisons.
+        // EVERY HOLD, as it happens, with why. A hold is a short silence by
+        // design; the reasons say whether this thread was late (proof, gap,
+        // slow burst) or the wire failed (lost, bad ask).
         {
-            const int64_t lastLate = mUsbLastLate.exchange(u.late, std::memory_order_relaxed);
-            const int64_t lastErr = mUsbLastErrors.exchange(
-                    u.outErrors + u.inErrors, std::memory_order_relaxed);
-            const float lastDef = mUsbLastDeficitMs.exchange(u.deficitMs, std::memory_order_relaxed);
-            const float jump = u.deficitMs - lastDef;
-            if (u.late != lastLate || (u.outErrors + u.inErrors) != lastErr || jump > 2.0f) {
-                // flightUs and inPkt belong HERE and not only in the health
-                // line, which prints every 10 s while both of these reset on
-                // every stats() call a quarter of a second apart -- so the
-                // health line shows one arbitrary 250 ms window and the
-                // interesting one is almost always missed. A hole fires AT the
-                // transition, which is the window that matters: on 2026-09-23
-                // the run that latched showed flightUs 2057/2025 against a
-                // full-queue ~7500, with IN delivery collapsed to 54 packets
-                // per 250 ms against ~250, in the same interval.
-                LOGI("usb hole: late %lld (+%lld) errors %lld (+%lld) deficit %.1f ms (%+.1f) "
-                     "maxGap %.1f ms starved %lld inPkt %lld inLost %lld "
-                     "frames %lld voices %d",
-                     static_cast<long long>(u.late),
-                     static_cast<long long>(u.late - lastLate),
-                     static_cast<long long>(u.outErrors + u.inErrors),
-                     static_cast<long long>((u.outErrors + u.inErrors) - lastErr),
-                     static_cast<double>(u.deficitMs), static_cast<double>(jump),
-                     static_cast<double>(u.maxGapMs),
-                     static_cast<long long>(u.starved),
-                     static_cast<long long>(u.inPackets),
-                     static_cast<long long>(u.inLostPackets),
-                     static_cast<long long>(u.frames), s.activeVoices);
+            const int64_t lastHolds = mUsbLastHolds.exchange(u.holds, std::memory_order_relaxed);
+            const int64_t lastErr = mUsbLastErrors.exchange(u.outLost + u.inBad,
+                                                            std::memory_order_relaxed);
+            // Only increases: a transport restart starts its counters at 0.
+            if (u.holds > lastHolds || u.outLost + u.inBad > lastErr) {
+                LOGI("usb hold: %lld (+%lld) proof %lld gap %lld lost %lld badask %lld "
+                     "slowburst %lld starve %lld  altErr %lld  outLost %lld inBad %lld  maxGap %.1f ms "
+                     "voices %d",
+                     static_cast<long long>(u.holds),
+                     static_cast<long long>(u.holds - lastHolds),
+                     static_cast<long long>(u.holdsBy[UsbAudioOut::kHoldProof]),
+                     static_cast<long long>(u.holdsBy[UsbAudioOut::kHoldGap]),
+                     static_cast<long long>(u.holdsBy[UsbAudioOut::kHoldLost]),
+                     static_cast<long long>(u.holdsBy[UsbAudioOut::kHoldBadAsk]),
+                     static_cast<long long>(u.holdsBy[UsbAudioOut::kHoldSlowBurst]),
+                     static_cast<long long>(u.holdsBy[UsbAudioOut::kHoldStarve]),
+                     static_cast<long long>(u.altErrors),
+                     static_cast<long long>(u.outLost), static_cast<long long>(u.inBad),
+                     static_cast<double>(u.maxGapMs), s.activeVoices);
             }
         }
 
@@ -1610,106 +1606,26 @@ AudioEngine::Stats AudioEngine::stats() const {
             mLastHealthLogAt.store(now, std::memory_order_relaxed);
             const std::string why = mUsbOut.fatal();
             LOGI("health usb %s  out=%.4f cb=%.4f voices=%d/%d frames=%lld deficit=%.1fms "
-                 "late=%lld starved=%lld errors=%lld fb=%.1fHz ringUnder=%lld concealed=%lld ringTarget=%.1fms "
-                 "inSize=%d..%d/%lld fbDrift=%lld fbDrop=%lld fbClamp=%lld "
-                 "inLost=%lld zeroAvoided=%lld shaped=%lld bal=%lld/%lld rise=%lld "
-                 "fifo=%d..%d preRoll=%lld resync=%lld trim=%lld silence=%lld "
-                 "outShort=%lld outOdd=%lld outDry=%lld outEmpty=%lld%s%s",
+                 "holds=%lld restarts=%lld altErr=%lld queued=%d/%d descent=%lld "
+                 "fb=%.1fHz maxGap=%.1fms ringUnder=%lld concealed=%lld ringTarget=%.1fms%s%s",
                  s.usbRunning ? "ok" : "DOWN",
                  static_cast<double>(s.outputPeak),
                  static_cast<double>(mCallbackPeak.load(std::memory_order_relaxed)),
                  s.activeVoices, mPeakVoices.load(std::memory_order_relaxed),
-                 static_cast<long long>(u.frames),
-                 static_cast<double>(u.deficitMs), static_cast<long long>(u.late),
-                 static_cast<long long>(u.starved),
-                 static_cast<long long>(u.outErrors + u.inErrors),
-                 static_cast<double>(u.feedbackRate),
+                 static_cast<long long>(u.frames), static_cast<double>(u.deficitMs),
+                 static_cast<long long>(u.holds), static_cast<long long>(u.restarts),
+                 static_cast<long long>(u.altErrors), u.queued, mUsbOut.depth(),
+                 // Frames left out to bring the device's FIFO to the operating
+                 // point: about 112 per restart on the CP-88.
+                 static_cast<long long>(u.descentFrames),
+                 static_cast<double>(u.feedbackRate), static_cast<double>(u.maxGapMs),
                  static_cast<long long>(mRingUnderruns.load(std::memory_order_relaxed)),
-                 // FRAMES OF AUDIO THE RENDERER DID NOT PRODUCE IN TIME, and
-                 // the direct measure of chopping. It is a RENDER-side fault,
-                 // not a transport one: a late render leaves the byte ring
-                 // short, the reap thread still sends a correctly sized packet,
-                 // and what is in it is concealment. So this number moving is
-                 // sfizz reaching for a sample that is not in memory yet, and
-                 // no amount of USB buffer fixes it -- only a deeper render
-                 // reserve, which `ringTarget` beside it is already adapting.
+                 // FRAMES OF AUDIO THE RENDERER DID NOT PRODUCE IN TIME: a
+                 // render-side fault, concealed in the packet the device asked
+                 // for. Only a deeper render reserve helps, and `ringTarget`
+                 // beside it is already adapting.
                  static_cast<long long>(mConcealedTotal.load(std::memory_order_relaxed)),
-                 // The adaptive reserve, in milliseconds. Watching it is the
-                 // only way to see the growth and shrink policy behave.
                  1000.0 * mTargetFill.load(std::memory_order_relaxed) / currentRate(),
-                 // -1..-1 means NO IN packets arrived in this interval. The
-                 // old guard keyed off inSizeMax and so printed 0..0 for that
-                 // -- indistinguishable from a device delivering nothing but
-                 // zero-length packets, which is precisely the signature this
-                 // probe exists to catch.
-                 u.inPackets ? u.inSizeMin : -1,
-                 u.inPackets ? u.inSizeMax : -1,
-                 static_cast<long long>(u.inPackets),
-                 static_cast<long long>(u.inFramesTotal - u.frames),
-                 static_cast<long long>(u.fbDrop),
-                 static_cast<long long>(u.fbClamp),
-                 // IN packets the device sent that no URB was queued to catch:
-                 // requests destroyed before they were read. Should be zero.
-                 static_cast<long long>(u.inLostPackets),
-                 // MUST be 0. A single zero-length OUT packet wedges the
-                 // device permanently, so this counts near misses.
-                 static_cast<long long>(u.zeroAvoided),
-                 // OUT packets a deliberate size or bias injection rewrote.
-                 // Non-zero means a trial is running and the stream is NOT
-                 // representative of normal operation.
-                 static_cast<long long>(u.shaped),
-                 // THE counter for this device: cumulative frames sent minus
-                 // frames asked, and the worst it reached this interval. Sending
-                 // MORE than was asked wedges the CP-88 at about +170 frames;
-                 // sending less is free. Both of these must stay negative.
-                 static_cast<long long>(u.balance),
-                 // balPeak's "no samples" sentinel is INT64_MIN, and an
-                 // interval in which not one IN packet arrived printed it raw:
-                 // bal=.../-9223372036854775808. Report the running balance
-                 // instead, which is the honest value for an empty interval.
-                 static_cast<long long>(u.inPackets ? u.balPeak : u.balance),
-                 // How far the balance climbed back off its own floor: the
-                 // only part of the deficit the device can actually feel,
-                 // because its FIFO stops at empty and ours does not.
-                 static_cast<long long>(u.balRise),
-                 // THE PACKET-FRAMES FIFO, the depth it covered this interval.
-                 // It is the only accounting instrument this transport has.
-                 // Healthy is a narrow band near the pre-roll depth of 24.
-                 // Riding the cap of 48 means OUT is not keeping up with IN;
-                 // reaching 0 means the stream ran dry and restarted.
-                 u.inPackets ? u.fifoMin : -1,
-                 u.inPackets ? u.fifoMax : -1,
-                 // Times the OUT stream was withheld and restarted from the
-                 // pre-roll. One at start-up is normal and expected. More than
-                 // that is the transport refusing to invent a size, which is
-                 // the design working -- but each one is an audible gap and a
-                 // discarded render backlog, so the count is the thing to
-                 // watch under load.
-                 static_cast<long long>(u.preRolls),
-                 // Times a full FIFO forced a gap instead of catching up: the
-                 // host had fallen a whole FIFO behind, so the stream was cut
-                 // and restarted to make the device discard its accumulated
-                 // deviation. Each one is an audible seam, so this is the price
-                 // of the resync policy, in events.
-                 static_cast<long long>(u.resyncs),
-                 // Times a full FIFO was cut back on an OUT reap: asks that
-                 // arrived while nothing was going out.
-                 static_cast<long long>(u.outTrims),
-                 // Frames of pre-roll silence sent. Correctly sized packets of
-                 // zeroes while the render ring rebuilds, never zero-length.
-                 static_cast<long long>(u.silenceFrames),
-                 // What the controller says it PUT ON THE WIRE against what it
-                 // was asked for. Both must stay 0. A short packet, or one
-                 // that is not a whole number of frames, is the one fault no
-                 // other counter here can see.
-                 static_cast<long long>(u.outShort),
-                 static_cast<long long>(u.outOdd),
-                 // Times the OUT ring certainly emptied, so ISO_ASAP RESTARTED
-                 // the stream instead of resuming it. The count, not the
-                 // duration -- `deficit` is the duration and it does not
-                 // separate a run that latches from one that does not.
-                 static_cast<long long>(u.outDry),
-                 static_cast<long long>(u.outEmpty),
                  why.empty() ? "" : " fatal=", why.c_str());
             logMidiChain();
         }
@@ -2345,34 +2261,6 @@ uint32_t AudioEngine::pullBytes(uint8_t* dst, uint32_t want) {
 int AudioEngine::pullBytesForUsb(void* ctx, uint8_t* dst, int frames) {
     auto* self = static_cast<AudioEngine*>(ctx);
     return static_cast<int>(self->pullBytes(dst, static_cast<uint32_t>(std::max(0, frames))));
-}
-
-// THE OUT STREAM RESTARTED, so throw away what the ring is holding.
-//
-// Called on the reap thread at the end of a pre-roll, and it is the consumer
-// side of the ring doing the discarding -- mRingRead belongs to this thread, so
-// moving it forward to the write cursor is a plain store and needs no lock.
-//
-// Everything in the ring at this moment is audio that was due while the OUT
-// stream was silent. Playing it out now would put the whole gap back as added
-// latency and keep it there: the device absorbs about 110 frames, 2,7 ms, so
-// there is nowhere for a backlog to go but into delay that never comes off
-// again. Discarding it costs exactly the audio nobody heard anyway and puts the
-// instrument back at the live edge, which is the whole reason this app exists.
-//
-// The return value is how deep the producer wants to be before it is steady --
-// its own adaptive target -- and the transport sends correctly-sized silence
-// for that many frames while the renderer rebuilds.
-int AudioEngine::flushBytes() {
-    const uint32_t write = mRingWrite.load(std::memory_order_acquire);
-    mRingRead.store(write, std::memory_order_release);
-    mRingFillMs.store(0.0f, std::memory_order_relaxed);
-    mConcealedFrames = 0;
-    return static_cast<int>(mTargetFill.load(std::memory_order_relaxed));
-}
-
-int AudioEngine::flushBytesForUsb(void* ctx) {
-    return static_cast<AudioEngine*>(ctx)->flushBytes();
 }
 
 namespace {

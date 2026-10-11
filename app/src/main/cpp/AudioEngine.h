@@ -249,16 +249,15 @@ public:
         // --- direct USB --------------------------------------------------
         //
         // `usbDeficitMs` is wall-clock time minus the audio the controller
-        // says it put on the wire. It settles at a constant and STAYS there;
-        // growth is a hole -- milliseconds in which the device received
-        // nothing. It is the one choppiness measure on this path that cannot
-        // flatter itself, and it is how the screen-off latch of 2026-09-22 was
-        // seen coming (38 holes, 361 ms, then silence).
+        // says it put on the wire: it grows by the silence of every hold.
+        // `usbHolds` counts those -- each one a short silence by design, never
+        // a latch. `usbAltErrors` counts holds whose alt cycle was refused,
+        // the one number here that should never move.
         int32_t usbActive = 0;
         int32_t usbRunning = 0;
         float usbDeficitMs = 0.0f;
-        int32_t usbLate = 0;
-        int32_t usbStarved = 0;
+        int32_t usbHolds = 0;
+        int32_t usbAltErrors = 0;
         int32_t usbErrors = 0;
         float usbFeedbackRate = 0.0f;
         float usbMaxGapMs = 0.0f;
@@ -280,13 +279,6 @@ public:
     void setRenderPaused(bool paused) {
         mRenderPaused.store(paused, std::memory_order_relaxed);
     }
-    void injectUsbRawZero(int count) { mUsbOut.injectRawZero(count); }
-    void injectUsbSize(int count, int frames) { mUsbOut.injectSize(count, frames); }
-    void injectUsbBias(int count, int delta) { mUsbOut.injectBias(count, delta); }
-    void injectUsbStarve(int count) { mUsbOut.injectStarve(count); }
-    void setUsbTone(float hz) { mUsbOut.setTone(hz); }
-    void dumpUsbTrace(const char* path) { mUsbOut.dumpTrace(path); }
-    void holdUsbOut(int us, int count, int every) { mUsbOut.holdOut(us, count, every); }
 
     /// The rate the CHOSEN DEVICE declares, from AudioDeviceInfo. 0 = let
     /// AAudio decide. Takes effect on the next openStream().
@@ -363,8 +355,6 @@ private:
     /** Device-format bytes for the USB sink. Conceals a shortfall in place. */
     uint32_t pullBytes(uint8_t* dst, uint32_t want);
     static int pullBytesForUsb(void* ctx, uint8_t* dst, int frames);
-    int flushBytes();
-    static int flushBytesForUsb(void* ctx);
     /** Stereo float -> the endpoint's channel count and sample format. */
     void packForUsb(uint8_t* dst, const float* stereo, int frames);
     /** Conceal `missing` frames at `dst`, in the device's packed format. */
@@ -851,13 +841,10 @@ private:
     // the only place the count is sampled. See stats().
     mutable std::atomic<int> mPeakVoices{0};
 
-    // Previous sample of the USB transport's error counters, so stats() can log
-    // the TRANSITION rather than the running total. See the hole log in
-    // stats(): a latch is an event, and a total that stopped moving looks
-    // exactly like one that never moved.
-    mutable std::atomic<int64_t> mUsbLastLate{0};
+    // Previous sample of the USB transport's holds and errors, so stats() can
+    // log each one as it happens rather than a running total.
+    mutable std::atomic<int64_t> mUsbLastHolds{0};
     mutable std::atomic<int64_t> mUsbLastErrors{0};
-    mutable std::atomic<float> mUsbLastDeficitMs{0.0f};
 
     std::atomic<bool> mRunning{false};
     std::atomic<bool> mFlushDenormalsDone{false};

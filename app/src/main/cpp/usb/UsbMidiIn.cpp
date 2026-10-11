@@ -106,8 +106,8 @@ void UsbMidiIn::stop() {
         // completion still has to be reaped, and until it is, the kernel holds
         // a pointer to this exact `usbdevfs_urb`. Freeing here leaves that live
         // pointer behind, and the next REAPURB on this descriptor hands it to
-        // whoever reaps next -- which is the priming loop in
-        // UsbAudioOut::start(), one route change later.
+        // whoever reaps next -- the audio transport's loop, one route change
+        // later.
         //
         // Caught by AddressSanitizer on 2026-09-25: heap-use-after-free, READ
         // of size 8 on the usb-routing thread, allocated at UsbMidiIn.cpp:56,
@@ -120,7 +120,7 @@ void UsbMidiIn::stop() {
         // tiny -- one urb struct plus one wMaxPacketSize buffer per URB, per
         // MIDI restart -- and a retired URB handed to a reaper is now merely
         // ignored rather than fatal, because it is still valid memory and
-        // UsbAudioOut::dispatch checks ownership before casting.
+        // UsbAudioOut::reap checks ownership before casting.
         //
         // They are released in the destructor, by which time this process has
         // closed the descriptor and the kernel can hold no reference at all.
@@ -135,6 +135,20 @@ void UsbMidiIn::push(const bagosynths::usbmidi::Message& m) {
     if (mPort >= 0 && m.port != mPort) {
         mFiltered.fetch_add(1, std::memory_order_relaxed);
         return;
+    }
+    for (int i = 0; i < m.length && i < 3; ++i) sysexByte(m.bytes[i]);
+    if (m.length >= 1) {
+        const uint8_t st = m.bytes[0];
+        const bool note = (st & 0xF0u) == 0x80u || (st & 0xF0u) == 0x90u;
+        if (!note && st >= 0xA0u && st < 0xF8u) {
+            const uint32_t w = mMonitorWrite.load(std::memory_order_relaxed);
+            const uint32_t r = mMonitorRead.load(std::memory_order_acquire);
+            if (w - r < kMonitor) {
+                mMonitor[w % kMonitor] = (uint32_t(m.length) << 24) | (uint32_t(st) << 16) |
+                                         (uint32_t(m.bytes[1]) << 8) | m.bytes[2];
+                mMonitorWrite.store(w + 1, std::memory_order_release);
+            }
+        }
     }
     // Counted BEFORE the ring, so "the wire delivered it" and "the engine got
     // it" are separate facts rather than one.
@@ -157,6 +171,61 @@ void UsbMidiIn::push(const bagosynths::usbmidi::Message& m) {
     rec[2] = m.bytes[1];
     rec[3] = m.bytes[2];
     mWrite.store(w + 1, std::memory_order_release);
+}
+
+void UsbMidiIn::sysexByte(uint8_t b) {
+    if (b == 0xF0) {
+        mSysexLen = 0;
+        mSysexOverflow = false;
+    } else if (mSysexLen < 0 || b >= 0xF8) {
+        return;                              // not in a SysEx, or realtime inside one
+    } else if (b >= 0x80 && b != 0xF7) {
+        mSysexLen = -1;                      // a status byte cut it short
+        return;
+    }
+    if (mSysexLen < kSysexMax) mSysexBuf[mSysexLen++] = b;
+    else mSysexOverflow = true;
+    if (b == 0xF7) {
+        sysexCommit();
+        mSysexLen = -1;
+    }
+}
+
+void UsbMidiIn::sysexCommit() {
+    const uint32_t need = static_cast<uint32_t>(mSysexLen) + 2;
+    const uint32_t w = mSysexWrite.load(std::memory_order_relaxed);
+    const uint32_t r = mSysexRead.load(std::memory_order_acquire);
+    if (mSysexOverflow || kSysexRing - (w - r) < need) {
+        mSysexDropped.fetch_add(1, std::memory_order_relaxed);
+        return;
+    }
+    mSysexRing[w % kSysexRing] = static_cast<uint8_t>(mSysexLen & 0xFF);
+    mSysexRing[(w + 1) % kSysexRing] = static_cast<uint8_t>(mSysexLen >> 8);
+    for (int i = 0; i < mSysexLen; ++i) mSysexRing[(w + 2 + i) % kSysexRing] = mSysexBuf[i];
+    mSysexWrite.store(w + need, std::memory_order_release);
+}
+
+int UsbMidiIn::drainSysex(uint8_t* out, int max) const {
+    uint32_t r = mSysexRead.load(std::memory_order_relaxed);
+    const uint32_t w = mSysexWrite.load(std::memory_order_acquire);
+    if (r == w) return 0;
+    const int len = mSysexRing[r % kSysexRing] | (mSysexRing[(r + 1) % kSysexRing] << 8);
+    int result = -1;
+    if (len <= max) {
+        for (int i = 0; i < len; ++i) out[i] = mSysexRing[(r + 2 + i) % kSysexRing];
+        result = len;
+    }
+    mSysexRead.store(r + 2 + static_cast<uint32_t>(len), std::memory_order_release);
+    return result;
+}
+
+int UsbMidiIn::drainMonitor(uint32_t* out, int max) const {
+    uint32_t r = mMonitorRead.load(std::memory_order_relaxed);
+    const uint32_t w = mMonitorWrite.load(std::memory_order_acquire);
+    int n = 0;
+    while (r != w && n < max) out[n++] = mMonitor[r++ % kMonitor];
+    mMonitorRead.store(r, std::memory_order_release);
+    return n;
 }
 
 int UsbMidiIn::drain(uint8_t* out, int max) {

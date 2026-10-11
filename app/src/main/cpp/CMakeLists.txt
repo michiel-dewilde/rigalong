@@ -240,6 +240,7 @@ add_library(bagosynths SHARED
         RealtimePriority.cpp
         usb/UsbAudioOut.cpp
         usb/UsbMidiIn.cpp
+        usb/UsbMidiOut.cpp
         usb/UsbControl.cpp
         Synth.cpp
         graph/Nodes.cpp
@@ -286,6 +287,7 @@ target_link_libraries(bagosynths
         surge::surge-common
         sfizz::sfizz
         oboe::oboe
+        aaudio     # the direct-USB transport borrows an AAudio callback thread
         amidi      # AMidi: native MIDI, API 29+
         android
         log)

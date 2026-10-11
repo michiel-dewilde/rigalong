@@ -15,6 +15,69 @@ stated where it applies — improving *an* outcome is not the same as improving
 
 ---
 
+## Settled 2026-10-04 -- the latch understood, the transport replaced
+
+The latch is understood (workspace `CP88-USB-AUDIO.md`): the CP-88's OUT FIFO
+dies when a packet lands at one narrow level, when a packet is not whole frames,
+or when it is fed past its top; and behind a hub, cancelling an OUT URB on the
+wire can deliver exactly such a cut packet. `UsbAudioOut` is now fbx, ported
+from `tools/fbx` without its test instrumentation, and cannot reach any of
+those. So everything below that was kept "until the latch is understood" has
+been decided.
+
+### DELETED with the old transport
+
+| what | why |
+|---|---|
+| the size FIFO, pre-roll, resync gap, trim, `fifoResync`, empty-queue resync, and their `FIFO` / `DRYRESYNC` / `INDEPTH` broadcasts | Replaced by fbx's rules: echo exactly, prove every append, hold and empty the FIFO with an alt cycle. A timed gap does NOT empty this FIFO (a stopped CP-88 keeps its frames for at least 3 s). |
+| the render-ring flush and its pre-roll silence | The render thread fills on demand, so a hold or a descent never leaves a backlog to discard. |
+| `ZLP`, `SIZE`, `BIAS`, `STARVE`, `HOLD`, `TONE` injectors | Reproducers for faults now proven and measured to the frame on the workspace bench (`tools/cp88bench`), which is where such tests belong. The product cannot produce any of them. |
+| `DUMP` wire trace | Answered; the Pi Zero mock (`tools/cp88mock`) now records the wire itself. It also shadowed the graph `DUMP`, which works again. |
+| `bal` / `rise` / `fifo`, `inSize`, `fbDrop`, `fbClamp`, `zeroAvoided`, `outShort` / `outOdd`, `outDry` / `outEmpty`, `late`, `starved`, `inLost` | Counters of the old transport's own mechanisms. A zero-length or cut packet is now impossible by construction; an OUT packet not sent whole is a hold (`errors`). |
+| the 4 ms buffer choice | 4 packets is the least the proof allows at all, at zero lag; on the tablet lag 2 occurs. |
+| explicit-feedback and no-feedback direct audio | The transport echoes the device's asks; such a device has none. Direct audio refuses it with a message; ALSA mode plays it. |
+
+### KEPT
+
+| what | why |
+|---|---|
+| split nice bands, ADPF on both threads | Unchanged reasons: nothing absorbs a late URB. Now a late reap thread costs a hold rather than a latch, so fewer is still better. |
+| the device-format byte ring, concealment, reserve adaptation | Render-side, unchanged. |
+| async MIDI reaped by the transport's loop | Still needed: usbfs completions are per descriptor. The transport also hands MIDI completions on while it stops. |
+| `usb hold` log line, `holds` / `alt errors` / `errors` | A hold is the one event this transport has; its reason says whether the thread was late or the wire failed. |
+| `REINIT` (with the `CLEARHALT` rung) and `DEVHEALTH` | Cheap recovery and inspection paths; no behaviour on their own. Delete if nobody uses them again. |
+| the reap loop on a borrowed AAudio callback thread | The one way an app gets SCHED_FIFO here (RLIMIT_RTPRIO is 0; `pthread_setschedparam` and `sched_setscheduler` are refused). A silent low-latency stream on the built-in speaker; its first callback runs the blocking reap loop until stop. Measured below. `ROUTE --ei aaudio 0` runs the own-thread side of the comparison. |
+
+### The borrowed thread, measured (2026-10-04, tablet, CP-88 direct, 6 ms)
+
+Line-out dropouts a minute, chord held, 60-90 s a phase:
+
+| | rest | 64-voice sweeps | 16 CPU spinners | both |
+|---|---|---|---|---|
+| own thread, nice -19 | 13 | 80 | 43 | 207 |
+| AAudio callback, SCHED_FIFO 2 | **0** | **1,9** | **0-4** | 164-176 |
+
+"Both" is past the kernel: the IN completions themselves arrive late (gaps of
+160-420 ms even on the FIFO thread), and the render thread conceals most of
+it. The silence of the borrowed stream is AudioFlinger's own count: the track
+never had a frame consumed (Server 0, underruns only).
+
+Why the loop BLOCKS in the callback instead of the canonical one non-blocking
+pass per callback: the speaker's callback comes every 4 ms, and a 6-packet
+queue cannot be proven at that pace -- 52 holds in the first second. Blocking
+keeps the 1 ms pace of the USB completions.
+
+### Tried with it, and removed (no measurable gain)
+
+| what | measured |
+|---|---|
+| audio threads kept off the little cores (cores 3-7 of 0-7) | 0 / 1,9 / 5 against 0 / 1,9 / 0 without |
+| render thread at nice -19 instead of -16 | 0 / 1,25 / 5 against 0 / 1,9 / 4 |
+
+---
+
+## Earlier rounds (history; the transport they refer to is gone)
+
 ## Delete outright once the latch is understood
 
 ### 1. Zero-length packet on a dry feedback queue
@@ -231,3 +294,15 @@ does not fix does not run by default. It stays behind the broadcast because it
 is the only handle on the one over-feeding mechanism that is proven, and because
 the counters beside it are worth having. If it is still off and still unproven
 next time this file is read, delete it.
+
+---
+
+## Added 2026-10-11 -- M0 measurements
+
+| what | status | delete when |
+|---|---|---|
+| `USBSTALL` broadcast (`UsbAudioOut::testStall`) | **Injector**, regression infrastructure for the starved-IN-queue cascade (LOG.md 2026-10-11): one reap-loop stall longer than the IN queue. Its A/B switch (re-anchoring off) was removed once the fix was proven. | The re-anchoring has a host test, or the transport is rewritten. |
+| `SYSEX` broadcast (`MainActivity.sysexExchange`) | **Test hook** for `tools/cp88sysex/`: sends MIDI on the direct path and logs every SysEx reply. | The CP-88 edit page (M4) does the same through the app's own code. |
+| `midi monitor` log line (`UsbMidiIn::drainMonitor`) | **Measurement**, the first piece of the MIDI monitor the plan wants (S20.5). | The MIDI monitor view replaces it. |
+| `usb/UsbMidiOut`, SysEx capture in `UsbMidiIn` | **Product code**, not provisional: MIDI out on the direct path is a requirement (R3.3). | -- |
+| `kHoldStarve` and the re-anchoring | **A fix that measurably fixed it**: 275 holds -> 1 after a 600 ms stall. | -- |

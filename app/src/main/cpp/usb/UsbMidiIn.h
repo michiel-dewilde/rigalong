@@ -77,6 +77,20 @@ public:
     int64_t maxHoldUs() const { return mMaxHoldUs.exchange(0, std::memory_order_relaxed); }
     int lastErrno() const { return mLastErrno.load(std::memory_order_relaxed); }
 
+    // A MIDI MONITOR for the log: every channel message that is not a note,
+    // and every SysEx start, as (length << 24 | b0 << 16 | b1 << 8 | b2).
+    // Realtime (clock, active sensing) is left out, so the CP-88's heartbeat
+    // does not drown what a button sends. One producer (push), one consumer
+    // (the health logger); when full, the newest are dropped.
+    int drainMonitor(uint32_t* out, int max) const;
+
+    // SYSEX CAPTURE: every complete SysEx message received (F0 .. F7), for
+    // reading Live Set Sounds back. One producer (push), one consumer.
+    // Returns the length of one message copied into `out`, 0 if none is
+    // waiting. A message longer than `max` is skipped and reported as -1.
+    int drainSysex(uint8_t* out, int max) const;
+    uint64_t sysexDropped() const { return mSysexDropped.load(std::memory_order_relaxed); }
+
 private:
     void loop();
     void consume(const uint8_t* buf, int n);
@@ -124,6 +138,23 @@ private:
     std::atomic<uint32_t> mWrite{0};
     std::atomic<uint32_t> mRead{0};
 
+    static constexpr uint32_t kMonitor = 64;
+    uint32_t mMonitor[kMonitor] = {};
+    std::atomic<uint32_t> mMonitorWrite{0};
+    mutable std::atomic<uint32_t> mMonitorRead{0};
+
+    void sysexByte(uint8_t b);
+    void sysexCommit();
+    static constexpr int kSysexMax = 4096;
+    static constexpr uint32_t kSysexRing = 1u << 15;
+    uint8_t mSysexBuf[kSysexMax] = {};
+    int mSysexLen = -1;                     // -1: not inside a SysEx
+    bool mSysexOverflow = false;
+    uint8_t mSysexRing[kSysexRing] = {};
+    std::atomic<uint32_t> mSysexWrite{0};
+    mutable std::atomic<uint32_t> mSysexRead{0};
+    std::atomic<uint64_t> mSysexDropped{0};
+
     std::atomic<uint64_t> mPackets{0};
     std::atomic<uint64_t> mErrors{0};
 
@@ -141,7 +172,7 @@ private:
     //
     // USBDEVFS_BULK is synchronous, so exactly ONE request exists at a time and
     // between the return of one and the submission of the next there is nothing
-    // queued on endpoint 0x82 at all. The audio IN side queues 24 URBs for
+    // queued on endpoint 0x82 at all. The audio IN side queues 512 URBs for
     // precisely this reason; this side queues none. Normally the window is
     // microseconds -- but this thread runs at kRenderNice, BELOW the reap
     // thread, and a deschedule makes the window unbounded. The device then
