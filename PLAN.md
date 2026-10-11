@@ -20,7 +20,7 @@ them can still be revisited.
 | M8 | First slice: parameter ranges in the node API (D6) and a generic patch editor per engine in the song editor, over the preset, auditioned live and applied when the song opens. Not yet: custom panels beyond the stage organ, the DX7 operator editor, Surge XT's full parameter set and modulation. |
 | M9 | First slice: an entry's details in the Library -- rename, delete (hold), history with restore (a new version; a song's setlists follow), the setlists using a song with "update to the latest version" as a choice (I8.5), and diverged imports resolved (I8.31). Not yet: tags and search, OCI registry sync, the catalog. |
 | M11 | First piece: the diagnostic log (S19.2) -- health every 10 s, full status every 5 min and on a change of state, events (songs, CP-88 writes, MIDI out, crashes with their stack), two rotating 512 kB files -- and "Share diagnostics" through the share sheet. |
-| M10 | First piece: the tablet's thermal status and headroom on the stage. Not yet: CPU and memory estimates at preload, overload voice stealing, phone testing. |
+| M10 | First piece: the tablet's thermal status and headroom on the stage, and dropouts in the last minute (xruns, holds, USB errors, ring underruns) turning the health line amber (S19.3). Not yet: CPU and memory estimates at preload, overload voice stealing, phone testing. |
 
 ## 1. Shape of the plan
 

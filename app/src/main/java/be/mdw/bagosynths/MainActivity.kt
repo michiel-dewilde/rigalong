@@ -2542,6 +2542,37 @@ class MainActivity : androidx.activity.ComponentActivity() {
     private lateinit var prototypeView: View
     private lateinit var composeView: androidx.compose.ui.platform.ComposeView
     private lateinit var appLibrary: Library
+
+    // --- health (S19.3): what the player heard go wrong in the last minute ---
+    private val dropEvents = ArrayDeque<Pair<Long, Int>>()
+    private var dropLast: IntArray? = null
+    private var dropWarmUntil = 0L
+
+    /**
+     * Xruns, holds, USB errors and ring underruns in the last 60 s: each one a
+     * gap or a click someone may have heard. The first 10 s of a running
+     * stream do not count -- a start settles -- and a stopped one resets.
+     */
+    private fun recentDropouts(): Int {
+        val s = runCatching { NativeBridge.Stats(NativeBridge.nativeGetStats()) }.getOrNull() ?: return 0
+        val now = android.os.SystemClock.elapsedRealtime()
+        if (!s.running) {
+            dropLast = null
+            dropEvents.clear()
+            return 0
+        }
+        val cur = intArrayOf(s.xRuns, s.usbHolds, s.usbErrors + s.usbAltErrors, s.ringUnderruns)
+        val last = dropLast
+        dropLast = cur
+        if (last == null) {
+            dropWarmUntil = now + 10_000
+            return 0
+        }
+        val d = cur.indices.sumOf { (cur[it] - last[it]).coerceAtLeast(0) }
+        if (d > 0 && now >= dropWarmUntil) dropEvents.addLast(now to d)
+        while (dropEvents.isNotEmpty() && now - dropEvents.first().first > 60_000) dropEvents.removeFirst()
+        return dropEvents.sumOf { it.second }
+    }
     private lateinit var player: be.mdw.bagosynths.ui.SongPlayer
 
     /**
@@ -2633,8 +2664,10 @@ class MainActivity : androidx.activity.ComponentActivity() {
             val pick = lines.filter { l -> listOf("state", "path", "usb", "xruns").any { l.trimStart().startsWith(it) } }
                 .joinToString("   ") { it.trim().replace(Regex("\\s+"), " ") }
             val (heat, hot) = thermal()
-            val bad = hot || lines.any { it.contains("WRONG") || it.contains("failed") || it.contains("STALLED") }
-            return (if (bad) "! " else "") + heat + "   " + pick
+            val drops = recentDropouts()
+            val bad = hot || drops > 0 || lines.any { it.contains("WRONG") || it.contains("failed") || it.contains("STALLED") }
+            val dropText = if (drops > 0) resources.getQuantityString(R.plurals.dropouts_recent, drops, drops) + "   " else ""
+            return (if (bad) "! " else "") + dropText + heat + "   " + pick
         }
         override fun statusLines() = statusView.text.toString().lines() + listOf("", thermal().first,
             "midi clock  ${NativeBridge.nativeMidiClockTicks()} ticks sent")

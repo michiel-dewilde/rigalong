@@ -24,7 +24,9 @@ The bar at the top switches between **Stage**, **Songs**, **Library** and
 * The red **PANIC** button stops every sound, at once, everywhere.
 
 The line beside the tabs reports the audio path and the tablet's
-temperature. It turns amber when something needs attention.
+temperature. It turns amber when something needs attention: the tablet
+running hot, or dropouts (a gap or a click in the sound) in the last minute,
+with their count.
 
 ### Stage
 

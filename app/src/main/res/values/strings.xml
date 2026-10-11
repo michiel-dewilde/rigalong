@@ -150,6 +150,10 @@
     <string name="new_setlist">New setlist</string>
     <string name="create">Create</string>
     <string name="all_songs">All songs</string>
+    <plurals name="dropouts_recent">
+        <item quantity="one">%1$d dropout in the last minute</item>
+        <item quantity="other">%1$d dropouts in the last minute</item>
+    </plurals>
     <plurals name="versions">
         <item quantity="one">%1$d version</item>
         <item quantity="other">%1$d versions</item>
