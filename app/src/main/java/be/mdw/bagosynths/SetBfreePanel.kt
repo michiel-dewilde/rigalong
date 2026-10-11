@@ -16,12 +16,12 @@ import android.widget.SeekBar
 import android.widget.TextView
 
 /**
- * The organ's front panel.
+ * setBfree's front panel.
  *
  * This is the reason the instrument is a tablet and not a phone or a box: nine
  * drawbars want to be grabbed, and a 14.6" screen is wide enough to grab them
  * the way you would on the real thing. Everything here writes straight through
- * to [NativeBridge.nativeSetOrganParam], which queues the change for the render
+ * to [NativeBridge.nativeSetSetBfreeParam], which queues the change for the render
  * thread -- no state is kept on this side beyond what is on screen.
  *
  * Plain Views and custom drawing, matching the rest of the app: this screen sits
@@ -29,8 +29,8 @@ import android.widget.TextView
  * from that.
  */
 
-/** Parameter indices. These MUST match HammondNode::Param in HammondNode.h. */
-object Organ {
+/** Parameter indices. These MUST match SetBfreeNode::Param in SetBfreeNode.h. */
+object SetBfree {
     const val UPPER1 = 0
     const val LOWER1 = 9
     const val PEDAL1 = 18
@@ -175,7 +175,7 @@ class DrawbarView(
 /**
  * Which instrument the keyboard is playing. Levels, not a switch -- see below.
  *
- * `All` rather than `Both` since the synth arrived: three parts that are mixed
+ * `All` rather than `Both` since Surge XT arrived: three parts that are mixed
  * rather than switched means "everything at once" is a real, useful position,
  * and it is where layering starts.
  *
@@ -185,28 +185,32 @@ class DrawbarView(
  * and, because the gate parks a silenced engine, stops competing for the CPU
  * as well. It is a position on the same axis, not a bypass switch.
  */
-enum class Part { None, Piano, Organ, Synth, FM, Texture, SoundFont, All }
+/** The engines as stage parts, each shown by its proper name. */
+enum class Part(val label: String) {
+    None(""), Sfizz("sfizz"), SetBfree("setBfree"), Surge("Surge XT"), Dexed("Dexed"), Plaits("Plaits"),
+    Fluid("FluidSynth"), All("ALL")
+}
 
-/** Builds the whole organ panel, wired straight to the native node. */
-class OrganPanelBuilder(private val context: Context) {
+/** Builds the whole setBfree panel, wired straight to the native node. */
+class SetBfreePanelBuilder(private val context: Context) {
 
-    // The organ fader runs to 1.5, so there is headroom above unity for a thin
-    // registration. The one-tap switch uses 1.0, which is the level the organ was
+    // The setBfree fader runs to 1.5, so there is headroom above unity for a thin
+    // registration. The one-tap switch uses 1.0, which is the level setBfree was
     // voiced against.
-    private val kOrganFaderTop = 1.5f
-    private val kOrganDefaultLevel = 1.0f
+    private val kSetBfreeFaderTop = 1.5f
+    private val kSetBfreeDefaultLevel = 1.0f
 
     private val bars = ArrayList<DrawbarView>(9)
     private var rotaryButton: Button? = null
     private var vibratoButton: Button? = null
-    private var organFader: SeekBar? = null
-    private var pianoFader: SeekBar? = null
+    private var setBfreeFader: SeekBar? = null
+    private var sfizzFader: SeekBar? = null
 
     // The rows those two faders sit in, kept so they can be hidden: see
     // setMixVisible. This panel carries TWO, because it is really the
-    // keyboards panel -- organ and piano share it.
-    private var organRow: View? = null
-    private var pianoRow: View? = null
+    // keyboards panel -- setBfree and sfizz share it.
+    private var setBfreeRow: View? = null
+    private var sfizzRow: View? = null
     private var driveFader: SeekBar? = null
     private var reverbFader: SeekBar? = null
 
@@ -224,13 +228,13 @@ class OrganPanelBuilder(private val context: Context) {
     private var manualHeader: TextView? = null
     private val manualButtons = ArrayList<Button>(3)
 
-    private fun base() = Organ.UPPER1 + manual * 9
+    private fun base() = SetBfree.UPPER1 + manual * 9
 
     /**
      * Every control registers how to redraw itself from the node's own state.
      *
      * This exists because the panel is built in onCreate and the engine -- and
-     * with it the organ node -- only comes up in onResume. Read the parameters
+     * with it the setBfree node -- only comes up in onResume. Read the parameters
      * at build time and every drawbar shows 0 while the engine actually holds
      * 88 8000 000. The node is the single source of truth; the panel asks it.
      */
@@ -249,16 +253,16 @@ class OrganPanelBuilder(private val context: Context) {
      * place they appear.
      *
      * Two of them here, and that is exactly where the old behaviour looked
-     * arbitrary: this panel is shared by PIANO and ORGAN, so soloing either
+     * arbitrary: this panel is shared by sfizz and setBfree, so soloing either
      * one left both faders on screen and no other part showed any.
      */
     fun setMixVisible(on: Boolean) {
         val how = if (on) View.VISIBLE else View.GONE
-        organRow?.visibility = how
-        pianoRow?.visibility = how
+        setBfreeRow?.visibility = how
+        sfizzRow?.visibility = how
     }
 
-    private fun set(index: Int, value: Float) = NativeBridge.nativeSetOrganParam(index, value)
+    private fun set(index: Int, value: Float) = NativeBridge.nativeSetSetBfreeParam(index, value)
 
     fun build(): View {
         val root = LinearLayout(context).apply {
@@ -281,7 +285,7 @@ class OrganPanelBuilder(private val context: Context) {
         headerRow.addView(header, LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT
         ).apply { rightMargin = 40 })
-        Organ.MANUAL_NAMES.forEachIndexed { index, name ->
+        SetBfree.MANUAL_NAMES.forEachIndexed { index, name ->
             val b = smallButton(name) { selectManual(index) }
             manualButtons.add(b)
             headerRow.addView(b)
@@ -295,10 +299,10 @@ class OrganPanelBuilder(private val context: Context) {
             layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 420)
         }
         for (i in 0 until 9) {
-            val bar = DrawbarView(context, Organ.FOOTAGES[i], Organ.COLOURS[i]) { v ->
+            val bar = DrawbarView(context, SetBfree.FOOTAGES[i], SetBfree.COLOURS[i]) { v ->
                 set(base() + i, v.toFloat())
             }
-            refreshers.add { bar.value = NativeBridge.nativeGetOrganParam(base() + i).toInt() }
+            refreshers.add { bar.value = NativeBridge.nativeGetSetBfreeParam(base() + i).toInt() }
             bar.layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f)
                 .apply { rightMargin = 10 }
             bars.add(bar)
@@ -311,9 +315,9 @@ class OrganPanelBuilder(private val context: Context) {
             orientation = LinearLayout.HORIZONTAL
             setPadding(0, 20, 0, 0)
         }
-        NativeBridge.nativeOrganPresetNames().forEachIndexed { index, name ->
+        NativeBridge.nativeSetBfreePresetNames().forEachIndexed { index, name ->
             presetRow.addView(smallButton(name) {
-                NativeBridge.nativeOrganPreset(index, manual)
+                NativeBridge.nativeSetBfreePreset(index, manual)
                 refreshBars()
             })
         }
@@ -325,18 +329,18 @@ class OrganPanelBuilder(private val context: Context) {
             setPadding(0, 20, 0, 0)
         }
 
-        switchRow.addView(toggle("PERC", Organ.PERC_ENABLE))
-        switchRow.addView(toggle("FAST", Organ.PERC_FAST))
-        switchRow.addView(toggle("3rd", Organ.PERC_THIRD))
-        switchRow.addView(toggle("SOFT", Organ.PERC_SOFT))
-        switchRow.addView(toggle("VIB UP", Organ.VIBRATO_UPPER))
-        switchRow.addView(toggle("VIB LOW", Organ.VIBRATO_LOWER))
-        switchRow.addView(toggle("DRIVE", Organ.OVERDRIVE))
+        switchRow.addView(toggle("PERC", SetBfree.PERC_ENABLE))
+        switchRow.addView(toggle("FAST", SetBfree.PERC_FAST))
+        switchRow.addView(toggle("3rd", SetBfree.PERC_THIRD))
+        switchRow.addView(toggle("SOFT", SetBfree.PERC_SOFT))
+        switchRow.addView(toggle("VIB UP", SetBfree.VIBRATO_UPPER))
+        switchRow.addView(toggle("VIB LOW", SetBfree.VIBRATO_LOWER))
+        switchRow.addView(toggle("DRIVE", SetBfree.OVERDRIVE))
 
         // The scanner has six positions rather than two, so it cycles.
         vibratoButton = smallButton(vibratoLabel()) {
-            val next = (NativeBridge.nativeGetOrganParam(Organ.VIBRATO_KNOB).toInt() + 1) % 6
-            set(Organ.VIBRATO_KNOB, next.toFloat())
+            val next = (NativeBridge.nativeGetSetBfreeParam(SetBfree.VIBRATO_KNOB).toInt() + 1) % 6
+            set(SetBfree.VIBRATO_KNOB, next.toFloat())
             vibratoButton?.text = vibratoLabel()
         }
         switchRow.addView(vibratoButton)
@@ -356,13 +360,13 @@ class OrganPanelBuilder(private val context: Context) {
             setOnClickListener {
                 // Stop is a setting, not a performance gesture: tapping cycles
                 // between the two speeds you actually play with.
-                val current = NativeBridge.nativeGetOrganParam(Organ.ROTARY).toInt()
+                val current = NativeBridge.nativeGetSetBfreeParam(SetBfree.ROTARY).toInt()
                 val next = if (current == 2) 1 else 2
-                set(Organ.ROTARY, next.toFloat())
+                set(SetBfree.ROTARY, next.toFloat())
                 rotaryButton?.text = rotaryLabel()
             }
             setOnLongClickListener {
-                set(Organ.ROTARY, 0f)
+                set(SetBfree.ROTARY, 0f)
                 rotaryButton?.text = rotaryLabel()
                 true
             }
@@ -374,21 +378,21 @@ class OrganPanelBuilder(private val context: Context) {
         }
         root.addView(horizontalScroll(switchRow))
 
-        // --- levels. The organ starts at zero: the app opens on the piano and the
-        // organ is brought in deliberately, which is also what the node does.
-        organRow = slider("Organ", 0f, keep = { organFader = it }) {
-            set(Organ.LEVEL, it * kOrganFaderTop)
+        // --- levels. setBfree starts at zero: the app opens on sfizz and
+        // setBfree is brought in deliberately, which is also what the node does.
+        setBfreeRow = slider(Part.SetBfree.label, 0f, keep = { setBfreeFader = it }) {
+            set(SetBfree.LEVEL, it * kSetBfreeFaderTop)
         }
-        pianoRow = slider("Piano", 1f, keep = { pianoFader = it }) {
-            NativeBridge.nativeSetSamplerLevel(it)
+        sfizzRow = slider(Part.Sfizz.label, 1f, keep = { sfizzFader = it }) {
+            NativeBridge.nativeSetSfizzLevel(it)
         }
-        root.addView(organRow)
-        root.addView(pianoRow)
+        root.addView(setBfreeRow)
+        root.addView(sfizzRow)
         val drive = slider("Drive", 0.5f, keep = { driveFader = it }) {
-            set(Organ.OVERDRIVE_GAIN, it)
+            set(SetBfree.OVERDRIVE_GAIN, it)
         }
-        val verb = slider("Organ reverb", 0.15f, keep = { reverbFader = it }) {
-            set(Organ.REVERB_MIX, it)
+        val verb = slider("${Part.SetBfree.label} reverb", 0.15f, keep = { reverbFader = it }) {
+            set(SetBfree.REVERB_MIX, it)
         }
         root.addView(drive)
         root.addView(verb)
@@ -396,13 +400,13 @@ class OrganPanelBuilder(private val context: Context) {
         // Faders read back from the node like everything else, so a loaded patch
         // shows the levels it actually set rather than where they were left.
         refreshers.add {
-            organFader?.progress =
-                (NativeBridge.nativeGetOrganParam(Organ.LEVEL) / kOrganFaderTop * 100f).toInt()
-            pianoFader?.progress = (NativeBridge.nativeGetSamplerLevel() * 100f).toInt()
+            setBfreeFader?.progress =
+                (NativeBridge.nativeGetSetBfreeParam(SetBfree.LEVEL) / kSetBfreeFaderTop * 100f).toInt()
+            sfizzFader?.progress = (NativeBridge.nativeGetSfizzLevel() * 100f).toInt()
             driveFader?.progress =
-                (NativeBridge.nativeGetOrganParam(Organ.OVERDRIVE_GAIN) * 100f).toInt()
+                (NativeBridge.nativeGetSetBfreeParam(SetBfree.OVERDRIVE_GAIN) * 100f).toInt()
             reverbFader?.progress =
-                (NativeBridge.nativeGetOrganParam(Organ.REVERB_MIX) * 100f).toInt()
+                (NativeBridge.nativeGetSetBfreeParam(SetBfree.REVERB_MIX) * 100f).toInt()
         }
 
         // --- one keyboard, three manuals
@@ -436,19 +440,19 @@ class OrganPanelBuilder(private val context: Context) {
      * it: two places showing different levels would be worse than the scroll.
      */
     fun setPart(part: Part) {
-        val organ = if (part == Part.Organ || part == Part.All) kOrganDefaultLevel else 0f
-        val piano = if (part == Part.Piano || part == Part.All) 1f else 0f
+        val setBfreeLevel = if (part == Part.SetBfree || part == Part.All) kSetBfreeDefaultLevel else 0f
+        val sfizzLevel = if (part == Part.Sfizz || part == Part.All) 1f else 0f
 
-        set(Organ.LEVEL, organ)
-        NativeBridge.nativeSetSamplerLevel(piano)
+        set(SetBfree.LEVEL, setBfreeLevel)
+        NativeBridge.nativeSetSfizzLevel(sfizzLevel)
 
-        organFader?.progress = (organ / kOrganFaderTop * 100f).toInt()
-        pianoFader?.progress = (piano * 100f).toInt()
+        setBfreeFader?.progress = (setBfreeLevel / kSetBfreeFaderTop * 100f).toInt()
+        sfizzFader?.progress = (sfizzLevel * 100f).toInt()
     }
 
     private fun selectManual(which: Int) {
         manual = which.coerceIn(0, 2)
-        manualHeader?.text = "HAMMOND — ${Organ.MANUAL_NAMES[manual].lowercase()} manual"
+        manualHeader?.text = "SETBFREE — ${SetBfree.MANUAL_NAMES[manual].lowercase()} manual"
         manualButtons.forEachIndexed { index, b ->
             val on = index == manual
             b.setTextColor(if (on) Color.parseColor("#14161A") else Color.parseColor("#C9D1E0"))
@@ -460,21 +464,21 @@ class OrganPanelBuilder(private val context: Context) {
     }
 
     private fun setSplit(pedal: Int, lower: Int) {
-        set(Organ.SPLIT_PEDAL, pedal.toFloat())
-        set(Organ.SPLIT_LOWER, lower.toFloat())
+        set(SetBfree.SPLIT_PEDAL, pedal.toFloat())
+        set(SetBfree.SPLIT_LOWER, lower.toFloat())
     }
 
     private fun refreshBars() {
         bars.forEachIndexed { i, bar ->
-            bar.value = NativeBridge.nativeGetOrganParam(base() + i).toInt()
+            bar.value = NativeBridge.nativeGetSetBfreeParam(base() + i).toInt()
         }
     }
 
     private fun rotaryLabel() =
-        "LESLIE ${Organ.ROTARY_NAMES[NativeBridge.nativeGetOrganParam(Organ.ROTARY).toInt().coerceIn(0, 2)]}"
+        "LESLIE ${SetBfree.ROTARY_NAMES[NativeBridge.nativeGetSetBfreeParam(SetBfree.ROTARY).toInt().coerceIn(0, 2)]}"
 
     private fun vibratoLabel() =
-        Organ.VIBRATO_NAMES[NativeBridge.nativeGetOrganParam(Organ.VIBRATO_KNOB).toInt().coerceIn(0, 5)]
+        SetBfree.VIBRATO_NAMES[NativeBridge.nativeGetSetBfreeParam(SetBfree.VIBRATO_KNOB).toInt().coerceIn(0, 5)]
 
     private fun horizontalScroll(child: View): View =
         android.widget.HorizontalScrollView(context).apply {
@@ -494,7 +498,7 @@ class OrganPanelBuilder(private val context: Context) {
         }
 
     private fun toggle(label: String, param: Int): Button {
-        var on = NativeBridge.nativeGetOrganParam(param) >= 0.5f
+        var on = NativeBridge.nativeGetSetBfreeParam(param) >= 0.5f
         val button = Button(context)
         fun paint() {
             button.text = label
@@ -513,11 +517,11 @@ class OrganPanelBuilder(private val context: Context) {
         paint()
         button.setOnClickListener {
             on = !on
-            NativeBridge.nativeSetOrganParam(param, if (on) 1f else 0f)
+            NativeBridge.nativeSetSetBfreeParam(param, if (on) 1f else 0f)
             paint()
         }
         refreshers.add {
-            on = NativeBridge.nativeGetOrganParam(param) >= 0.5f
+            on = NativeBridge.nativeGetSetBfreeParam(param) >= 0.5f
             paint()
         }
         return button

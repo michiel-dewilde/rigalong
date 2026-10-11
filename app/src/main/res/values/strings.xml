@@ -27,7 +27,6 @@
     <string name="store_levels">Store in this live set (hold)</string>
     <string name="engine_playing">playing</string>
     <string name="engine_silent">silent</string>
-    <string name="organ">Organ</string>
     <string name="leslie_stop">Stop</string>
     <string name="leslie_slow">Slow</string>
     <string name="leslie_fast">Fast</string>
@@ -72,12 +71,12 @@
     <string name="bpm_short">BPM</string>
 
     <!-- engines -->
-    <string name="engine_sfizz">Piano</string>
-    <string name="engine_hammond">Organ</string>
-    <string name="engine_surge">Synth</string>
-    <string name="engine_dexed">FM</string>
-    <string name="engine_plaits">Texture</string>
-    <string name="engine_fluid">SF2</string>
+    <string name="engine_sfizz">sfizz</string>
+    <string name="engine_setbfree">setBfree</string>
+    <string name="engine_surge">Surge XT</string>
+    <string name="engine_dexed">Dexed</string>
+    <string name="engine_plaits">Plaits</string>
+    <string name="engine_fluid">FluidSynth</string>
 
     <!-- songs -->
     <string name="new_song">New song</string>
@@ -201,7 +200,7 @@
     <string name="import_archive">Import…</string>
     <string name="import_instrument">Install instrument (zip)…</string>
     <string name="installing">Installing…</string>
-    <string name="installed_instrument">Installed "%1$s": it is now in every Piano patch list.</string>
+    <string name="installed_instrument">Installed "%1$s": it is now in every sfizz patch list.</string>
     <string name="install_failed">Installing failed: %1$s</string>
     <string name="export_setlist">Export this setlist…</string>
     <string name="setlists">Setlists</string>

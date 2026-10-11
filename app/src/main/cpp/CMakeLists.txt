@@ -243,9 +243,8 @@ add_library(bagosynths SHARED
         usb/UsbMidiOut.cpp
         usb/MidiClock.cpp
         usb/UsbControl.cpp
-        Synth.cpp
         graph/Nodes.cpp
-        graph/HammondNode.cpp
+        graph/SetBfreeNode.cpp
         graph/SurgeNode.cpp
         graph/DexedNode.cpp
         graph/PlaitsNode.cpp

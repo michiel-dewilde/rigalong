@@ -272,8 +272,8 @@ private fun StageControls(player: SongPlayer, host: EngineHost, modifier: Modifi
         Row(horizontalArrangement = Arrangement.spacedBy(16.dp),
             modifier = Modifier.weight(1f).fillMaxHeight().horizontalScroll(rememberScrollState())) {
             // The levels first: where the row is narrower than its panels (beside
-            // a lead sheet), the organ's drawbars scroll into view, not the faders.
-            // One fader per sound, two pianos being two faders.
+            // a lead sheet), setBfree's drawbars scroll into view, not the faders.
+            // One fader per sound, two sfizz instances being two faders.
             for (inst in sounds) {
                 val plays = player.playing[inst.id] ?: false
                 Column(Modifier.width(140.dp).fillMaxHeight().background(Panel, RoundedCornerShape(10.dp)).padding(10.dp),
@@ -290,7 +290,7 @@ private fun StageControls(player: SongPlayer, host: EngineHost, modifier: Modifi
                     RelativeFader(level, { player.setLevel(inst.id, it) }, Modifier.weight(1f).fillMaxWidth())
                 }
             }
-            if (sounds.any { it.engine == RackEngine.HAMMOND }) OrganPanel(player)
+            if (sounds.any { it.engine == RackEngine.SETBFREE }) SetBfreePanel(player)
         }
         Spacer(Modifier.width(16.dp))
         MasterFader(host)
@@ -326,27 +326,27 @@ private val DRAWBAR_LABELS = listOf("16'", "5⅓'", "8'", "4'", "2⅔'", "2'", "
 private val DRAWBAR_COLOURS = listOf(Color(0xFF8B4A2B), Color(0xFF8B4A2B), Color(0xFFE6E2D6), Color(0xFFE6E2D6),
     Color(0xFF2B2B2B), Color(0xFFE6E2D6), Color(0xFF2B2B2B), Color(0xFF2B2B2B), Color(0xFFE6E2D6))
 
-/** The organ's upper drawbars, Leslie and percussion, on the stage (S6.1's example). */
+/** setBfree's upper drawbars, Leslie and percussion, on the stage (S6.1's example). */
 @Composable
-private fun OrganPanel(player: SongPlayer) {
+private fun SetBfreePanel(player: SongPlayer) {
     Column(Modifier.fillMaxHeight().background(Panel, RoundedCornerShape(10.dp)).padding(10.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            // Which organ, where the song has several: the one playing in this live set.
+            // Which setBfree, where the song has several: the one playing in this live set.
             val r = player.rack
-            val shown = player.organId?.let { r?.instance(it) }
-            Text(if (r != null && shown != null && r.instances.count { it.engine == RackEngine.HAMMOND } > 1)
-                r.displayName(shown) else stringResource(R.string.organ), fontWeight = FontWeight.SemiBold)
-            val leslie = player.organ[SongPlayer.ORGAN_LESLIE] ?: 1f
+            val shown = player.setBfreeId?.let { r?.instance(it) }
+            Text(if (r != null && shown != null && r.instances.count { it.engine == RackEngine.SETBFREE } > 1)
+                r.displayName(shown) else stringResource(R.string.engine_setbfree), fontWeight = FontWeight.SemiBold)
+            val leslie = player.setBfree[SongPlayer.SETBFREE_LESLIE] ?: 1f
             for ((v, label) in listOf(0f to stringResource(R.string.leslie_stop), 1f to stringResource(R.string.leslie_slow),
                     2f to stringResource(R.string.leslie_fast))) {
                 Box(Modifier.background(if (leslie == v) Accent else Bg, RoundedCornerShape(8.dp))
-                    .clickable { player.setOrgan(SongPlayer.ORGAN_LESLIE, v) }.padding(horizontal = 14.dp, vertical = 8.dp)) {
+                    .clickable { player.setSetBfree(SongPlayer.SETBFREE_LESLIE, v) }.padding(horizontal = 14.dp, vertical = 8.dp)) {
                     Text(label, color = if (leslie == v) Color.Black else Color.White)
                 }
             }
-            val perc = (player.organ[SongPlayer.ORGAN_PERC] ?: 0f) > 0.5f
+            val perc = (player.setBfree[SongPlayer.SETBFREE_PERC] ?: 0f) > 0.5f
             Box(Modifier.background(if (perc) Accent else Bg, RoundedCornerShape(8.dp))
-                .clickable { player.setOrgan(SongPlayer.ORGAN_PERC, if (perc) 0f else 1f) }
+                .clickable { player.setSetBfree(SongPlayer.SETBFREE_PERC, if (perc) 0f else 1f) }
                 .padding(horizontal = 14.dp, vertical = 8.dp)) {
                 Text(stringResource(R.string.percussion), color = if (perc) Color.Black else Color.White)
             }
@@ -354,13 +354,13 @@ private fun OrganPanel(player: SongPlayer) {
         Spacer(Modifier.height(8.dp))
         Row(Modifier.weight(1f), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             for (i in 0..8) {
-                val v = (player.organ[i] ?: 0f) / 8f
+                val v = (player.setBfree[i] ?: 0f) / 8f
                 Column(Modifier.width(44.dp).fillMaxHeight(), horizontalAlignment = Alignment.CenterHorizontally) {
                     Text(DRAWBAR_LABELS[i], fontSize = 11.sp, color = Dim)
                     // Whole steps, as on the instrument: 0..8.
-                    RelativeFader(v, { player.setOrgan(i, Math.round(it * 8f).toFloat()) },
+                    RelativeFader(v, { player.setSetBfree(i, Math.round(it * 8f).toFloat()) },
                         Modifier.weight(1f).fillMaxWidth(), color = DRAWBAR_COLOURS[i])
-                    Text(((player.organ[i] ?: 0f).toInt()).toString(), fontSize = 13.sp)
+                    Text(((player.setBfree[i] ?: 0f).toInt()).toString(), fontSize = 13.sp)
                 }
             }
         }
@@ -592,12 +592,12 @@ private fun SongEditor(song: RackSong, name: String, host: EngineHost, player: S
             }
         }
         Spacer(Modifier.height(12.dp))
-        // The song's sounds: instances, first class -- several of one engine if it wants (two pianos).
+        // The song's sounds: instances, first class -- several of one engine if it wants (two sfizz instances).
         Text(stringResource(R.string.engines), fontWeight = FontWeight.SemiBold)
         for (inst in song.instances) {
             val slot = inst.slot
             Row(verticalAlignment = Alignment.CenterVertically) {
-                // Its name: tap to rename ("Bright piano", "Pad").
+                // Its name: tap to rename ("Bright", "Pad").
                 Text(song.displayName(inst), color = if (inst.label != null) Accent else Color.White, maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.width(120.dp).clickable { renaming = inst.id }.padding(vertical = 8.dp))
@@ -617,7 +617,7 @@ private fun SongEditor(song: RackSong, name: String, host: EngineHost, player: S
                 TextButton(onClick = { onChange(song.minus(inst.id)) }) { Text("✕", color = Danger) }
             }
         }
-        // Another sound, of any engine -- a second piano is a second instance.
+        // Another sound, of any engine -- a second sfizz is a second instance.
         androidx.compose.foundation.layout.FlowRow(verticalArrangement = Arrangement.Center) {
             Text(stringResource(R.string.add_sound), color = Dim, modifier = Modifier.padding(top = 12.dp, end = 8.dp))
             for (e in RackEngine.entries) {
@@ -1323,7 +1323,7 @@ private fun LeadSheetButton(song: RackSong, player: SongPlayer, onChange: (RackS
 @Composable
 private fun engineLabel(e: RackEngine): String = stringResource(when (e) {
     RackEngine.SFIZZ -> R.string.engine_sfizz
-    RackEngine.HAMMOND -> R.string.engine_hammond
+    RackEngine.SETBFREE -> R.string.engine_setbfree
     RackEngine.SURGE -> R.string.engine_surge
     RackEngine.DEXED -> R.string.engine_dexed
     RackEngine.PLAITS -> R.string.engine_plaits
@@ -1382,7 +1382,7 @@ private fun PresetPicker(e: RackEngine, host: EngineHost, lib: Library, onPick: 
 private fun presetChoices(e: RackEngine, host: EngineHost): List<Pair<String, String>> = runCatching {
     when (e) {
         RackEngine.SFIZZ -> host.instruments()
-        RackEngine.HAMMOND -> NativeBridge.nativeOrganPresetNames().map { it to it }
+        RackEngine.SETBFREE -> NativeBridge.nativeSetBfreePresetNames().map { it to it }
         RackEngine.SURGE -> (0 until NativeBridge.nativeSurgePatchCount()).map {
             NativeBridge.nativeSurgePatchName(it).let { n -> n to n }
         }

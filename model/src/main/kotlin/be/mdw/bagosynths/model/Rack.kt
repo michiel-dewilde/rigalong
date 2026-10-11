@@ -3,7 +3,7 @@ package be.mdw.bagosynths.model
 /**
  * The rack: songs as a simple form can edit them (PLAN.md M2/M3). A rack song
  * has INSTANCES -- its sounds, each an instance of one of six engines, several
- * of one engine if it wants (two pianos, three synths) -- each behind a MIDI
+ * of one engine if it wants (two sfizz, three Surge XT) -- each behind a MIDI
  * zone and two switchable wires; and live sets that say which instances play,
  * at what level, over which keys, transposed how far.
  *
@@ -12,7 +12,7 @@ package be.mdw.bagosynths.model
  *   node  `i`        the engine; parameter `Level`; `label` if the player named it
  *   node  `i.zone`   its zone; `keyLow`, `keyHigh`, `transpose`, `channelIn`, ...
  *   (a live set may give the engine's own parameters values of its own too,
- *   `i.<parameter>`, over the song's patch: the organ's drawbars in one part;
+ *   `i.<parameter>`, over the song's patch: setBfree's drawbars in one part;
  *   node `i` then holds the song's value of it next to `Level` -- the patch's,
  *   or the one heard from the preset -- so leaving the live set restores it)
  *   wire  `i.midi`   zone -> engine: off means the engine takes no new notes,
@@ -28,12 +28,12 @@ package be.mdw.bagosynths.model
  * the whole mix: node `mix.fx`, kind `fx.<type>`, between `mix` and `out`.
  */
 enum class RackEngine(val key: String, val nodeType: String, val label: String) {
-    SFIZZ("sfizz", "sfizz", "Piano"),
-    HAMMOND("hammond", "Hammond", "Organ"),
-    SURGE("surge", "Surge XT", "Synth"),
-    DEXED("dexed", "Dexed", "FM"),
-    PLAITS("plaits", "Plaits", "Texture"),
-    FLUID("fluid", "FluidSynth", "SF2");
+    SFIZZ("sfizz", "sfizz", "sfizz"),
+    SETBFREE("setbfree", "setBfree", "setBfree"),
+    SURGE("surge", "Surge XT", "Surge XT"),
+    DEXED("dexed", "Dexed", "Dexed"),
+    PLAITS("plaits", "Plaits", "Plaits"),
+    FLUID("fluid", "FluidSynth", "FluidSynth");
 
     val rackIndex: Int get() = ordinal
 
@@ -58,7 +58,7 @@ data class RackInstance(
      * Controllers that move its parameters (I6.1, I6.6): parameter -> MIDI CC,
      * any channel, over the parameter's whole range, picking up. A knob, wheel
      * or pedal; it acts while this sound plays in the live set, so one knob
-     * can move the organ in one live set and the synth in another. Stored as
+     * can move setBfree in one live set and Surge XT in another. Stored as
      * the song's `controls`.
      */
     val controls: Map<String, Int> = emptyMap(),

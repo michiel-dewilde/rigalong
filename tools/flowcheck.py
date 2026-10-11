@@ -10,7 +10,7 @@ takes more taps than that fails, so "simple" is measured, not claimed.
     ANDROID_SERIAL=<device> python3 tools/flowcheck.py [flow-name ...]
 
 The app must be installed and in front, on a setlist with the demo songs
-(the first-run seed: "Piano", "Organ and piano", "Pad and piano"). Flows that
+(the first-run seed: "sfizz", "setBfree and sfizz", "Surge XT and sfizz"). Flows that
 save leave the library as they found it, by their own Undo. Never sends Back
 to the app and never turns the screen off.
 """
@@ -181,8 +181,8 @@ def flow_quick_edit_live_set(f):
 
 def flow_quick_edit_patch(f):
     # One long press on a sound's name above its fader: its patch.
-    f.tap("Piano", long=True, pick="lowest")
-    f.see("Piano: patch")
+    f.tap("sfizz", long=True, pick="lowest")
+    f.see("sfizz: patch")
     f.tap("Done")
 
 
@@ -216,15 +216,15 @@ def to_library():
     time.sleep(1.0)
 
 
-# The shared-patch round trip: share the piano's patch, use it in a second
+# The shared-patch round trip: share sfizz's patch, use it in a second
 # song, change it in the first and update it everywhere, check both songs
 # follow -- then three Undos leave the library as it was.
-PATCH = "FlowPiano"
+PATCH = "FlowSfizz"
 
 
 def flow_share_patch(f):
     to_songs()
-    f.tap("1. Piano")
+    f.tap("1. sfizz")
     f.tap("Patch…")
     f.tap("Save as library patch…")
     f.tap("Patch name")
@@ -240,7 +240,7 @@ def flow_share_patch(f):
 
 def flow_reuse_patch(f):
     to_songs()
-    f.tap("3. Pad and piano")
+    f.tap("3. Surge XT and sfizz")
     f.tap("(as loaded)")
     f.tap(PATCH)
     f.tap("Save •")
@@ -248,7 +248,7 @@ def flow_reuse_patch(f):
 
 def flow_update_everywhere(f):
     to_songs()
-    f.tap("1. Piano")
+    f.tap("1. sfizz")
     f.tap("(as loaded)")
     f.tap("Salamander Grand (tightened)", exact=False)
     f.tap("Save •")
@@ -279,21 +279,21 @@ def flow_undo_all(f):
         raise AssertionError(f"{PATCH} still in the library after four Undos")
 
 
-def flow_second_piano(f):
-    # A sound is an instance: a second piano in a song is a second piano on stage.
+def flow_second_sfizz(f):
+    # A sound is an instance: a second sfizz in a song is a second sfizz on stage.
     to_songs()
-    f.tap("1. Piano")
+    f.tap("1. sfizz")
     logcat_clear()
-    f.tap("+ Piano")
-    f.see("Piano 2")
+    f.tap("+ sfizz")
+    f.see("sfizz 2")
     f.tap("Save •")
     to_stage()
     broadcast("STAGE", "--ei song 1 --ei liveset 1")
     time.sleep(1.5)
-    if not (wait_for("Piano 1") and wait_for("Piano 2")):
-        raise AssertionError("the stage does not show both pianos")
-    if not logcat_has(r"instance \d+ added for Piano", timeout=3):
-        raise AssertionError("no second piano instance on the engine")
+    if not (wait_for("sfizz 1") and wait_for("sfizz 2")):
+        raise AssertionError("the stage does not show both sfizz instances")
+    if not logcat_has(r"instance \d+ added for sfizz", timeout=3):
+        raise AssertionError("no second sfizz instance on the engine")
     # Leave the library as it was.
     to_library()
     for n in find_all("Undo", exact=False):
@@ -318,11 +318,11 @@ def stage_switch(liveset, pattern):
     return logcat_has(pattern, timeout=3)
 
 
-# A live set's own sound values: the organ's 16' drawbar pulled in live set 1
-# ("Organ") only. From the stage the sound opens on the live set playing.
+# A live set's own sound values: setBfree's 16' drawbar pulled in live set 1
+# ("setBfree") only. From the stage the sound opens on the live set playing.
 def flow_tweak_in_live_set(f):
-    f.tap("Organ", long=True, pick="lowest-left")
-    f.see("Only in “Organ”")
+    f.tap("setBfree", long=True, pick="lowest-left")
+    f.see("Only in “setBfree”")
     f.slide("Upper 16", at=0.0)
     f.see("Upper 16 ●")
     f.see("↺")
@@ -330,16 +330,16 @@ def flow_tweak_in_live_set(f):
     f.tap("Save •")
     to_stage()
     try:
-        if not stage_switch(2, r"live set 2 'Piano'.*hammond\.Upper 16=[1-9]"):
+        if not stage_switch(2, r"live set 2 'sfizz'.*setbfree\.Upper 16=[1-9]"):
             raise AssertionError("leaving the live set did not put the song's drawbar back")
-        if not stage_switch(1, r"live set 1 'Organ'.*hammond\.Upper 16=0[.,]00"):
+        if not stage_switch(1, r"live set 1 'setBfree'.*setbfree\.Upper 16=0[.,]00"):
             raise AssertionError("the live set's own drawbar was not applied")
     finally:
         undo_last()
 
 
 def flow_use_in_whole_song(f):
-    f.tap("Organ", long=True, pick="lowest-left")
+    f.tap("setBfree", long=True, pick="lowest-left")
     f.slide("Upper 16", at=0.0)
     f.tap("Use in song")
     if wait_for("Upper 16 ●", timeout=1.5):
@@ -349,7 +349,7 @@ def flow_use_in_whole_song(f):
     to_stage()
     try:
         # The song's value now: the same in every live set, so no change on switching.
-        if stage_switch(2, r"hammond\.Upper 16="):
+        if stage_switch(2, r"setbfree\.Upper 16="):
             raise AssertionError("the drawbar still differs between live sets")
     finally:
         undo_last()
@@ -357,10 +357,10 @@ def flow_use_in_whole_song(f):
 
 def flow_sound_for_live_set(f):
     # A different preset in one live set: a sound of its own, loaded with the song.
-    f.tap("Organ", long=True, pick="lowest-left")
+    f.tap("setBfree", long=True, pick="lowest-left")
     f.tap("New sound for this live set")
-    f.see("Organ: patch")          # the preset picker for the new sound
-    picks = [n for n in screen() if n.text and n.text not in ("Organ: patch", "As loaded", "Cancel", "Search")
+    f.see("setBfree: patch")          # the preset picker for the new sound
+    picks = [n for n in screen() if n.text and n.text not in ("setBfree: patch", "As loaded", "Cancel", "Search")
              and n.y > find_all("Search")[0].y + 60]
     if len(picks) < 2:
         raise AssertionError("no presets to pick")
@@ -370,24 +370,24 @@ def flow_sound_for_live_set(f):
     f.tap("Save •")
     to_stage()
     try:
-        if not (wait_for("Organ 1") and wait_for("Organ 2")):
+        if not (wait_for("setBfree 1") and wait_for("setBfree 2")):
             raise AssertionError("the stage does not show the new sound")
-        if not stage_switch(2, r"live set 2 'Piano'"):
+        if not stage_switch(2, r"live set 2 'sfizz'"):
             raise AssertionError("no live set 2")
-        # From live set 2, where neither organ plays: only the new one comes on.
-        if not stage_switch(1, r"live set 1 'Organ'.*hammond-2\.midi=on"):
+        # From live set 2, where neither setBfree plays: only the new one comes on.
+        if not stage_switch(1, r"live set 1 'setBfree'.*setbfree-2\.midi=on"):
             raise AssertionError("live set 1 does not play the new sound")
-        if re.search(r"hammond\.midi=on", adb("logcat", "-d", "-s", "bos-stage:I")):
-            raise AssertionError("live set 1 still plays the old organ too")
-        # The stage's organ panel is the organ playing: "Organ 2" on its fader and the panel here,
-        # "Organ 1" where neither plays.
+        if re.search(r"setbfree\.midi=on", adb("logcat", "-d", "-s", "bos-stage:I")):
+            raise AssertionError("live set 1 still plays the old setBfree too")
+        # The stage's setBfree panel is the setBfree playing: "setBfree 2" on its fader and the panel here,
+        # "setBfree 1" where neither plays.
         time.sleep(0.8)
-        if len(find_all("Organ 2")) != 2:
-            raise AssertionError("the organ panel does not show the organ playing (Organ 2)")
+        if len(find_all("setBfree 2")) != 2:
+            raise AssertionError("the setBfree panel does not show the one playing (setBfree 2)")
         stage_switch(2, r"live set 2")
         time.sleep(0.8)
-        if len(find_all("Organ 1")) != 2:
-            raise AssertionError("with no organ playing the panel should show the first")
+        if len(find_all("setBfree 1")) != 2:
+            raise AssertionError("with no setBfree playing the panel should show the first")
     finally:
         undo_last()
 
@@ -401,7 +401,7 @@ def cc(number, value):
 def flow_store_in_live_set(f):
     label = find_all("16'")
     if not label:
-        raise AssertionError("no organ panel")
+        raise AssertionError("no setBfree panel")
     n = label[0]
     shell(f"input swipe {n.x} {n.y + 120} {n.x} {n.y + 700} 400")   # drag down: fewer feet of 16'
     f.taps += 1
@@ -409,12 +409,12 @@ def flow_store_in_live_set(f):
     logcat_clear()
     f.tap("Store in this live set (hold)", long=True)
     try:
-        if not logcat_has(r"stored into live set 1: the levels and \[hammond\.Upper 16\]"):
+        if not logcat_has(r"stored into live set 1: the levels and \[setbfree\.Upper 16\]"):
             raise AssertionError("the drawbar was not stored into the live set")
         to_stage()
-        if not stage_switch(2, r"live set 2 'Piano'.*hammond\.Upper 16=8[.,]00"):
+        if not stage_switch(2, r"live set 2 'sfizz'.*setbfree\.Upper 16=8[.,]00"):
             raise AssertionError("live set 2 does not have the song's drawbar")
-        if not stage_switch(1, r"live set 1 'Organ'.*hammond\.Upper 16=[0-7][.,]00"):
+        if not stage_switch(1, r"live set 1 'setBfree'.*setbfree\.Upper 16=[0-7][.,]00"):
             raise AssertionError("live set 1 does not have its stored drawbar")
     finally:
         undo_last()
@@ -423,7 +423,7 @@ def flow_store_in_live_set(f):
 # A knob for a sound's parameter: learned in the sound dialog, then it moves
 # the drawbar on the stage -- only after it has picked up the drawbar's value.
 def flow_knob_controls_sound(f):
-    f.tap("Organ", long=True, pick="lowest-left")
+    f.tap("setBfree", long=True, pick="lowest-left")
     row = find_all("Upper 16")[0]
     learn = [n for n in find_all("MIDI") if abs(n.y - row.y) < 20]
     if not learn:
@@ -440,11 +440,11 @@ def flow_knob_controls_sound(f):
         logcat_clear()
         cc(21, 0)            # the drawbar is at 8: a knob at 0 or 2 has not reached it
         cc(21, 40)
-        if logcat_has(r"control hammond\.Upper 16", timeout=1.5):
+        if logcat_has(r"control setbfree\.Upper 16", timeout=1.5):
             raise AssertionError("the knob moved the drawbar before picking it up")
         cc(21, 127)          # reaches 8: picked up
         cc(21, 0)
-        if not logcat_has(r"control hammond\.Upper 16 -> 0[.,]00"):
+        if not logcat_has(r"control setbfree\.Upper 16 -> 0[.,]00"):
             raise AssertionError("the knob does not move the drawbar")
     finally:
         undo_last()
@@ -497,7 +497,7 @@ def flow_cp88_sound_from_library(f):
     saves = 0
     try:
         to_stage()
-        f.tap("Organ", long=True, pick="highest")          # live set 1 in the editor
+        f.tap("setBfree", long=True, pick="highest")          # live set 1 in the editor
         f.see("Live set 1", exact=False)
         f.tap("Own sound", pick="first")
         f.tap("From library…", pick="first")
@@ -559,7 +559,7 @@ FLOWS = [
     ("reuse-patch", 4, flow_reuse_patch),
     ("update-everywhere", 5, flow_update_everywhere),
     ("undo-all", 4, flow_undo_all),
-    ("second-piano", 3, flow_second_piano),
+    ("second-sfizz", 3, flow_second_sfizz),
     ("tweak-in-live-set", 4, flow_tweak_in_live_set),
     ("use-in-whole-song", 5, flow_use_in_whole_song),
     ("sound-for-live-set", 4, flow_sound_for_live_set),

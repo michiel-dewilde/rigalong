@@ -3,7 +3,7 @@
 // This is the first test this project has ever had, and the thing it covers is
 // the reason: Graph::compile is pure logic that could only be exercised by
 // playing a tablet, and a bug in it -- "a second edge into any input pin
-// produced silence, with no error" -- survived until an organ needed fan-in.
+// produced silence, with no error" -- survived until setBfree needed fan-in.
 // The first case below is that bug, written down so it cannot come back.
 
 #include "harness.h"

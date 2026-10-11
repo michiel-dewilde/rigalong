@@ -83,8 +83,8 @@ bool AudioEngine::openStream(int32_t deviceId, int bufferBursts) {
     //     Profiles (1): AUDIO_FORMAT_PCM_16_BIT, sampling rates: 48000
     //
     // while the CP-88's own port declares 44100 and PCM_24_BIT_PACKED alone. So
-    // the phone grants EXCLUSIVE to the piano only at 48000/16, with the HAL
-    // converting both rate and word length; the tablet grants it at the piano's
+    // the phone grants EXCLUSIVE to the CP-88 only at 48000/16, with the HAL
+    // converting both rate and word length; the tablet grants it at the CP-88's
     // own 44100 with an 89-frame burst, which is strictly better because
     // nothing is converted.
     //
@@ -237,7 +237,7 @@ bool AudioEngine::openStream(int32_t deviceId, int bufferBursts) {
     //   stream recovered after disconnect, on device 10051 (attempt 1)
     //     ...got Legacy, devIds = [2], perf = NO, burst = 882
     //
-    // We asked for the piano, were handed the tablet speaker, and called it a
+    // We asked for the CP-88, were handed the tablet speaker, and called it a
     // success. So "specify the device" is not a guarantee of anything; the only
     // guarantee is comparing what came back.
     const int32_t got = mStream->getDeviceId();
@@ -322,7 +322,7 @@ void AudioEngine::prepareRing(int32_t burst, int32_t floorMs) {
     // The ring's floor and ceiling are RELATIVE TO THE BURST, not constants.
     //
     // The constants were chosen against the CP-88's 89-frame burst, where a
-    // 192-frame floor is a comfortable two bursts. Without the piano the app
+    // 192-frame floor is a comfortable two bursts. Without the CP-88 the app
     // opens the tablet's own speaker, which is SHARED, not MMAP, and hands the
     // callback 882 frames at a time -- so a 192-frame floor is less than a
     // QUARTER of one callback, the ring is drained to empty every time, and the
@@ -650,7 +650,7 @@ bool AudioEngine::openInput(int32_t deviceId) {
         // the output to the phone's own speaker took the probe's peak from
         // 0,015 to 0,66, which only a microphone a few centimetres from that
         // speaker can do. Without this check the measurement would have been
-        // read as "the piano loops back, quietly".
+        // read as "the CP-88 loops back, quietly".
         const int32_t gotIn = mInputStream->getDeviceId();
         LOGI("input open [%s]: rate=%d ch=%d burst=%d sharing=%d perf=%d dev=%d (asked %d)",
              a.name, mInputStream->getSampleRate(), mInputChannels,
@@ -843,7 +843,7 @@ void AudioEngine::updateInstrumentGates(int frames) {
 
         // Loudness, held. The on-screen meter decays in 60 ms, which makes it
         // unusable for "how loud is THIS engine for that note" -- the question
-        // behind Michiel's report that the piano is much quieter than the rest.
+        // behind Michiel's report that sfizz is much quieter than the rest.
         // Taken before the node's own level, so it measures the ENGINE and not
         // where its fader happens to be. Cleared by resetPeaks().
         // Only while the node is actually RUNNING. A parked node is not
@@ -888,9 +888,9 @@ void AudioEngine::updateInstrumentGates(int frames) {
         // --- stopping, but not instantly ------------------------------------
         //
         // Killing the voices is not enough for an engine that carries its OWN
-        // effects. The Hammond's rotary speaker and reverb live inside beatrix,
+        // effects. setBfree's rotary speaker and reverb live inside beatrix,
         // and a frozen effect resumes where it left off: Michiel heard the tail
-        // of an organ note return when the part was selected again "an eon
+        // of a setBfree note return when the part was selected again "an eon
         // later".
         //
         // So the node keeps RUNNING after its voices are killed, until it has
@@ -968,7 +968,7 @@ void AudioEngine::updateInstrumentGates(int frames) {
 //
 // Michiel loses about one note-on or note-off in thirty, at random, playing
 // single notes on any engine in USB device mode. That rules out voice stealing
-// and the sampler's note-on queue, and reading the path found nothing, so the
+// and sfizz's note-on queue, and reading the path found nothing, so the
 // path reports itself instead:
 //
 //   pkt    bulk transfers that returned data
@@ -1418,7 +1418,7 @@ void AudioEngine::onErrorAfterClose(oboe::AudioStream* stream, oboe::Result erro
     // device re-enumerated, the OS reclaimed the stream. Recover silently rather
     // than leaving the player with a dead instrument.
     //
-    // But recover onto THE SAME PIANO. This used to reopen with an unspecified
+    // But recover onto THE SAME CP-88. This used to reopen with an unspecified
     // device id, and an unspecified output on this tablet resolves to the
     // built-in speaker -- so a jogged USB cable mid-set would "recover" into the
     // tablet's own speaker, which the player cannot hear over a stage and the
@@ -1442,7 +1442,7 @@ void AudioEngine::onErrorAfterClose(oboe::AudioStream* stream, oboe::Result erro
             std::this_thread::sleep_for(std::chrono::milliseconds(kReconnectDelayMs));
 
             // Someone else may have got there first: the UI watchdog can resolve
-            // the piano by NAME, which is the only thing that works after a real
+            // the CP-88 by NAME, which is the only thing that works after a real
             // replug, and it is not going to wait for us. If it succeeded, stop
             // retrying -- otherwise the next attempt would close a good stream
             // and reopen the dead id we were handed.
@@ -1465,7 +1465,7 @@ void AudioEngine::onErrorAfterClose(oboe::AudioStream* stream, oboe::Result erro
             }
         }
         // Out of attempts. Leave it stopped and SAY so: the Kotlin watchdog will
-        // re-resolve the piano by name and start us again if it reappears.
+        // re-resolve the CP-88 by name and start us again if it reappears.
         mReconnecting.store(false, std::memory_order_release);
         LOGE("could not recover device %d after %d attempts -- waiting for it to "
              "be found by name", deviceId, kReconnectAttempts);
@@ -1718,7 +1718,7 @@ void AudioEngine::resetPeaks() {
     if (mDexed != nullptr) mDexed->resetProfile();
     if (mPlaits != nullptr) mPlaits->resetProfile();
     if (mFluid != nullptr) mFluid->resetProfile();
-    if (mHammond != nullptr) mHammond->resetProfile();
+    if (mSetBfree != nullptr) mSetBfree->resetProfile();
     if (mSfizz != nullptr) mSfizz->resetProfile();
     for (float& p : mNodePeakHold) p = 0.0f;
 }
@@ -1731,7 +1731,7 @@ bool AudioEngine::rebuildGraph(std::string* error) {
     if (mSfizz == nullptr) {
         auto midiIn = std::make_unique<bagosynths::MidiInNode>();
         auto sfizz = std::make_unique<bagosynths::SfizzNode>();
-        auto hammond = std::make_unique<bagosynths::HammondNode>();
+        auto setBfreeNode = std::make_unique<bagosynths::SetBfreeNode>();
         auto surge = std::make_unique<bagosynths::SurgeNode>();
         auto dexed = std::make_unique<bagosynths::DexedNode>();
         auto plaits = std::make_unique<bagosynths::PlaitsNode>();
@@ -1740,7 +1740,7 @@ bool AudioEngine::rebuildGraph(std::string* error) {
         auto out = std::make_unique<bagosynths::AudioOutNode>();
 
         mSfizz = sfizz.get();
-        mHammond = hammond.get();
+        mSetBfree = setBfreeNode.get();
         mSurge = surge.get();
         mDexed = dexed.get();
         mPlaits = plaits.get();
@@ -1749,7 +1749,7 @@ bool AudioEngine::rebuildGraph(std::string* error) {
 
         const bagosynths::NodeId idMidi = mGraph.addNode(std::move(midiIn));
         const bagosynths::NodeId idSfizz = mGraph.addNode(std::move(sfizz));
-        const bagosynths::NodeId idHammond = mGraph.addNode(std::move(hammond));
+        const bagosynths::NodeId idSetBfree = mGraph.addNode(std::move(setBfreeNode));
         const bagosynths::NodeId idSurge = mGraph.addNode(std::move(surge));
         const bagosynths::NodeId idDexed = mGraph.addNode(std::move(dexed));
         const bagosynths::NodeId idPlaits = mGraph.addNode(std::move(plaits));
@@ -1762,7 +1762,7 @@ bool AudioEngine::rebuildGraph(std::string* error) {
         //
         //   MIDI In --+--> sfizz    --+
         //             |               |
-        //             +--> Hammond  --+
+        //             +--> setBfree --+
         //             |               |
         //             +--> Surge XT --+--> Reverb --> Audio Out
         //             |               |
@@ -1797,7 +1797,7 @@ bool AudioEngine::rebuildGraph(std::string* error) {
         // and route without a recompile and without stranding a held note.
         // The zones are added AFTER every existing node, so the prototype's
         // saved patches, which address nodes by ordinal, still line up.
-        const bagosynths::NodeId engines[kRackSize] = {idSfizz, idHammond, idSurge,
+        const bagosynths::NodeId engines[kRackSize] = {idSfizz, idSetBfree, idSurge,
                                                        idDexed, idPlaits, idFluid};
         mIdMidiIn = idMidi;
         mIdReverb = idReverb;
@@ -1820,8 +1820,8 @@ bool AudioEngine::rebuildGraph(std::string* error) {
             mRackAudio[i] = mGraph.connectSwitchable(idFx, 0, idReverb, 0);
         }
         // The six are instances 0-5.
-        bagosynths::Node* nodes[kRackSize] = {mSfizz, mHammond, mSurge, mDexed, mPlaits, mFluid};
-        const int levels[kRackSize] = {bagosynths::SfizzNode::kLevel, bagosynths::HammondNode::kLevel,
+        bagosynths::Node* nodes[kRackSize] = {mSfizz, mSetBfree, mSurge, mDexed, mPlaits, mFluid};
+        const int levels[kRackSize] = {bagosynths::SfizzNode::kLevel, bagosynths::SetBfreeNode::kLevel,
                                        bagosynths::SurgeNode::kLevel, bagosynths::DexedNode::kLevel,
                                        bagosynths::PlaitsNode::kLevel, bagosynths::FluidNode::kLevel};
         for (int i = 0; i < kRackSize; ++i) {
@@ -1840,9 +1840,9 @@ bool AudioEngine::rebuildGraph(std::string* error) {
         mGraph.setMidiEntry(idMidi);
         mGraph.setAudioExit(idOut);
 
-        // Everything but the piano starts silent: the app opens on the piano,
+        // Everything but sfizz starts silent: the app opens on sfizz,
         // and each of the others is brought in with its own fader.
-        mHammond->setParam(bagosynths::HammondNode::kLevel, 0.0f);
+        mSetBfree->setParam(bagosynths::SetBfreeNode::kLevel, 0.0f);
         mSurge->setParam(bagosynths::SurgeNode::kLevel, 0.0f);
         mDexed->setParam(bagosynths::DexedNode::kLevel, 0.0f);
         mPlaits->setParam(bagosynths::PlaitsNode::kLevel, 0.0f);
@@ -2013,13 +2013,13 @@ void AudioEngine::loadSurgePatchNamedAsync(const std::string& name) {
     }
 }
 
-// FluidSynth. Building the synth is cheap and listing a directory is cheaper,
+// FluidSynth. Building the fluid_synth is cheap and listing a directory is cheaper,
 // but LOADING a font is neither: a 30 MB GM SoundFont is megabytes of samples,
 // and an SF3 decodes every one of them from Ogg Vorbis on the way in. All of it
 // therefore runs here, off both the audio and the UI thread.
 //
 // Init and the scan are one task rather than two, because a scan that finishes
-// before the synth exists has nothing to load into.
+// before the fluid_synth exists has nothing to load into.
 void AudioEngine::initFluidAsync(const std::vector<std::string>& dirs) {
     mFluidDirs = dirs;
     if (mFluid == nullptr) return;
@@ -2466,7 +2466,7 @@ int AudioEngine::addInstance(int type) {
     int level = 0;
     switch (type) {
         case kRackSfizz:   node = std::make_unique<bagosynths::SfizzNode>();   level = bagosynths::SfizzNode::kLevel; break;
-        case kRackHammond: node = std::make_unique<bagosynths::HammondNode>(); level = bagosynths::HammondNode::kLevel; break;
+        case kRackSetBfree: node = std::make_unique<bagosynths::SetBfreeNode>(); level = bagosynths::SetBfreeNode::kLevel; break;
         case kRackSurge:   node = std::make_unique<bagosynths::SurgeNode>();   level = bagosynths::SurgeNode::kLevel; break;
         case kRackDexed:   node = std::make_unique<bagosynths::DexedNode>();   level = bagosynths::DexedNode::kLevel; break;
         case kRackPlaits:  node = std::make_unique<bagosynths::PlaitsNode>();  level = bagosynths::PlaitsNode::kLevel; break;
@@ -2574,10 +2574,10 @@ void AudioEngine::loadInstancePreset(int i, const std::string& name, int program
                 })) mInstanceBusy[i].store(false, std::memory_order_release);
             return;
         }
-        case kRackHammond: {
-            auto* h = static_cast<bagosynths::HammondNode*>(n);
-            for (int k = 0; k < bagosynths::HammondNode::presetCount(); ++k) {
-                if (name == bagosynths::HammondNode::presetName(k)) { h->applyPreset(k, 0); return; }
+        case kRackSetBfree: {
+            auto* h = static_cast<bagosynths::SetBfreeNode*>(n);
+            for (int k = 0; k < bagosynths::SetBfreeNode::presetCount(); ++k) {
+                if (name == bagosynths::SetBfreeNode::presetName(k)) { h->applyPreset(k, 0); return; }
             }
             return;
         }

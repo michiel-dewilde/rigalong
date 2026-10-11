@@ -92,9 +92,9 @@ void FluidNode::prepare(double sampleRate, int maxFrames) {
     mGain.prepare(rate, mParams[kLevel]);
 
     // The rate reaches FluidSynth at init() and, before this, never again --
-    // so a synth built at 44100 kept rendering as if it were at 44100 after the
+    // so a fluid_synth built at 44100 kept rendering as if it were at 44100 after the
     // output moved to a 48000 device, and played 8,8 % sharp. Reported
-    // 2026-09-21 together with the organ, which had the same bug for the same
+    // 2026-09-21 together with setBfree, which had the same bug for the same
     // reason: both are built once, asynchronously, while sfizz takes
     // setSampleRate() on every prepare and was therefore always right.
     if (fluid_synth_t* s = mSynth.load(std::memory_order_acquire);
@@ -104,7 +104,7 @@ void FluidNode::prepare(double sampleRate, int maxFrames) {
     }
 
     mRate = rate;
-    // Only the scratch buffer is allocated here. Building the synth reads
+    // Only the scratch buffer is allocated here. Building the fluid_synth reads
     // settings and allocates voices, which is cheap but still belongs on the
     // loader thread with the SoundFont scan -- see AudioEngine::initFluidAsync.
     mScratchR.assign(static_cast<size_t>(std::max(maxFrames, 1)), 0.0f);
@@ -223,7 +223,7 @@ bool FluidNode::loadSoundFont(int index) {
     // Megabytes of file IO, and for an SF3 a Vorbis decode of every sample --
     // hundreds of milliseconds, which is hundreds of render blocks. So the
     // render thread is parked first, exactly as sfizz and Surge park it. Only
-    // this node falls silent; the piano and the organ play straight through.
+    // this node falls silent; sfizz and setBfree play straight through.
     mLoadRequested.store(true, std::memory_order_release);
     for (int i = 0; i < 2000 && !mRenderParked.load(std::memory_order_acquire); ++i) {
         std::this_thread::sleep_for(std::chrono::milliseconds(1));
@@ -561,7 +561,7 @@ void FluidNode::process(const ProcessArgs& args) {
                             panic();
                             break;
                         // 91 and 93 are the reverb and chorus sends, and they
-                        // belong to the panel here, not to the piano: letting
+                        // belong to the panel here, not to the CP-88: letting
                         // the CP-88 write them would fight the faders.
                         case 91:
                         case 93:

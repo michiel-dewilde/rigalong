@@ -136,7 +136,7 @@ class DexedPanelBuilder(private val context: Context) {
         root.addView(slider("Mod wheel", 0.99f, keep = { modFader = it }) {
             NativeBridge.nativeSetDexedParam(Dexed.MOD_DEPTH, it)
         })
-        levelRow = slider("FM", 0f, keep = { levelFader = it }) {
+        levelRow = slider(Part.Dexed.label, 0f, keep = { levelFader = it }) {
             NativeBridge.nativeSetDexedParam(Dexed.LEVEL, it * Dexed.FADER_TOP)
         }
         root.addView(levelRow)
@@ -173,7 +173,7 @@ class DexedPanelBuilder(private val context: Context) {
 
     /** Mirrors [Part] onto the level, as the other panels do. */
     fun setPart(part: Part) {
-        val level = if (part == Part.FM || part == Part.All) Dexed.DEFAULT_LEVEL else 0f
+        val level = if (part == Part.Dexed || part == Part.All) Dexed.DEFAULT_LEVEL else 0f
         NativeBridge.nativeSetDexedParam(Dexed.LEVEL, level)
         levelFader?.progress = (level / Dexed.FADER_TOP * 100f).toInt()
     }

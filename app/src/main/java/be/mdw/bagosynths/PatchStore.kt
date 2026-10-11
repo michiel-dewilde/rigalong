@@ -10,13 +10,13 @@ import java.io.File
  * Patches: the whole rig, written down.
  *
  * Until now nothing survived closing the app. That was tolerable while the only
- * state was "which SFZ is loaded"; the organ made it untenable, because a
+ * state was "which SFZ is loaded"; setBfree made it untenable, because a
  * registration is something you build over a few minutes and then want back.
  *
  * Three decisions worth knowing about:
  *
  * **Parameters are stored by NAME, not by index.** An index is what changes when
- * someone inserts a value into `HammondNode::Param`, and a patch file that
+ * someone inserts a value into `SetBfreeNode::Param`, and a patch file that
  * silently means something different after a refactor is worse than no patch
  * file. Names cost a few bytes and a lookup.
  *

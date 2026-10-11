@@ -28,7 +28,7 @@ interface EngineHost {
     /** Installed SFZ instruments: id to display name. */
     fun instruments(): List<Pair<String, String>>
     fun selectInstrument(id: String)
-    /** The SFZ file of installed instrument [id], for an added piano instance; null if not installed. */
+    /** The SFZ file of installed instrument [id], for an added sfizz instance; null if not installed. */
     fun instrumentPath(id: String): String?
     fun currentInstrument(): String?
     fun showPrototype()
@@ -108,9 +108,11 @@ class SongPlayer(private val lib: Library, private val host: EngineHost, private
     private val gain = FloatArray(MAX_INSTANCES) { 1f }
 
     fun resume() {
-        val id = prefs.getString("stage.setlist", null)?.let { runCatching { Digest(it) }.getOrNull() }
-            ?: lib.setlists().firstOrNull()?.id ?: return
-        openSetlist(id, prefs.getInt("stage.song", 0), prefs.getInt("stage.liveSet", 0))
+        // The last session's setlist, if the library still has it; else the first one, from the top.
+        val saved = prefs.getString("stage.setlist", null)?.let { runCatching { Digest(it) }.getOrNull() }
+            ?.takeIf { lib.store.entry(it) != null }
+        if (saved != null) openSetlist(saved, prefs.getInt("stage.song", 0), prefs.getInt("stage.liveSet", 0))
+        else openSetlist(lib.setlists().firstOrNull()?.id ?: return)
     }
 
     fun openSetlist(id: Digest, song: Int = 0, liveSet: Int = 0) {
@@ -192,10 +194,10 @@ class SongPlayer(private val lib: Library, private val host: EngineHost, private
                 } })
         prefs.edit().putInt("stage.liveSet", index).apply()
         touched.clear()
-        // The stage's organ is the one playing here, its drawbars as this live set has them.
-        organId = rack?.instances.orEmpty().filter { it.engine == RackEngine.HAMMOND }
-            .let { organs -> organs.firstOrNull { playing[it.id] == true } ?: organs.firstOrNull() }?.id
-        refreshOrgan()
+        // The stage's setBfree is the one playing here, its drawbars as this live set has them.
+        setBfreeId = rack?.instances.orEmpty().filter { it.engine == RackEngine.SETBFREE }
+            .let { all -> all.firstOrNull { playing[it.id] == true } ?: all.firstOrNull() }?.id
+        refreshSetBfree()
         applyControls()
     }
 
@@ -237,7 +239,7 @@ class SongPlayer(private val lib: Library, private val host: EngineHost, private
         val sw = switcher ?: return
         val ls = liveSetIndex.takeIf { it in liveSetNames.indices } ?: return
         for (k in liveSetKeys()) sw.storedValue(ls, k)?.let { applyParam(k, it.toFloat()); sw.noteValue(k, it) }
-        refreshOrgan()
+        refreshSetBfree()
         note("presets landed: the song's values and live set ${ls + 1}'s own on again")
     }
 
@@ -433,7 +435,7 @@ class SongPlayer(private val lib: Library, private val host: EngineHost, private
     /**
      * What sounds now becomes the current live set's own (I6.9): its levels,
      * and every sound parameter moved on the stage or by a mapped control
-     * since the live set was selected -- the organ's drawbars, a filter on a
+     * since the live set was selected -- setBfree's drawbars, a filter on a
      * knob. A value moved back to the song's stops being the live set's own.
      * Saved as a new version of the song.
      */
@@ -527,16 +529,16 @@ class SongPlayer(private val lib: Library, private val host: EngineHost, private
     private fun pollControls() {
         val moved = runCatching { NativeBridge.nativeTakeMovedControls() }.getOrDefault(0L)
         if (moved == 0L) return
-        var organMoved = false
+        var setBfreeMoved = false
         for ((k, key) in controlKeys.withIndex()) {
             if (moved and (1L shl k) == 0L) continue
             val v = engineValue(key) ?: continue
             touch(key, switcher?.currentValue(key) ?: controlStart[key])
             switcher?.noteValue(key, v)
-            if (key.startsWith("$organId.")) organMoved = true
+            if (key.startsWith("$setBfreeId.")) setBfreeMoved = true
             Log.i(TAG, "control $key -> ${"%.2f".format(v)}")
         }
-        if (organMoved) refreshOrgan()
+        if (setBfreeMoved) refreshSetBfree()
     }
 
     /** The "<instance>.<parameter>" waiting for a controller to be moved (MIDI learn), or null. */
@@ -839,26 +841,26 @@ class SongPlayer(private val lib: Library, private val host: EngineHost, private
     fun nextLiveSet() { if (liveSetIndex + 1 < liveSetNames.size) selectLiveSet(liveSetIndex + 1) }
     fun previousLiveSet() { if (liveSetIndex > 0) selectLiveSet(liveSetIndex - 1) }
 
-    /** The organ's stage controls (HammondNode.h `Param`): drawbars 0-8, Leslie 37, percussion 27. */
-    val organ = androidx.compose.runtime.mutableStateMapOf<Int, Float>()
-    /** Which of the song's organs the stage shows: the first playing in the live set, else the first. */
-    var organId by mutableStateOf<String?>(null); private set
+    /** setBfree's stage controls (SetBfreeNode.h `Param`): drawbars 0-8, Leslie 37, percussion 27. */
+    val setBfree = androidx.compose.runtime.mutableStateMapOf<Int, Float>()
+    /** Which of the song's setBfree instances the stage shows: the first playing in the live set, else the first. */
+    var setBfreeId by mutableStateOf<String?>(null); private set
 
-    private fun organNode(): Int? = organId?.let { onEngine[it] }?.let { nodeOf(it) }
+    private fun setBfreeNode(): Int? = setBfreeId?.let { onEngine[it] }?.let { nodeOf(it) }
 
-    fun refreshOrgan() {
-        val node = organNode() ?: return
-        for (i in ORGAN_STAGE_PARAMS) organ[i] = runCatching { NativeBridge.nativeGetNodeParam(node, i) }.getOrDefault(0f)
+    fun refreshSetBfree() {
+        val node = setBfreeNode() ?: return
+        for (i in SETBFREE_STAGE_PARAMS) setBfree[i] = runCatching { NativeBridge.nativeGetNodeParam(node, i) }.getOrDefault(0f)
     }
 
-    /** A stage organ control moved: heard at once, and kept in mind for "Store in live set". */
-    fun setOrgan(index: Int, v: Float) {
-        val node = organNode() ?: return
-        val key = "$organId.${NativeBridge.nativeNodeParamName(node, index)}"
+    /** A stage setBfree control moved: heard at once, and kept in mind for "Store in live set". */
+    fun setSetBfree(index: Int, v: Float) {
+        val node = setBfreeNode() ?: return
+        val key = "$setBfreeId.${NativeBridge.nativeNodeParamName(node, index)}"
         touch(key, switcher?.currentValue(key) ?: NativeBridge.nativeGetNodeParam(node, index).toDouble())
         NativeBridge.nativeSetNodeParam(node, index, v)
         switcher?.noteValue(key, v.toDouble())
-        organ[index] = v
+        setBfree[index] = v
     }
 
     // ------------------------------------------------------------- instances
@@ -1068,7 +1070,7 @@ class SongPlayer(private val lib: Library, private val host: EngineHost, private
 
     private fun loadPresetAt(i: Int, e: RackEngine, wanted: String?, program: Int?) {
         // "As loaded" on an added instance means what the first of its engine
-        // has: a new instance starts empty, and an empty piano is a silent one.
+        // has: a new instance starts empty, and an empty sfizz is a silent one.
         val preset = wanted?.takeIf { it.isNotEmpty() } ?: if (i == e.ordinal) null else runCatching {
             when (e) {
                 RackEngine.SFIZZ -> host.currentInstrument()
@@ -1088,9 +1090,9 @@ class SongPlayer(private val lib: Library, private val host: EngineHost, private
             }
             when (e) {
                 RackEngine.SFIZZ -> if (host.currentInstrument() != preset) host.selectInstrument(preset)
-                RackEngine.HAMMOND -> {
-                    val k = NativeBridge.nativeOrganPresetNames().indexOf(preset)
-                    if (k >= 0) NativeBridge.nativeOrganPreset(k, 0)
+                RackEngine.SETBFREE -> {
+                    val k = NativeBridge.nativeSetBfreePresetNames().indexOf(preset)
+                    if (k >= 0) NativeBridge.nativeSetBfreePreset(k, 0)
                 }
                 RackEngine.SURGE ->
                     if (NativeBridge.nativeSurgeReady() && NativeBridge.nativeSurgeCurrentPatchName() != preset) {
@@ -1142,7 +1144,7 @@ class SongPlayer(private val lib: Library, private val host: EngineHost, private
         for ((id, i) in onEngine) playing[id] = midiOn[i]
     }
 
-    /** A song key ("sfizz-2.zone.keyLow", "hammond.Level") on the engine instance its song instance plays on. */
+    /** A song key ("sfizz-2.zone.keyLow", "setbfree.Level") on the engine instance its song instance plays on. */
     private fun applyParam(key: String, v: Float) {
         val first = key.indexOf('.')
         if (first < 0) return
@@ -1177,9 +1179,9 @@ class SongPlayer(private val lib: Library, private val host: EngineHost, private
         const val MAX_INSTANCES = 24
         /** ReverbNode's own defaults (graph/Nodes.h), for a song that sets none. */
         val REVERB_DEFAULTS = mapOf("Room size" to 0.72, "Damping" to 0.35, "Width" to 1.0, "Mix" to 0.25)
-        const val ORGAN_LESLIE = 37
-        const val ORGAN_PERC = 27
-        val ORGAN_STAGE_PARAMS = (0..8).toList() + listOf(ORGAN_PERC, ORGAN_LESLIE)
+        const val SETBFREE_LESLIE = 37
+        const val SETBFREE_PERC = 27
+        val SETBFREE_STAGE_PARAMS = (0..8).toList() + listOf(SETBFREE_PERC, SETBFREE_LESLIE)
 
         /** engine/include/bagosynths/MidiZone.h, `Param`, in order. */
         val ZONE_PARAMS = listOf(

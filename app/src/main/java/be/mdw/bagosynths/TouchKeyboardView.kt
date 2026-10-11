@@ -30,7 +30,7 @@ import android.view.View
  * the back. Without it every note arrives mezzo-forte and a sampled piano with
  * sixteen velocity layers is wasted.
  */
-class PianoKeyboardView(
+class TouchKeyboardView(
     context: Context,
     private val lowNote: Int = 48,      // C3
     private val highNote: Int = 84,     // C6 — three octaves

@@ -455,7 +455,7 @@ Risks
 Stated (2026-10-10)
 
 * S6.1 Users choose which controls appear on the stage display (e.g. the
-  Hammond drawbars).
+  setBfree drawbars).
 * S6.2 Users choose which controls and buttons are in the UI and/or set from
   MIDI.
 
@@ -522,8 +522,8 @@ Interpreted
 
 * I7.1 Order by size: FluidSynth (preset, a few channel settings), sfizz
   (instrument, volume, tuning, polyphony, the instrument's own CCs), Plaits
-  (model plus about a dozen), the organ (drawbars, percussion, vibrato,
-  Leslie, preamp), the DX7 (155 voice parameters, Dexed's layout as the
+  (model plus about a dozen), setBfree (drawbars, percussion, vibrato,
+  Leslie, preamp), Dexed (155 voice parameters, Dexed's layout as the
   reference), Surge XT.
 * I7.2 **A generic editor driven by each engine's parameter metadata** (name,
   range, unit, group), with custom panels only where they matter (drawbars,
@@ -535,7 +535,7 @@ Interpreted
 Risk
 
 * R7.1 The engines differ greatly in size. Surge XT has hundreds of
-  parameters, the DX7 155, the organ and Plaits a few dozen, and sfizz and
+  parameters, Dexed 155, setBfree and Plaits a few dozen, and sfizz and
   FluidSynth have hardly any patch to edit. A full Surge editor costs more than
   everything else put together. (Q-P1)
 
@@ -803,7 +803,7 @@ Interpreted
   graphic and parametric EQ, the Conditioner (EQ plus limiter), tape,
   frequency shifter, ring modulator, vocoder, mid/side, and the Airwindows
   collection (dozens more, including compressors and console emulations).
-* I11.2 setBfree's Leslie, the one the organ uses, as a standalone node too.
+* I11.2 setBfree's Leslie as a standalone node too.
 * I11.3 Clouds (granular), already compiled, as listed in the README.
 
 Risk
@@ -997,7 +997,7 @@ Stated (2026-10-11)
 
 Stated (2026-10-11)
 
-* S20.1 The six engines stay: sfizz, setBfree organ, Surge XT, Dexed (DX7),
+* S20.1 The six engines stay: sfizz, setBfree, Surge XT, Dexed (DX7),
   Plaits, FluidSynth. No additions for now; new engines can come later as
   nodes without changing the model.
 * S20.2 **Both orientations in every view**, the stage view included.

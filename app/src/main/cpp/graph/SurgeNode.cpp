@@ -189,8 +189,8 @@ bool SurgeNode::loadPatch(int index) {
     // loadPatch() opens and parses a file on the calling thread -- 2.8 ms
     // typically, 63.8 ms for the worst factory patch, which is twenty-two render
     // blocks. So the render thread is parked first, exactly as sample loading
-    // parks it in SfizzNode. Only this node falls silent; the piano and the
-    // organ keep playing straight through the parked interval.
+    // parks it in SfizzNode. Only this node falls silent; sfizz and
+    // setBfree keep playing straight through the parked interval.
     mLoadRequested.store(true, std::memory_order_release);
     for (int i = 0; i < 2000 && !mRenderParked.load(std::memory_order_acquire); ++i) {
         std::this_thread::sleep_for(std::chrono::milliseconds(1));
@@ -347,7 +347,7 @@ void SurgeNode::process(const ProcessArgs& args) {
     };
 
     // MIDI is applied at its own frame position. With BLOCK_SIZE 32 the timing
-    // resolution here is 0.73 ms -- four times finer than the organ's fragment.
+    // resolution here is 0.73 ms -- four times finer than setBfree's fragment.
     if (args.numMidiIn > 0 && args.midiIn[0] != nullptr) {
         const MidiBuffer& midi = *args.midiIn[0];
         for (int i = 0; i < midi.size(); ++i) {
@@ -374,7 +374,7 @@ void SurgeNode::process(const ProcessArgs& args) {
                 case 0xB0:
                     // Panic has to actually work, so CC 120 and 123 are handled
                     // here rather than passed through as ordinary controllers.
-                    // A stuck synth note is not something anyone can wait out
+                    // A stuck Surge XT note is not something anyone can wait out
                     // on stage.
                     if (e.data1 == 123) {
                         s->allNotesOff();
@@ -385,7 +385,7 @@ void SurgeNode::process(const ProcessArgs& args) {
                     }
                     break;
                 case 0xC0:
-                    // Program change is dropped on purpose, exactly as the organ
+                    // Program change is dropped on purpose, exactly as setBfree
                     // drops it: the CP-88 sends one whenever its own voice is
                     // changed, and letting that through would swap the Surge
                     // patch out from under the player mid-set.

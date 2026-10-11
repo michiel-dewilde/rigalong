@@ -142,7 +142,7 @@ class PlaitsPanelBuilder(private val context: Context) {
         root.addView(knob("Aux", Plaits.AUX_MIX))
         root.addView(knob("Mod wheel", Plaits.MOD_DEPTH))
 
-        levelRow = slider("TEXTURE", 0f, keep = { levelFader = it }) {
+        levelRow = slider(Part.Plaits.label, 0f, keep = { levelFader = it }) {
             NativeBridge.nativeSetPlaitsParam(Plaits.LEVEL, it * Plaits.FADER_TOP)
         }
         root.addView(levelRow)
@@ -162,7 +162,7 @@ class PlaitsPanelBuilder(private val context: Context) {
 
     /** Mirrors [Part] onto the level, as the other panels do. */
     fun setPart(part: Part) {
-        val level = if (part == Part.Texture || part == Part.All) Plaits.DEFAULT_LEVEL else 0f
+        val level = if (part == Part.Plaits || part == Part.All) Plaits.DEFAULT_LEVEL else 0f
         NativeBridge.nativeSetPlaitsParam(Plaits.LEVEL, level)
         levelFader?.progress = (level / Plaits.FADER_TOP * 100f).toInt()
     }

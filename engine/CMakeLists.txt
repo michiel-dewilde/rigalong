@@ -8,7 +8,7 @@
 # and the graph compiler has never been tested at all.
 #
 # That gap is not hypothetical. "A second edge into any input pin produced
-# silence, with no error" survived in this code until an organ needed fan-in,
+# silence, with no error" survived in this code until setBfree needed fan-in,
 # because the only way to exercise the compiler was to play a tablet.
 #
 # What is deliberately NOT here yet: the six instrument nodes. Every one of them

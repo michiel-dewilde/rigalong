@@ -19,7 +19,7 @@
 #include <bagosynths/Graph.h>
 #include <bagosynths/MidiZone.h>
 #include <bagosynths/Wire.h>
-#include "graph/HammondNode.h"
+#include "graph/SetBfreeNode.h"
 #include "graph/SurgeNode.h"
 #include "graph/DexedNode.h"
 #include "graph/PlaitsNode.h"
@@ -110,7 +110,7 @@ public:
     // An INSTANCE is one engine node with its own zone, insert effect and the
     // two switchable wires around it -- what a song calls a sound. The six of
     // the default patch are instances 0-5 (kRack* order); a song that wants a
-    // second piano or a third synth gets more, added while audio runs.
+    // second sfizz or a third Surge XT gets more, added while audio runs.
     static constexpr int kMaxInstances = 24;
     int instanceCount() const { return mInstanceCount.load(std::memory_order_acquire); }
     // Its engine (kRack*), or -1.
@@ -124,7 +124,7 @@ public:
     // Returns its index, or -1. Off the audio thread.
     int addInstance(int type);
 
-    // Gives instance `i` the preset `name` (an SFZ id with its `path`, an organ
+    // Gives instance `i` the preset `name` (an SFZ id with its `path`, a setBfree
     // registration, a Surge "Category/Name", a DX7 voice, a SoundFont file and
     // `program`, a Plaits model). Slow loads run in the background; a request
     // made before the instance's library is up is honoured once it is.
@@ -135,8 +135,8 @@ public:
 
     // The instruments in the default patch. All are always present and all
     // always receive MIDI; which one is heard is a question of level, so that
-    // layering an organ under a piano costs nothing but a fader move.
-    bagosynths::HammondNode* hammond() { return mHammond; }
+    // layering setBfree under sfizz costs nothing but a fader move.
+    bagosynths::SetBfreeNode* setBfree() { return mSetBfree; }
     bagosynths::SfizzNode* sfizz() { return mSfizz; }
     bagosynths::SurgeNode* surge() { return mSurge; }
     bagosynths::DexedNode* dexed() { return mDexed; }
@@ -222,7 +222,7 @@ public:
     // The CP-88 is a 2-in/2-out interface, so if it returns its output mix on
     // its USB input we can measure our own latency exactly: write a click, count
     // how many input frames pass before it comes back. Same technique OboeTester
-    // uses with a physical loopback cable, except the loop is inside the piano.
+    // uses with a physical loopback cable, except the loop is inside the CP-88.
     //
     // Whether the CP-88 actually returns the USB-in signal is the open question.
     // If it does not, inputPeak simply never rises and the probe reports FAILED —
@@ -247,7 +247,7 @@ public:
     void startLatencyProbe();
 
     // Key-to-tone probe: the clock starts when a MIDI note-on arrives from the
-    // piano and stops when the resulting tone reaches the microphone. Subtracting
+    // CP-88 and stops when the resulting tone reaches the microphone. Subtracting
     // the click probe cancels the room, the microphone and the output stage,
     // leaving what the instrument itself costs.
     void startNoteProbe();
@@ -286,7 +286,7 @@ public:
         float outputPeak = 0.0f;
 
         // The device the stream is really on, so the UI can tell whether a
-        // recovery landed on the piano or on the tablet speaker.
+        // recovery landed on the CP-88 or on the tablet speaker.
         int32_t deviceId = 0;
 
         // --- output-path health ------------------------------------------
@@ -425,7 +425,7 @@ private:
     std::atomic<bool> mUsbActive{false};
     std::atomic<int32_t> mUsbRate{0};
 
-    // Runs on the audio thread, after the synth has rendered. May overwrite the
+    // Runs on the audio thread, after the engines have rendered. May overwrite the
     // output block with a click while a measurement is in flight.
     void runLatencyProbe(float* out, int32_t numFrames);
 
@@ -477,7 +477,7 @@ private:
     // there is no interleaving in which the writer frees what the reader holds.
     std::atomic<bagosynths::Schedule*> mScheduleHazard{nullptr};
     bagosynths::SfizzNode* mSfizz = nullptr;
-    bagosynths::HammondNode* mHammond = nullptr;
+    bagosynths::SetBfreeNode* mSetBfree = nullptr;
     bagosynths::SurgeNode* mSurge = nullptr;
     bagosynths::DexedNode* mDexed = nullptr;
     bagosynths::PlaitsNode* mPlaits = nullptr;
@@ -507,7 +507,7 @@ private:
     bool compileAndPublish(bool prepareAll, std::string* error);
 public:
     // Rack positions, in the order the engines were always built.
-    enum { kRackSfizz, kRackHammond, kRackSurge, kRackDexed, kRackPlaits, kRackFluid, kRackSize };
+    enum { kRackSfizz, kRackSetBfree, kRackSurge, kRackDexed, kRackPlaits, kRackFluid, kRackSize };
     bagosynths::MidiZoneNode* zone(int i) const { return i >= 0 && i < instanceCount() ? mZone[i] : nullptr; }
     void setRackWire(int i, bool midiOn, bool audioOn, float gain) {
         if (i < 0 || i >= instanceCount() || !mRackMidi[i]) return;
@@ -553,8 +553,8 @@ private:
     std::thread mLoaderThread;
     std::atomic<bool> mLoading{false};
 
-    // Surge gets its own loader rather than sharing sfizz's: bringing the synth
-    // up and swapping a piano are independent, and making one wait on the other
+    // Surge gets its own loader rather than sharing sfizz's: bringing Surge XT
+    // up and swapping an sfizz instrument are independent, and making one wait on the other
     // would be a needless coupling on stage. It is a detached pthread rather
     // than a std::thread because it needs a bigger stack than bionic's default
     // -- see runOnBigStack() in the .cpp, which explains what that cost.
@@ -722,7 +722,7 @@ private:
     // thread -- and the render thread is the part that has to produce 64 voices
     // of Salamander on whatever core the governor felt like using.
     //
-    // Measured on the phone, 2026-09-25, intensive piano, ring depth swept with
+    // Measured on the phone, 2026-09-25, intensive sfizz playing, ring depth swept with
     // the 4 ms point repeated at the end as a control (121 first, 221 last):
     //
     //   4,0 ms -> 121 underruns     12,0 ms -> 35
@@ -881,7 +881,7 @@ private:
     // in the thing that actually matters -- how much slack the render thread
     // has -- behind two configurations of the same device.
     //
-    // Measured on the phone, 2026-09-25, intensive piano, 60 rounds of 16
+    // Measured on the phone, 2026-09-25, intensive sfizz playing, 60 rounds of 16
     // voices, the two ALSA arms interleaved:
     //
     //   44100 shared, burst 882 -> minFill 1323 frames = 30,0 ms -> ringUnder 8, 9
@@ -912,7 +912,7 @@ private:
     // A silenced instrument keeps RUNNING until it has actually gone quiet.
     //
     // Its level is already zero, so none of it is audible; the point is to let
-    // whatever it holds internally -- the Hammond's rotary and reverb live
+    // whatever it holds internally -- setBfree's rotary and reverb live
     // inside beatrix, not in this graph -- decay away. A node that stops being
     // processed freezes those tails and resumes them when it comes back, which
     // is audible and was reported as exactly that.
@@ -975,9 +975,9 @@ private:
     static constexpr int kReconnectDelayMs = 250;
 
     // The device this stream was opened on, so a disconnect can be recovered
-    // onto the SAME piano rather than onto whatever AAudio feels like.
+    // onto the SAME CP-88 rather than onto whatever AAudio feels like.
     std::atomic<int32_t> mOpenedDeviceId{kUnspecifiedDevice};
-    // What the stream is ACTUALLY on. The UI compares this against the piano
+    // What the stream is ACTUALLY on. The UI compares this against the CP-88
     // it can find by name, which is the only way to notice a silent fallback.
     std::atomic<int32_t> mActualDeviceId{kUnspecifiedDevice};
     // Set while a disconnect is being recovered from, so the UI can say so

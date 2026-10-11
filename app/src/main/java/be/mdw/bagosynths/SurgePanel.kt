@@ -164,9 +164,9 @@ class SurgePanelBuilder(private val context: Context) {
         root.addView(macroGrid)
 
         // --- level ------------------------------------------------------------
-        // Starts at zero, like the organ: the app opens on the piano and each
+        // Starts at zero, like setBfree: the app opens on sfizz and each
         // other part is brought in deliberately. This mirrors what the node does.
-        levelRow = slider("Synth", 0f, keep = { levelFader = it }) {
+        levelRow = slider(Part.Surge.label, 0f, keep = { levelFader = it }) {
             NativeBridge.nativeSetSurgeParam(Surge.LEVEL, it * Surge.FADER_TOP)
         }
         root.addView(levelRow)
@@ -221,11 +221,11 @@ class SurgePanelBuilder(private val context: Context) {
     }
 
     /**
-     * Mirrors [Part] onto the synth's level, the same way the organ panel does.
+     * Mirrors [Part] onto Surge XT's level, the same way the setBfree panel does.
      * The level is the single source of truth; the button is a view of it.
      */
     fun setPart(part: Part) {
-        val level = if (part == Part.Synth || part == Part.All) Surge.DEFAULT_LEVEL else 0f
+        val level = if (part == Part.Surge || part == Part.All) Surge.DEFAULT_LEVEL else 0f
         NativeBridge.nativeSetSurgeParam(Surge.LEVEL, level)
         levelFader?.progress = (level / Surge.FADER_TOP * 100f).toInt()
     }

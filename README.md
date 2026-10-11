@@ -1,11 +1,11 @@
 # Bag-O-Synths
 
 Android sound module for the Yamaha CP-88, running on a Galaxy Tab S9 Ultra.
-One USB-C to USB-B cable carries MIDI in and audio out; the synth is mixed into
-the piano's own outputs.
+One USB-C to USB-B cable carries MIDI in and audio out; the app's engines are
+mixed into the CP-88's own outputs.
 
-It is a bag of synths: an SFZ sampler, a tonewheel organ, Surge XT, a DX7, a
-Plaits macro oscillator and a SoundFont player, all of them playable together
+It is a bag of synths: sfizz (SFZ sampler), setBfree (tonewheel organ), Surge
+XT, Dexed (DX7), Plaits (macro oscillator) and FluidSynth (SoundFonts), all playable together
 from one keyboard. Everything is decided against measured numbers, because the
 only thing that matters is whether it can be played live.
 
@@ -24,7 +24,7 @@ project. The single exception is the logcat tags, which are `bos-audio`,
 `bos-fluid` and so on, because those get typed by hand dozens of times a
 session.
 
-## Status: M3 done, the organ built (M4)
+## Status: M3 done, setBfree built (M4)
 
 Measured on the CP-88: AAudio **EXCLUSIVE LOW_LATENCY**, 44100 Hz, 89-frame burst,
 **9-10 ms output latency, 0 xruns**, 4-17% CPU while playing. Acoustic round trip
@@ -73,7 +73,7 @@ What works:
 ```
 MIDI In --+--> sfizz    --+
           |               |
-          +--> Hammond  --+
+          +--> setBfree --+
           |               |
           +--> Surge XT --+--> Reverb --> Limiter --> Audio Out
           |               |
@@ -86,13 +86,11 @@ MIDI In --+--> sfizz    --+
 
 * Oboe output stream to the CP-88 — AAudio, MMAP, **EXCLUSIVE**, 44100 Hz, I16
 * Native MIDI in over the same cable via **AMidi**, polled from the audio callback
-* A real polyphonic synth voice (two detuned polyBLEP saws, SVF lowpass with an
-  envelope-modulated cutoff, ADSR), 64 voices with sensible stealing
 * Sustain pedal (CC64), mod wheel (CC1), volume (CC7), pitch bend, all-notes-off
 * TPDF dither on the float → 16-bit conversion
 * Live readout of latency, xruns, CPU load, peak callback time and voice count
 * Automatic recovery from stream disconnect
-* An on-screen test octave, so the audio path can be checked with no piano attached
+* An on-screen test octave, so the audio path can be checked with no CP-88 attached
 * A **MEASURE** button: emits a click through the CP-88, listens on the built-in
   mic, and reports the acoustic round trip — latency verifiable on any stage
 
@@ -170,7 +168,7 @@ requires AGP 8.9.1 or newer — AGP 8.7 cannot compile against 36.
 
 The tablet has one USB-C port and the CP-88 will be in it. Use **Developer
 options → Wireless debugging → Pair device with pairing code**, and connect from
-Android Studio. Otherwise every deploy means unplugging the piano.
+Android Studio. Otherwise every deploy means unplugging the CP-88.
 
 ### Build a release variant for any performance judgement
 
@@ -256,7 +254,7 @@ launch when sfizz's and Surge's tuning libraries met.
 
 1. CP-88 powered on, USB-C → USB-B cable to the tablet.
 2. On the CP-88, set **Local Control off** if you want the tablet to be the only
-   sound source; leave it on to layer the app under the piano.
+   sound source; leave it on to layer the app under the CP-88.
 3. Launch the app. It looks for a USB audio device naming itself CP88/CP73/Yamaha
    and opens that explicitly — auto-select can land on the built-in speaker and
    report misleadingly good latency.
@@ -365,7 +363,7 @@ A silenced instrument is not stopped at once. Its level fades out, its voices
 are then released, and it keeps rendering until its own output has been
 **silent for a full second**, so reverbs and rotary speakers drain away instead
 of being frozen and replayed on the way back. Measured tails on this rig: sfizz
-3,7-6,4 s, the Hammond 10,8 s, Surge XT 22,4 s. A 30 s ceiling stops an engine
+3,7-6,4 s, setBfree 10,8 s, Surge XT 22,4 s. A 30 s ceiling stops an engine
 that never goes quiet, and says so in the log.
 
 ## Thread scheduling
@@ -428,7 +426,7 @@ order, buffer assignment, and the bounds on `MidiBuffer`.
 
 The first case is a regression test for a real bug — **a second edge into any
 input pin produced silence, with no error** — which survived in this project
-until an organ needed fan-in, because the only way to exercise the compiler was
+until setBfree needed fan-in, because the only way to exercise the compiler was
 to play a tablet.
 
 The harness is sixty lines in `engine/tests/harness.h` and has no dependency.
@@ -465,8 +463,8 @@ capped at 64 messages per block so a flood cannot blow the deadline.
 ## Next
 
 Six instruments are shipped and **all six have been played**: *"all instruments
-play well"*. Earlier verdicts were *"perfect!"* for the sampler under forearm
-clusters and *"works beautifully!"* for the organ, Surge XT and the DX7.
+play well"*. Earlier verdicts were *"perfect!"* for sfizz under forearm
+clusters and *"works beautifully!"* for setBfree, Surge XT and Dexed.
 
 The next choice is open. The one thing still standing between this and a gig is
 **an hour warm** — thermal throttling is what bites live rather than at a desk,

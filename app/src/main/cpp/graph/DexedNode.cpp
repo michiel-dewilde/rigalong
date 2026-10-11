@@ -668,7 +668,7 @@ void DexedNode::process(const ProcessArgs& args) {
                     }
                     break;
                 case 0xC0:
-                    // Dropped, as the organ and Surge drop it: the CP-88 sends a
+                    // Dropped, as setBfree and Surge XT drop it: the CP-88 sends a
                     // program change on every voice change of its own, and
                     // letting it through would swap the DX7 voice mid-set.
                     break;

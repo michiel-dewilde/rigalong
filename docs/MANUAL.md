@@ -41,19 +41,19 @@ What you play from.
   you pick "Whole song" at the top. Switching never cuts a note: a key you are
   holding keeps sounding until you release it, even if the new live set no
   longer uses that sound, and tails ring out naturally.
-* **Levels**: one fader per sound the song uses (two pianos, two faders). Faders move only when you
+* **Levels**: one fader per sound the song uses (two sfizz instances, two faders). Faders move only when you
   drag them, from where they are; touching one does nothing. "Store in this
   live set" (hold it) makes what you hear the live set's own: the levels, and
   whatever you moved on the stage or with a knob since you selected it (the
   drawbars, a filter). A value moved back to the song's stops being its own.
 * **Master**: the overall volume, at the right. It belongs to the room, not
   to the song, so no live set changes it. Hold its label to return to 0 dB.
-* **Organ**: when the song uses the organ, its nine drawbars, Leslie (stop /
-  slow / fast) and percussion are here. With several organs, the panel is
-  the organ playing in this live set, and says which.
+* **setBfree**: when the song uses setBfree, its nine drawbars, Leslie (stop /
+  slow / fast) and percussion are here. With several setBfree instances, the
+  panel is the one playing in this live set, and says which.
 * **Knobs, wheels and pedals**: a control you have taught to a sound's
   setting (see Songs) moves it while that sound plays in the live set, so one
-  knob can be the organ's drawbar in one live set and the synth's filter in
+  knob can be a setBfree drawbar in one live set and a Surge XT filter in
   the next. After a switch it **picks up**: it does nothing until you turn it
   past the setting's value, so nothing jumps.
 * **Tempo**: the song's tempo with a blinking beat. TAP sets a tempo by
@@ -84,12 +84,12 @@ Where songs are made. On the left is the setlist that is on stage: change
 the order with ▲ ▼, remove a song with ✕, or add one. On the right is the
 song being edited:
 
-* **Sounds**: what the song plays. Each sound is one of six engines -- Piano
-  (SFZ sampler), Organ (tonewheel), Synth (Surge XT), FM (DX7), Texture
-  (Plaits), SF2 (SoundFonts) -- with its own patch, level and effect. A song
-  can have several of one engine: **Add a sound** "+ Piano" twice gives two
-  pianos, each with its own instrument, split, transposition and fader. Tap a
-  sound's name to name it ("Bright piano"); ✕ removes it.
+* **Sounds**: what the song plays. Each sound is one of six engines -- sfizz
+  (SFZ sampler), setBfree (tonewheel organ), Surge XT, Dexed (DX7), Plaits
+  and FluidSynth (SoundFonts) -- with its own patch, level and effect. A song
+  can have several of one engine: **Add a sound** "+ sfizz" twice gives two
+  sfizz instances, each with its own instrument, split, transposition and
+  fader. Tap a sound's name to name it ("Bright"); ✕ removes it.
   * **Patch…** shows every setting of that sound (drawbars, models, sends,
     transposition) as sliders over their real ranges. What you change is
     heard at once and kept in the song.
@@ -133,7 +133,7 @@ song being edited:
   top:
   * **Whole song**: you change the sound's patch, so every live set hears it.
   * **Only in "Solo"** (the live set): you change it for this live set
-    alone, such as pulling the organ's drawbars or opening a filter. These
+    alone, such as pulling setBfree's drawbars or opening a filter. These
     values sit on top of the song's: other live sets keep the song's, and
     leaving this live set puts the song's values back. They are plain values,
     so switching stays instant. A value of its own is marked ●; ↺ takes it
@@ -197,7 +197,7 @@ Every setlist and song, with its history.
     **.X9A** (a backup), and cp-liveset's YAML documents of them (.yaml).
     Their Live Set Sounds go into **CP-88 sounds**; a sound the library
     already has is not added twice;
-  * an SFZ sample library as a **.zip**. It then appears in every Piano
+  * an SFZ sample library as a **.zip**. It then appears in every sfizz
     patch list.
   One Import is one Undo.
 * **Details** (beside a setlist) and the **versions** count (beside a song)
@@ -222,7 +222,7 @@ Every setlist and song, with its history.
   what it reads as, or where it goes wrong, as you type. **Play on CP-88**
   plays the edited sound before you keep it; **Save** keeps it as the
   sound's new version; **Save as .yaml** writes a file cp-liveset reads.
-  The name keeps its padding: trailing NULs show as ` `, trailing spaces
+  The name keeps its padding: trailing NULs show as `\0`, trailing spaces
   are dropped and put back.
 * **Patches**: the library patches, with Details: the songs using each one
   (and "Update to the latest version" for a song left behind), where it was

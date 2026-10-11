@@ -162,7 +162,7 @@ Java_be_mdw_bagosynths_NativeBridge_nativeResetPeaks(JNIEnv*, jobject) {
     engine().resetPeaks();
 }
 
-// Plays a note without MIDI, so the audio path can be verified before the piano
+// Plays a note without MIDI, so the audio path can be verified before the CP-88
 // is even plugged in.
 JNIEXPORT void JNICALL
 Java_be_mdw_bagosynths_NativeBridge_nativeTestNote(JNIEnv*, jobject, jint note, jint velocity) {
@@ -228,58 +228,58 @@ Java_be_mdw_bagosynths_NativeBridge_nativeLoadedInstrument(JNIEnv* env, jobject)
     return env->NewStringUTF(engine().loadedInstrument().c_str());
 }
 
-// --------------------------------------------------------------- the organ
+// ------------------------------------------------------------- setBfree
 //
-// Parameters are addressed by index into HammondNode::Param, in natural units:
+// Parameters are addressed by index into SetBfreeNode::Param, in natural units:
 // drawbars 0..8, switches 0/1, the Leslie 0/1/2, everything else 0..1. No
 // normalisation layer, because there is nothing between the UI and the node
 // that would benefit from one.
 
 JNIEXPORT void JNICALL
-Java_be_mdw_bagosynths_NativeBridge_nativeSetOrganParam(JNIEnv*, jobject, jint index,
+Java_be_mdw_bagosynths_NativeBridge_nativeSetSetBfreeParam(JNIEnv*, jobject, jint index,
                                                       jfloat value) {
-    if (auto* h = engine().hammond()) h->setParam(index, value);
+    if (auto* h = engine().setBfree()) h->setParam(index, value);
 }
 
 JNIEXPORT jfloat JNICALL
-Java_be_mdw_bagosynths_NativeBridge_nativeGetOrganParam(JNIEnv*, jobject, jint index) {
-    auto* h = engine().hammond();
+Java_be_mdw_bagosynths_NativeBridge_nativeGetSetBfreeParam(JNIEnv*, jobject, jint index) {
+    auto* h = engine().setBfree();
     return h ? h->getParam(index) : 0.0f;
 }
 
 JNIEXPORT jstring JNICALL
-Java_be_mdw_bagosynths_NativeBridge_nativeOrganParamName(JNIEnv* env, jobject, jint index) {
-    auto* h = engine().hammond();
+Java_be_mdw_bagosynths_NativeBridge_nativeSetBfreeParamName(JNIEnv* env, jobject, jint index) {
+    auto* h = engine().setBfree();
     return env->NewStringUTF(h ? h->paramName(index) : "");
 }
 
 JNIEXPORT void JNICALL
-Java_be_mdw_bagosynths_NativeBridge_nativeOrganPreset(JNIEnv*, jobject, jint index,
+Java_be_mdw_bagosynths_NativeBridge_nativeSetBfreePreset(JNIEnv*, jobject, jint index,
                                                     jint manual) {
-    if (auto* h = engine().hammond()) h->applyPreset(index, manual);
+    if (auto* h = engine().setBfree()) h->applyPreset(index, manual);
 }
 
 JNIEXPORT jobjectArray JNICALL
-Java_be_mdw_bagosynths_NativeBridge_nativeOrganPresetNames(JNIEnv* env, jobject) {
-    const int count = bagosynths::HammondNode::presetCount();
+Java_be_mdw_bagosynths_NativeBridge_nativeSetBfreePresetNames(JNIEnv* env, jobject) {
+    const int count = bagosynths::SetBfreeNode::presetCount();
     jclass stringClass = env->FindClass("java/lang/String");
     jobjectArray out = env->NewObjectArray(count, stringClass, nullptr);
     for (int i = 0; i < count; ++i) {
-        jstring name = env->NewStringUTF(bagosynths::HammondNode::presetName(i));
+        jstring name = env->NewStringUTF(bagosynths::SetBfreeNode::presetName(i));
         env->SetObjectArrayElement(out, i, name);
         env->DeleteLocalRef(name);
     }
     return out;
 }
 
-// The sampler's level, so the two parts can be balanced against each other.
+// sfizz's level, so the two parts can be balanced against each other.
 JNIEXPORT void JNICALL
-Java_be_mdw_bagosynths_NativeBridge_nativeSetSamplerLevel(JNIEnv*, jobject, jfloat value) {
+Java_be_mdw_bagosynths_NativeBridge_nativeSetSfizzLevel(JNIEnv*, jobject, jfloat value) {
     if (auto* s = engine().sfizz()) s->setParam(bagosynths::SfizzNode::kLevel, value);
 }
 
 JNIEXPORT jfloat JNICALL
-Java_be_mdw_bagosynths_NativeBridge_nativeGetSamplerLevel(JNIEnv*, jobject) {
+Java_be_mdw_bagosynths_NativeBridge_nativeGetSfizzLevel(JNIEnv*, jobject) {
     auto* s = engine().sfizz();
     return s ? s->getParam(bagosynths::SfizzNode::kLevel) : 0.0f;
 }
@@ -633,7 +633,7 @@ Java_be_mdw_bagosynths_NativeBridge_nativeGetFluidParam(JNIEnv*, jobject, jint i
 // Enough to walk the graph without knowing what is in it: node types, their
 // parameters by name, and the edges. Saving a patch needs exactly this, and so
 // will the editor -- which is why it is a general surface rather than a
-// save-the-organ function.
+// save-setBfree function.
 //
 // Parameters are addressed by NAME in the file and by index here. That is
 // deliberate: an index is fast and an index is also what changes when someone
@@ -1237,7 +1237,7 @@ Java_be_mdw_bagosynths_NativeBridge_nativeUsbMidiSend(JNIEnv* env, jobject, jbyt
 }
 
 // THE RACK (AudioEngine.h): per engine, its zone's parameters and the on/off
-// and gain of its two wires. Index order: sfizz, hammond, surge, dexed,
+// and gain of its two wires. Index order: sfizz, setBfree, surge, dexed,
 // plaits, fluid.
 JNIEXPORT void JNICALL
 Java_be_mdw_bagosynths_NativeBridge_nativeRackWire(JNIEnv*, jobject, jint i, jboolean midiOn,

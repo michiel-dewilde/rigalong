@@ -119,12 +119,12 @@ Staged by when they are needed, not by importance.
 * **MIDI Out** — for driving external gear.
 
 ### Instruments
-* **sfizz** (SFZ), **FluidSynth** (SF2/SF3), **Beatrix** (tonewheel organ),
+* **sfizz** (SFZ), **FluidSynth** (SF2/SF3), **setBfree** (Beatrix, tonewheel organ),
   **msfa** (DX7 FM), **Surge XT**, **Mutable** voices.
   MIDI in → Audio out, plus Param inputs for their main controls.
 
 **Built: `SfizzNode`, `HammondNode`, `SurgeNode`, `DexedNode`, `PlaitsNode` and
-`FluidNode`.** The organ's Leslie is *inside* the organ
+`FluidNode`.** setBfree's Leslie is *inside* the setBfree
 node, because an organ and its speaker are one instrument and nobody patches
 between them. Pulling `b_whirl` out into a reusable **Rotary** node — a Rhodes
 through a Leslie is worth having — needs only its own `midicfg` and stays on the
@@ -230,8 +230,8 @@ a flat loop and means a node never learns how many sources feed it.
 Only `numFrames` are mixed, not the whole buffer — buffers are sized for the
 largest block the engine might ever ask for and the render thread works in 128.
 
-This is what makes the organ and the piano share one effects chain. It is worth
-knowing that until the organ needed it, **a second edge into any input pin
+This is what makes setBfree and sfizz share one effects chain. It is worth
+knowing that until setBfree needed it, **a second edge into any input pin
 produced silence with no error** — the compiler had a comment promising the sum
 and no code doing it.
 
@@ -284,7 +284,7 @@ the deadline, so one preempted worker glitches the whole block. Parallelism pays
 only when the critical path is long relative to that overhead: **a node must be
 worth roughly 50-100 µs before farming it out makes sense.**
 
-Current reality: the M2 synth runs at 4-17% CPU and the measured ceiling is ~75%
+Current reality: the M2 test voice ran at 4-17% CPU and the measured ceiling is ~75%
 of one core. **There is nothing to parallelise yet.** Building it now would add
 jitter and complexity to buy headroom that is not needed.
 
@@ -348,7 +348,7 @@ voice count, make voice allocation a graph-wide problem, and turn every edit int
 a reallocation of 64 subgraphs.
 
 For a stage instrument the pedalboard model is the right call: it is predictable,
-cheap, and matches how the player thinks ("piano into reverb", not "one oscillator
+cheap, and matches how the player thinks ("sfizz into reverb", not "one oscillator
 per key"). Per-voice modulation stays available *inside* an instrument node, where
 sfizz, Beatrix and Surge already implement it well.
 
@@ -367,7 +367,7 @@ exactly why width exists in the model from day one.
 ## 7. A hardware constraint the UI must express
 
 **Audio In and Audio Out cannot both use the CP-88.** Established by experiment:
-the piano's capture and playback are mutually exclusive on Android's USB audio
+the CP-88's capture and playback are mutually exclusive on Android's USB audio
 HAL — whichever opens first wins and the other fails.
 
 So an Audio In node can offer the built-in microphone, and nothing else, while the

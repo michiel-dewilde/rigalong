@@ -1,4 +1,4 @@
-#include "HammondNode.h"
+#include "SetBfreeNode.h"
 
 #include <android/log.h>
 
@@ -27,7 +27,7 @@ extern "C" {
 extern double SampleRateD;   // beatrix_glue.c; read by tonegen.c and vibrato.c
 }
 
-#define LOGI(...) __android_log_print(ANDROID_LOG_INFO, "bos-organ", __VA_ARGS__)
+#define LOGI(...) __android_log_print(ANDROID_LOG_INFO, "bos-setbfree", __VA_ARGS__)
 
 namespace {
 inline double nowSec() {
@@ -73,14 +73,14 @@ const char* const kParamNames[] = {
     "Level",
 };
 static_assert(sizeof(kParamNames) / sizeof(kParamNames[0]) ==
-                      static_cast<size_t>(bagosynths::HammondNode::kNumParams),
+                      static_cast<size_t>(bagosynths::SetBfreeNode::kNumParams),
               "parameter name table out of step with the enum");
 }  // namespace
 
 namespace bagosynths {
 
-HammondNode::HammondNode() {
-    // Defaults: a usable organ the moment the node exists, so a fresh patch
+SetBfreeNode::SetBfreeNode() {
+    // Defaults: a usable registration the moment the node exists, so a fresh patch
     // makes a sound rather than silence. 88 8000 000 is the Jimmy Smith
     // registration and the most recognisable Hammond sound there is.
     static const unsigned int kUpperDefault[9] = {8, 8, 8, 8, 0, 0, 0, 0, 0};
@@ -110,7 +110,7 @@ HammondNode::HammondNode() {
     mParams[kLevel] = 1.0f;
 }
 
-HammondNode::~HammondNode() {
+SetBfreeNode::~SetBfreeNode() {
     if (!mInst) return;
     freeReverb(mInst->reverb);
     freeWhirl(mInst->whirl);
@@ -122,7 +122,7 @@ HammondNode::~HammondNode() {
     delete mInst;
 }
 
-void HammondNode::prepare(double sampleRate, int maxFrames) {
+void SetBfreeNode::prepare(double sampleRate, int maxFrames) {
     // Start AT the current level, so a graph recompile does not fade the
     // instrument in from silence.
     mGain.prepare(sampleRate, mParams[kLevel]);
@@ -156,7 +156,7 @@ void HammondNode::prepare(double sampleRate, int maxFrames) {
         // shows setbfree does provide freeToneGenerator and friends -- but it
         // would drop every sounding note and cost the wavetable build again,
         // for no gain.
-        LOGI("hammond: rebuilding the tone generator for %.0f Hz (was %.0f)",
+        LOGI("setBfree: rebuilding the tone generator for %.0f Hz (was %.0f)",
              sampleRate, mRate);
         mRate = sampleRate;
         SampleRateD = sampleRate;
@@ -211,42 +211,42 @@ void HammondNode::prepare(double sampleRate, int maxFrames) {
 
 // ---------------------------------------------------------------- parameters
 
-void HammondNode::pushParam(int index, float value) {
+void SetBfreeNode::pushParam(int index, float value) {
     mQueue.push(index, value);
 }
 
-void HammondNode::setParam(int index, float value) {
+void SetBfreeNode::setParam(int index, float value) {
     if (index < 0 || index >= kNumParams) return;
     mParams[index] = value;
     if (!mInitialised) return;   // prepare() will apply it
     pushParam(index, value);
 }
 
-void HammondNode::setParamRealtime(int index, float value) {
+void SetBfreeNode::setParamRealtime(int index, float value) {
     if (index < 0 || index >= kNumParams) return;
     mParams[index] = value;
     if (!mInitialised) return;   // prepare() will apply it
     mRtQueue.push(index, value);
 }
 
-float HammondNode::getParam(int index) const {
+float SetBfreeNode::getParam(int index) const {
     if (index < 0 || index >= kNumParams) return 0.0f;
     return mParams[index];
 }
 
-const char* HammondNode::paramName(int index) const {
+const char* SetBfreeNode::paramName(int index) const {
     if (index < 0 || index >= kNumParams) return "";
     return kParamNames[index];
 }
 
-int HammondNode::presetCount() { return kNumPresets; }
+int SetBfreeNode::presetCount() { return kNumPresets; }
 
-const char* HammondNode::presetName(int index) {
+const char* SetBfreeNode::presetName(int index) {
     if (index < 0 || index >= kNumPresets) return "";
     return kPresets[index].name;
 }
 
-void HammondNode::applyPreset(int index, int manual) {
+void SetBfreeNode::applyPreset(int index, int manual) {
     if (index < 0 || index >= kNumPresets) return;
     if (manual < 0 || manual > 2) return;
     const int base = kUpper1 + manual * kDrawbarsPerManual;
@@ -255,7 +255,7 @@ void HammondNode::applyPreset(int index, int manual) {
     }
 }
 
-void HammondNode::applyParam(int index, float value) {
+void SetBfreeNode::applyParam(int index, float value) {
     if (!mInst) return;
     void* mcfg = mInst->midicfg;
 
@@ -364,11 +364,11 @@ void HammondNode::applyParam(int index, float value) {
 // ------------------------------------------------------------------ process
 
 // Beatrix's own panic, the same call the CC 120/123 handling makes below.
-void HammondNode::allNotesOff() {
+void SetBfreeNode::allNotesOff() {
     if (mInst != nullptr) midi_panic(mInst);
 }
 
-void HammondNode::process(const ProcessArgs& args) {
+void SetBfreeNode::process(const ProcessArgs& args) {
     if (args.numAudioOut < 1) return;
     const AudioPort& out = args.audioOut[0];
     float* outL = out.channel(0);
@@ -433,7 +433,7 @@ void HammondNode::process(const ProcessArgs& args) {
 
             // All-notes-off and all-sound-off, handled here because setBfree's
             // controller table does not carry them: CC 120 and 123 would simply
-            // be ignored, and a stuck organ note does not decay -- it drones
+            // be ignored, and a stuck setBfree note does not decay -- it drones
             // until the app is killed. Panic has to actually work.
             if ((e.status & 0xf0) == 0xB0 && (e.data1 == 120 || e.data1 == 123)) {
                 midi_panic(mInst);
@@ -451,7 +451,7 @@ void HammondNode::process(const ProcessArgs& args) {
     // multiply it would read zero the instant the part is switched away.
     mLastPeak = blockPeak(outR, args.numFrames, blockPeak(outL, args.numFrames));
 
-    // Ramped, not stepped: switching away from the organ while it is sounding
+    // Ramped, not stepped: switching away from setBfree while it is sounding
     // used to put a step straight into the samples.
     mGain.apply(outL, outR, args.numFrames, mParams[kLevel]);
 

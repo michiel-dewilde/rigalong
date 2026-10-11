@@ -27,7 +27,8 @@ import android.widget.TextView
 
 /**
  * M2: prove the pipe end to end. Opens an exclusive/MMAP Oboe stream to the
- * CP-88, takes MIDI in over the same cable, and plays a real synth voice --
+ * CP-88, takes MIDI in over the same cable, and plays its engines (sfizz,
+ * setBfree, Surge XT, Dexed, Plaits, FluidSynth) --
  * with the numbers that matter visible while you play.
  *
  * The UI is deliberately plain Views. Compose would be nicer to write and is a
@@ -43,14 +44,14 @@ class MainActivity : androidx.activity.ComponentActivity() {
 
     private lateinit var statusView: TextView
     private lateinit var midiView: TextView
-    private lateinit var organPanel: OrganPanelBuilder
+    private lateinit var setBfreePanel: SetBfreePanelBuilder
     private lateinit var surgePanel: SurgePanelBuilder
     private lateinit var dexedPanel: DexedPanelBuilder
     private lateinit var plaitsPanel: PlaitsPanelBuilder
     private lateinit var fluidPanel: FluidPanelBuilder
 
-    /** Piano on its own is where the app opens, matching the node's own default. */
-    private var part = Part.Piano
+    /** sfizz on its own is where the app opens, matching the node's own default. */
+    private var part = Part.Sfizz
 
     /**
      * Which panel is on screen. NOT the same thing as which part is audible, and
@@ -58,7 +59,7 @@ class MainActivity : androidx.activity.ComponentActivity() {
      * without hiding the panel you were working on, so a layer can be built
      * without losing your place.
      */
-    private var visiblePart = Part.Piano
+    private var visiblePart = Part.Sfizz
     private val partTabs = LinkedHashMap<Part, Button>()
     private val partPanels = LinkedHashMap<Part, View>()
     private var patchIndex = -1
@@ -69,8 +70,8 @@ class MainActivity : androidx.activity.ComponentActivity() {
     /**
      * How long the CP-88 must be missing before the instrument falls back to
      * the tablet's own speaker. Long enough that a jogged cable re-enumerating
-     * is recovered onto the piano instead, short enough that a demo with no
-     * piano in the room is playable without anyone waiting.
+     * is recovered onto the CP-88 instead, short enough that a demo with no
+     * CP-88 in the room is playable without anyone waiting.
      */
     private val SPEAKER_FALLBACK_AFTER_MS = 6000L
     private var lastRestartAttempt = 0L
@@ -84,7 +85,7 @@ class MainActivity : androidx.activity.ComponentActivity() {
     private var lastMidiAttempt = 0L
 
     /**
-     * The piano's device id as of the last watchdog pass.
+     * The CP-88's device id as of the last watchdog pass.
      *
      * Cached so the status line can say whether the stream is on it without
      * asking AudioManager a second time every frame — and because a replug
@@ -129,7 +130,7 @@ class MainActivity : androidx.activity.ComponentActivity() {
 
     private val poller = object : Runnable {
         override fun run() {
-            // BEFORE updateStats, because it is what resolves the piano's current
+            // BEFORE updateStats, because it is what resolves the CP-88's current
             // device id and the status line reports against that. The other way
             // round, every frame would describe the previous one.
             watchAudioDevice()
@@ -158,7 +159,7 @@ class MainActivity : androidx.activity.ComponentActivity() {
      *
      * It matters because of the division of labour in a recovery. The native
      * retry re-opens the device id it remembers, which catches a cable that was
-     * merely nudged; only this Kotlin side can ask AudioManager for the piano
+     * merely nudged; only this Kotlin side can ask AudioManager for the CP-88
      * BY NAME, which is the only thing that works after a real re-enumeration,
      * because that hands out a new id and makes every remembered one useless.
      * Without this, a replug behind a dialog left a silent instrument that
@@ -226,7 +227,7 @@ class MainActivity : androidx.activity.ComponentActivity() {
         // then back to where the last session was (S13.2).
         Handler(Looper.getMainLooper()).postDelayed({
             runCatching {
-                appLibrary.seedIfEmpty(NativeBridge.nativeOrganPresetNames().toList())
+                appLibrary.seedIfEmpty(NativeBridge.nativeSetBfreePresetNames().toList())
                 player.resume()
             }.onFailure { android.util.Log.e("bos-ui", "new UI start: $it") }
         }, 2500)
@@ -247,6 +248,7 @@ class MainActivity : androidx.activity.ComponentActivity() {
         filter.addAction("be.mdw.bagosynths.CONCEAL")
         filter.addAction("be.mdw.bagosynths.REINIT")
         filter.addAction("be.mdw.bagosynths.RESETPEAKS")
+        filter.addAction("be.mdw.bagosynths.RESET_LIBRARY")
         filter.addAction("be.mdw.bagosynths.PROFILE")
         filter.addAction("be.mdw.bagosynths.INSTRUMENT")
         filter.addAction("be.mdw.bagosynths.OUTPUT")
@@ -317,7 +319,7 @@ class MainActivity : androidx.activity.ComponentActivity() {
     // exactly ONE profile, 48000 Hz and PCM_16_BIT, while the CP-88 port has
     // exactly one profile, 44100 Hz and PCM_24_BIT_PACKED. So exclusive on
     // this device is not merely "available at 48 kHz"; it is available ONLY
-    // through a port that cannot carry the piano's rate OR its word length,
+    // through a port that cannot carry the CP-88's rate OR its word length,
     // and the HAL therefore converts both. The question worth measuring is
     // what that conversion costs in latency and quality -- not whether it is
     // happening, which the dump already settles.
@@ -376,7 +378,7 @@ class MainActivity : androidx.activity.ComponentActivity() {
 
         // The nodes hold the live values either way, so the panels can show what
         // they actually are.
-        organPanel.refresh()
+        setBfreePanel.refresh()
         surgePanel.refresh()
         syncPartTabs()
         handler.post(poller)
@@ -417,7 +419,7 @@ class MainActivity : androidx.activity.ComponentActivity() {
 
         if (granted) {
             // Explicitly the BUILT-IN MIC. "Unspecified" is not good enough:
-            // with the CP-88 attached, Android makes the piano the default input,
+            // with the CP-88 attached, Android makes the CP-88 the default input,
             // so an unspecified input stream resolves to the CP-88's capture and
             // fails -- the two directions are mutually exclusive on that card.
             NativeBridge.nativeEnableInput(findBuiltinMicDeviceId())
@@ -438,7 +440,7 @@ class MainActivity : androidx.activity.ComponentActivity() {
      * even for the same physical interface, so this cannot reuse the output id.
      */
     // MEASURED AND DEAD, 2026-09-25. The idea was to make the latency probe
-    // listen on the piano's capture endpoint instead of a microphone: a click
+    // listen on the CP-88's capture endpoint instead of a microphone: a click
     // read digitally, at full scale, with no room and no volume control in
     // between, would fix the oracle that has now been wrong four times.
     //
@@ -480,7 +482,7 @@ class MainActivity : androidx.activity.ComponentActivity() {
         // or both of RECORD_AUDIO and POST_NOTIFICATIONS, so grantResults[0] is
         // no longer reliably the microphone. It also asks for the BUILT-IN mic
         // explicitly, which the old unspecified call got wrong -- with the CP-88
-        // attached, an unspecified input resolves to the piano and fails.
+        // attached, an unspecified input resolves to the CP-88 and fails.
         permissions.forEachIndexed { i, permission ->
             val ok = grantResults.getOrNull(i) ==
                 android.content.pm.PackageManager.PERMISSION_GRANTED
@@ -599,7 +601,7 @@ class MainActivity : androidx.activity.ComponentActivity() {
             NativeBridge.nativeFluidLoadFontNamed(it)
         }
         patchStatus = "$verb ${patch.optString("name", "patch")}"
-        organPanel.refresh()
+        setBfreePanel.refresh()
         surgePanel.refresh()
         dexedPanel.refresh()
         plaitsPanel.refresh()
@@ -616,27 +618,27 @@ class MainActivity : androidx.activity.ComponentActivity() {
      * and the tabs will show it, which is what makes layering visible.
      */
     private fun syncPartTabs() {
-        val organ = NativeBridge.nativeGetOrganParam(Organ.LEVEL) > 0.01f
-        val piano = NativeBridge.nativeGetSamplerLevel() > 0.01f
-        val synth = NativeBridge.nativeGetSurgeParam(Surge.LEVEL) > 0.01f
-        val fm = NativeBridge.nativeGetDexedParam(Dexed.LEVEL) > 0.01f
-        val texture = NativeBridge.nativeGetPlaitsParam(Plaits.LEVEL) > 0.01f
-        val soundfont = NativeBridge.nativeGetFluidParam(Fluid.LEVEL) > 0.01f
-        val on = listOf(piano, organ, synth, fm, texture, soundfont)
+        val setBfree = NativeBridge.nativeGetSetBfreeParam(SetBfree.LEVEL) > 0.01f
+        val sfizz = NativeBridge.nativeGetSfizzLevel() > 0.01f
+        val surge = NativeBridge.nativeGetSurgeParam(Surge.LEVEL) > 0.01f
+        val dexed = NativeBridge.nativeGetDexedParam(Dexed.LEVEL) > 0.01f
+        val plaits = NativeBridge.nativeGetPlaitsParam(Plaits.LEVEL) > 0.01f
+        val fluid = NativeBridge.nativeGetFluidParam(Fluid.LEVEL) > 0.01f
+        val on = listOf(sfizz, setBfree, surge, dexed, plaits, fluid)
         part = when {
             on.none { it } -> Part.None
             on.count { it } != 1 -> Part.All
-            piano -> Part.Piano
-            organ -> Part.Organ
-            synth -> Part.Synth
-            fm -> Part.FM
-            texture -> Part.Texture
-            else -> Part.SoundFont
+            sfizz -> Part.Sfizz
+            setBfree -> Part.SetBfree
+            surge -> Part.Surge
+            dexed -> Part.Dexed
+            plaits -> Part.Plaits
+            else -> Part.Fluid
         }
 
         val audible = mapOf(
-            Part.Piano to piano, Part.Organ to organ, Part.Synth to synth,
-            Part.FM to fm, Part.Texture to texture, Part.SoundFont to soundfont,
+            Part.Sfizz to sfizz, Part.SetBfree to setBfree, Part.Surge to surge,
+            Part.Dexed to dexed, Part.Plaits to plaits, Part.Fluid to fluid,
             Part.All to (on.count { it } > 1),
             // NONE lights when nothing is sounding, which is the one case where
             // a lit tab means the absence of sound rather than its presence.
@@ -669,21 +671,21 @@ class MainActivity : androidx.activity.ComponentActivity() {
     private fun showPart(target: Part, solo: Boolean) {
         visiblePart = target
         if (solo) {
-            organPanel.setPart(target)
+            setBfreePanel.setPart(target)
             surgePanel.setPart(target)
             dexedPanel.setPart(target)
             plaitsPanel.setPart(target)
             fluidPanel.setPart(target)
         } else {
             when (target) {
-                Part.Piano -> NativeBridge.nativeSetSamplerLevel(1f)
-                Part.Organ -> NativeBridge.nativeSetOrganParam(Organ.LEVEL, 1f)
-                Part.Synth -> NativeBridge.nativeSetSurgeParam(Surge.LEVEL, Surge.DEFAULT_LEVEL)
-                Part.FM -> NativeBridge.nativeSetDexedParam(Dexed.LEVEL, Dexed.DEFAULT_LEVEL)
-                Part.Texture -> NativeBridge.nativeSetPlaitsParam(Plaits.LEVEL, Plaits.DEFAULT_LEVEL)
-                Part.SoundFont -> NativeBridge.nativeSetFluidParam(Fluid.LEVEL, Fluid.DEFAULT_LEVEL)
+                Part.Sfizz -> NativeBridge.nativeSetSfizzLevel(1f)
+                Part.SetBfree -> NativeBridge.nativeSetSetBfreeParam(SetBfree.LEVEL, 1f)
+                Part.Surge -> NativeBridge.nativeSetSurgeParam(Surge.LEVEL, Surge.DEFAULT_LEVEL)
+                Part.Dexed -> NativeBridge.nativeSetDexedParam(Dexed.LEVEL, Dexed.DEFAULT_LEVEL)
+                Part.Plaits -> NativeBridge.nativeSetPlaitsParam(Plaits.LEVEL, Plaits.DEFAULT_LEVEL)
+                Part.Fluid -> NativeBridge.nativeSetFluidParam(Fluid.LEVEL, Fluid.DEFAULT_LEVEL)
                 Part.All -> {
-                    organPanel.setPart(Part.All)
+                    setBfreePanel.setPart(Part.All)
                     surgePanel.setPart(Part.All)
                     dexedPanel.setPart(Part.All)
                     plaitsPanel.setPart(Part.All)
@@ -692,7 +694,7 @@ class MainActivity : androidx.activity.ComponentActivity() {
                 // "Add NONE to the mix" is not a thing, so a long-press does
                 // what a tap does rather than quietly nothing.
                 Part.None -> {
-                    organPanel.setPart(Part.None)
+                    setBfreePanel.setPart(Part.None)
                     surgePanel.setPart(Part.None)
                     dexedPanel.setPart(Part.None)
                     plaitsPanel.setPart(Part.None)
@@ -703,7 +705,7 @@ class MainActivity : androidx.activity.ComponentActivity() {
 
         applyPanelVisibility(target)
 
-        organPanel.refresh()
+        setBfreePanel.refresh()
         surgePanel.refresh()
         dexedPanel.refresh()
         plaitsPanel.refresh()
@@ -714,7 +716,7 @@ class MainActivity : androidx.activity.ComponentActivity() {
     /**
      * Hides every panel, then shows the ones this part wants.
      *
-     * Two passes, not one, because PIANO and ORGAN map to the SAME view — a
+     * Two passes, not one, because sfizz and setBfree map to the SAME view — a
      * single pass would set it visible for one key and immediately hide it
      * again for the other, and which won would depend on map order.
      *
@@ -732,12 +734,12 @@ class MainActivity : androidx.activity.ComponentActivity() {
         // playing. Leaving the fader there let a drag put the soloed part at
         // half, or at zero, with the tab still saying it was the one sounding.
         //
-        // And it was worse than merely redundant: the piano and organ faders
-        // live on a SHARED panel, so PIANO and ORGAN showed two mix faders
+        // And it was worse than merely redundant: the sfizz and setBfree faders
+        // live on a SHARED panel, so sfizz and setBfree showed two mix faders
         // while every other solo showed one, which is the arbitrariness
         // Michiel reported rather than any deliberate rule.
         val mixing = target == Part.All
-        organPanel.setMixVisible(mixing)
+        setBfreePanel.setMixVisible(mixing)
         surgePanel.setMixVisible(mixing)
         dexedPanel.setMixVisible(mixing)
         plaitsPanel.setMixVisible(mixing)
@@ -746,10 +748,7 @@ class MainActivity : androidx.activity.ComponentActivity() {
 
     /** One tab. Tap to show and solo; long-press to add to the mix. */
     private fun makePartTab(target: Part): Button {
-        val label = when (target) {
-            Part.SoundFont -> "SF2"
-            else -> target.name.uppercase()
-        }
+        val label = target.label
         return Button(this).apply {
             text = label
             textSize = 17f
@@ -821,7 +820,7 @@ class MainActivity : androidx.activity.ComponentActivity() {
     }
 
     /**
-     * Brings the rig back when the piano reappears, and gets it OFF the tablet
+     * Brings the rig back when the CP-88 reappears, and gets it OFF the tablet
      * speaker if it ever lands there.
      *
      * The first version of this watched only for `running == false`, and a real
@@ -839,8 +838,8 @@ class MainActivity : androidx.activity.ComponentActivity() {
      * the CP-88 is TODAY, and a replug gives it a new id.
      *
      * So there are two failures to notice, not one:
-     *   * not running at all, and the piano is available again;
-     *   * running, but on something that is not the piano.
+     *   * not running at all, and the CP-88 is available again;
+     *   * running, but on something that is not the CP-88.
      *
      * The second is the dangerous one. It is silent: audio "works", the meters
      * move, and the sound is coming out of a speaker nobody on a stage can hear.
@@ -938,7 +937,7 @@ class MainActivity : androidx.activity.ComponentActivity() {
         if (now - lastRestartAttempt < 2000L) return
         lastRestartAttempt = now
 
-        // No piano. Two bad answers, and the least bad one depends on where you
+        // No CP-88. Two bad answers, and the least bad one depends on where you
         // are standing.
         //
         // The original rule was to refuse the tablet's own speaker outright,
@@ -949,18 +948,18 @@ class MainActivity : androidx.activity.ComponentActivity() {
         // But measured 2026-09-21: pulling the cable left the app silent and
         // STUCK -- no stream, and playing did nothing until it was restarted.
         // That is not a rig that "works without the CP-88" in any sense, and it
-        // is a trap anywhere the piano is simply not part of the setup.
+        // is a trap anywhere the CP-88 is simply not part of the setup.
         //
-        // So: fall back to the built-in speaker, but only after the piano has
+        // So: fall back to the built-in speaker, but only after the CP-88 has
         // been missing for a good while, and SAY SO loudly -- findCp88OutputDeviceId
         // already labels it "built-in (NO USB DEVICE ...)" and the status line
-        // shows that label. The piano is still preferred and is taken back the
+        // shows that label. The CP-88 is still preferred and is taken back the
         // moment it reappears, which is the branch above.
         if (!haveOutput) {
             if (now - deviceLostSince < SPEAKER_FALLBACK_AFTER_MS) return
             if (stats.running && stats.deviceId != NativeBridge.DEVICE_UNSPECIFIED &&
                 stats.deviceId != 0) {
-                // Already playing somewhere that is not the piano, which after
+                // Already playing somewhere that is not the CP-88, which after
                 // this fallback means the speaker. Leave it alone.
                 return
             }
@@ -983,7 +982,7 @@ class MainActivity : androidx.activity.ComponentActivity() {
             // Only if MIDI is actually down. It used to be reopened
             // unconditionally, which was harmless while both directions were the
             // same cable and is wrong now that they need not be: restarting
-            // audio on a Scarlett would drop the notes coming from the piano.
+            // audio on a Scarlett would drop the notes coming from the CP-88.
             if (!NativeBridge.nativeMidiOpen()) reopenMidi()
         }
     }
@@ -1179,7 +1178,7 @@ class MainActivity : androidx.activity.ComponentActivity() {
      * The output in use. The user's choice wins; otherwise the interim order,
      * hardcoded until the graph editor makes the output a property of the
      * patch: an audio interface (Scarlett) -- where one is present it is the
-     * monitoring path and the piano is just a controller -- then the CP-88,
+     * monitoring path and the CP-88 is just a controller -- then the CP-88,
      * then any other USB device. Null: the caller decides about the speaker.
      */
     private fun resolveAudio(): OutputChoice? {
@@ -1972,7 +1971,7 @@ class MainActivity : androidx.activity.ComponentActivity() {
                 // whatever part was last tapped, and the tell was voices=0/0 in
                 // the health line -- the cluster was playing, but not through
                 // sfizz, which is the engine the fault needs.
-                //   adb shell am broadcast -a be.mdw.bagosynths.PART --es name piano
+                //   adb shell am broadcast -a be.mdw.bagosynths.PART --es name sfizz
                 "be.mdw.bagosynths.PART" -> {
                     val want = intent.getStringExtra("name").orEmpty()
                     val hit = Part.values().firstOrNull { it.name.equals(want, true) }
@@ -1985,7 +1984,7 @@ class MainActivity : androidx.activity.ComponentActivity() {
                 }
                 // The acoustic oracle. THE LATCH has no host-visible signature
                 // -- measured -- so the only way to answer "is sound actually
-                // reaching the piano" is to make a noise and listen for it with
+                // reaching the CP-88" is to make a noise and listen for it with
                 // the tablet's microphone. Scriptable, so a latch hunt can run
                 // as a loop instead of as a person tapping and listening.
                 //   adb shell am broadcast -a be.mdw.bagosynths.MEASURE
@@ -2069,13 +2068,23 @@ class MainActivity : androidx.activity.ComponentActivity() {
                     android.util.Log.i("bos-ui", "underrun concealment: " + if (on) "ON" else "OFF")
                 }
                 "be.mdw.bagosynths.RESETPEAKS" -> NativeBridge.nativeResetPeaks()
-                // The sampler's level, so a test can make a measurable sound
-                // without tapping a fader: a restored patch may have left the
-                // piano quiet, and a microphone in a room with a PC fan needs
+                // Test hook: the library and the saved patches go, nothing else
+                // (instruments, SoundFonts and banks stay), and the app ends; started
+                // again it seeds a fresh library.
+                //   adb shell am broadcast -a be.mdw.bagosynths.RESET_LIBRARY
+                "be.mdw.bagosynths.RESET_LIBRARY" -> {
+                    java.io.File(filesDir, "library").deleteRecursively()
+                    java.io.File(filesDir, "patches").deleteRecursively()
+                    android.util.Log.i("bos-ui", "library and patches reset; ending")
+                    android.os.Process.killProcess(android.os.Process.myPid())
+                }
+                // sfizz's level, so a test can make a measurable sound
+                // without tapping a fader: a restored patch may have left
+                // sfizz quiet, and a microphone in a room with a PC fan needs
                 // signal it can actually hear.
                 //   adb shell am broadcast -a be.mdw.bagosynths.LEVEL --ef value 0.8
                 "be.mdw.bagosynths.LEVEL" ->
-                    NativeBridge.nativeSetSamplerLevel(intent.getFloatExtra("value", 0.8f))
+                    NativeBridge.nativeSetSfizzLevel(intent.getFloatExtra("value", 0.8f))
                 // The whole graph, to the log: which node holds a level down is
                 // otherwise a question only a human with the screen can answer.
                 // EXCLUSIVE/MMAP or SHARED, scriptable. The long-press on the
@@ -2094,7 +2103,7 @@ class MainActivity : androidx.activity.ComponentActivity() {
                 }
                 //   ... .RATE --ei hz 48000 --ei fmt 1    ask for what the MMAP
                 //                                          port wants, not what
-                //                                          the piano declares
+                //                                          the CP-88 declares
                 "be.mdw.bagosynths.RATE" -> {
                     rateOverride = intent.getIntExtra("hz", 0)
                     formatOverride = intent.getIntExtra("fmt", 0)
@@ -2116,7 +2125,7 @@ class MainActivity : androidx.activity.ComponentActivity() {
                 // chooses a render deadline as well. On the phone's two ALSA
                 // arms that hidden coupling is a factor of 7,5 -- 30 ms of
                 // slack at burst 882, 4 ms at burst 96 -- and it shows up as a
-                // factor of 45 in ring underruns under intensive piano. Worth
+                // factor of 45 in ring underruns under intensive sfizz playing. Worth
                 // sweeping rather than inheriting.
                 "be.mdw.bagosynths.FILL" -> {
                     val ms = intent.getIntExtra("ms", 0)
@@ -2298,7 +2307,7 @@ class MainActivity : androidx.activity.ComponentActivity() {
         val choice = resolveAudio()
         val d = choice?.alsa
         audioDeviceLabel = when {
-            choice == null -> "built-in (NO USB DEVICE — piano not connected?)"
+            choice == null -> "built-in (NO USB DEVICE — CP-88 not connected?)"
             d == null -> "${choice.name}  [owned by this app -- no ALSA device]"
             chosenOutputName != null -> "${choice.name}  [chosen, ALSA]"
             choice.name.uppercase().let { it.contains("SCARLETT") || it.contains("FOCUSRITE") } ->
@@ -2512,7 +2521,7 @@ class MainActivity : androidx.activity.ComponentActivity() {
      * MIDI IN IS CHOSEN INDEPENDENTLY OF THE AUDIO OUT. With a Scarlett carrying
      * the sound and the CP-88 carrying the notes, the two are different devices
      * on different cables, and tying them together -- as this did when both were
-     * the piano -- means changing one silently changes the other.
+     * the CP-88 -- means changing one silently changes the other.
      */
     private fun openMidi() {
         val manager = getSystemService(Context.MIDI_SERVICE) as? MidiManager
@@ -2966,7 +2975,7 @@ class MainActivity : androidx.activity.ComponentActivity() {
         // The instrument selector, in place of the old PART cycle.
         //
         // A cycle was fine for three parts and absurd for seven: getting from
-        // PIANO to SOUNDFONT was five taps with no way back. And with one panel
+        // sfizz to FluidSynth was five taps with no way back. And with one panel
         // per instrument stacked, reaching the last of them took eight swipes.
         //
         // Tabs fix both. Tap shows that panel and solos that part; LONG-PRESS
@@ -2984,33 +2993,33 @@ class MainActivity : androidx.activity.ComponentActivity() {
         }
         root.addView(tabRow)
 
-        // The organ's front panel, ABOVE the test keys: the drawbars are played
+        // setBfree's front panel, ABOVE the test keys: the drawbars are played
         // during a set and the test keys only ever exist for bringing the audio
-        // path up without a piano attached, so the organ gets the screen.
+        // path up without a CP-88 attached, so setBfree gets the screen.
         //
-        // PIANO and ORGAN share it, because it carries both faders -- it is
+        // sfizz and setBfree share it, because it carries both faders -- it is
         // really the keyboards panel. Worth splitting one day; not worth
-        // splitting while the piano's only other control is a library picker
+        // splitting while sfizz's only other control is a library picker
         // that already lives in the button row.
-        organPanel = OrganPanelBuilder(this)
-        val organView = organPanel.build()
-        root.addView(organView)
-        partPanels[Part.Piano] = organView
-        partPanels[Part.Organ] = organView
+        setBfreePanel = SetBfreePanelBuilder(this)
+        val setBfreeView = setBfreePanel.build()
+        root.addView(setBfreeView)
+        partPanels[Part.Sfizz] = setBfreeView
+        partPanels[Part.SetBfree] = setBfreeView
 
         surgePanel = SurgePanelBuilder(this)
-        partPanels[Part.Synth] = surgePanel.build().also { root.addView(it) }
+        partPanels[Part.Surge] = surgePanel.build().also { root.addView(it) }
 
         dexedPanel = DexedPanelBuilder(this)
-        partPanels[Part.FM] = dexedPanel.build().also { root.addView(it) }
+        partPanels[Part.Dexed] = dexedPanel.build().also { root.addView(it) }
 
         plaitsPanel = PlaitsPanelBuilder(this)
-        partPanels[Part.Texture] = plaitsPanel.build().also { root.addView(it) }
+        partPanels[Part.Plaits] = plaitsPanel.build().also { root.addView(it) }
 
         fluidPanel = FluidPanelBuilder(this)
-        partPanels[Part.SoundFont] = fluidPanel.build().also { root.addView(it) }
+        partPanels[Part.Fluid] = fluidPanel.build().also { root.addView(it) }
 
-        // Open on the piano's panel. Levels are deliberately NOT touched here:
+        // Open on sfizz's panel. Levels are deliberately NOT touched here:
         // the nodes carry their own defaults and a saved patch may be restored a
         // moment from now, and forcing a solo would overwrite it.
         applyPanelVisibility(visiblePart)
@@ -3121,7 +3130,7 @@ class MainActivity : androidx.activity.ComponentActivity() {
      * A playable touch keyboard, so the instrument can be demonstrated with no
      * CP-88 attached — through the tablet's own speaker if need be.
      *
-     * Two octaves from C3, which is what a piano demo actually needs: one
+     * Two octaves from C3, which is what a demo actually needs: one
      * octave forces everything into the right hand. Black keys are drawn as
      * narrower, darker keys in the same row rather than overlaid, because an
      * overlay needs a custom ViewGroup and hit-testing, and this has to be
@@ -3149,7 +3158,7 @@ class MainActivity : androidx.activity.ComponentActivity() {
 
 
     private fun makeTestKeys(): View {
-        return PianoKeyboardView(this) { note, velocity ->
+        return TouchKeyboardView(this) { note, velocity ->
             NativeBridge.nativeTestNote(note, velocity)
         }.apply {
             layoutParams = LinearLayout.LayoutParams(
@@ -3163,7 +3172,7 @@ class MainActivity : androidx.activity.ComponentActivity() {
 
         val xrunsNow = s.xRuns - xrunBaseline
 
-        // Whether we are on the PIANO, not merely whether audio is running.
+        // Whether we are on the CP-88, not merely whether audio is running.
         // AAudio falls back to the built-in speaker without saying so, and that
         // failure is otherwise invisible: the meters move and it sounds fine in
         // a quiet room, while a stage hears nothing at all.

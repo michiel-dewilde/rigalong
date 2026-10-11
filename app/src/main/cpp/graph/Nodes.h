@@ -33,7 +33,7 @@ public:
 
 // ------------------------------------------------------------------- sfizz
 
-// The SFZ sampler. MIDI in, stereo out.
+// sfizz, the SFZ sampler. MIDI in, stereo out.
 //
 // Loading is explicitly NOT done here: loadFile() runs on the loader thread and
 // publishes the result. The audio thread only ever renders.
@@ -66,7 +66,7 @@ public:
 
     // One parameter so far: the level this part sits at in the mix. It exists
     // because the graph can now run two instruments into the same effects chain,
-    // and "how loud is the piano against the organ" is the first thing anyone
+    // and "how loud is sfizz against setBfree" is the first thing anyone
     // reaches for.
     enum Param { kLevel, kNumParams };
     int numParams() const override { return kNumParams; }
@@ -135,20 +135,20 @@ private:
     // before its level (PROFILE ... pre-level):
     //
     //   Plaits  +0,2 dBFS (x0,25 headroom inside its own level: -11,8 net)
-    //   Fluid   -7,1      Hammond -8,2      Surge  -10,7
+    //   Fluid   -7,1      setBfree -8,2     Surge  -10,7
     //   Dexed  -18,1      sfizz   -20,5
     //
-    // and the piano across velocity, which is the part that decides it:
+    // and sfizz across velocity, which is the part that decides it:
     //
     //   vel  40   60   80  100  110  127
     //   dBFS -36 -29  -25 -20,5 -17,8 -13,0
     //
-    // At FULL velocity the piano reached only -13 dBFS, while A4v16.wav peaks
+    // At FULL velocity sfizz reached only -13 dBFS, while A4v16.wav peaks
     // at -1,5 dBFS in the file. So eleven decibels of headroom sat unused even
     // at fortissimo -- this is not "a dynamic instrument is quieter at mezzo",
     // which would be correct and would be left alone; it is the whole range
     // sitting low. Michiel's instruction was to adjust only if the staging is
-    // really off, and twelve decibels below the organ at every velocity is off.
+    // really off, and twelve decibels below setBfree at every velocity is off.
     //
     // 2,7 (+8,6 dB) puts full velocity at about -4,4 dBFS -- in the same band
     // as the other engines, with real headroom left, and it CANNOT clip on its

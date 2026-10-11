@@ -77,7 +77,7 @@ class FluidPanelBuilder(private val context: Context) {
         }
 
         root.addView(TextView(context).apply {
-            text = "SOUNDFONT — SF2 / SF3"
+            text = "FluidSynth — SF2 / SF3"
             setTextColor(Color.parseColor("#8FC8FF"))
             textSize = 18f
             setTypeface(typeface, Typeface.BOLD)
@@ -160,7 +160,7 @@ class FluidPanelBuilder(private val context: Context) {
         root.addView(slider("Chorus", 0f, keep = { chorusFader = it }) {
             NativeBridge.nativeSetFluidParam(Fluid.CHORUS, it)
         })
-        levelRow = slider("SOUNDFONT", 0f, keep = { levelFader = it }) {
+        levelRow = slider(Part.Fluid.label, 0f, keep = { levelFader = it }) {
             NativeBridge.nativeSetFluidParam(Fluid.LEVEL, it * Fluid.FADER_TOP)
         }
         root.addView(levelRow)
@@ -202,7 +202,7 @@ class FluidPanelBuilder(private val context: Context) {
 
     /** Mirrors [Part] onto the level, as the other panels do. */
     fun setPart(part: Part) {
-        val level = if (part == Part.SoundFont || part == Part.All) Fluid.DEFAULT_LEVEL else 0f
+        val level = if (part == Part.Fluid || part == Part.All) Fluid.DEFAULT_LEVEL else 0f
         NativeBridge.nativeSetFluidParam(Fluid.LEVEL, level)
         levelFader?.progress = (level / Fluid.FADER_TOP * 100f).toInt()
     }

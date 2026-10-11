@@ -37,12 +37,12 @@ struct b_instance;
 
 namespace bagosynths {
 
-class HammondNode : public Node {
+class SetBfreeNode : public Node {
 public:
-    HammondNode();
-    ~HammondNode() override;
+    SetBfreeNode();
+    ~SetBfreeNode() override;
 
-    const char* typeName() const override { return "Hammond"; }
+    const char* typeName() const override { return "setBfree"; }
 
     int numInputs() const override { return 1; }
     PinSpec inputPin(int) const override { return {DataType::Midi, 1, "midi"}; }

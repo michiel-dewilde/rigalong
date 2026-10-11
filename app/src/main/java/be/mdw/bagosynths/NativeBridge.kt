@@ -88,20 +88,20 @@ object NativeBridge {
     external fun nativeLoadedInstrument(): String
 
     /**
-     * The tonewheel organ. Indices are [Organ]'s constants and values are in
+     * setBfree, the tonewheel organ. Indices are [SetBfree]'s constants and values are in
      * natural units -- drawbars 0..8, switches 0/1, the Leslie 0/1/2, the rest
      * 0..1. Setting is safe from the UI thread: the node queues the change and
      * applies it at the top of the next audio block.
      */
-    external fun nativeSetOrganParam(index: Int, value: Float)
-    external fun nativeGetOrganParam(index: Int): Float
-    external fun nativeOrganParamName(index: Int): String
-    external fun nativeOrganPreset(index: Int, manual: Int)
-    external fun nativeOrganPresetNames(): Array<String>
+    external fun nativeSetSetBfreeParam(index: Int, value: Float)
+    external fun nativeGetSetBfreeParam(index: Int): Float
+    external fun nativeSetBfreeParamName(index: Int): String
+    external fun nativeSetBfreePreset(index: Int, manual: Int)
+    external fun nativeSetBfreePresetNames(): Array<String>
 
-    /** The sampler's level, so organ and piano can be balanced against each other. */
-    external fun nativeSetSamplerLevel(value: Float)
-    external fun nativeGetSamplerLevel(): Float
+    /** sfizz's level, so setBfree and sfizz can be balanced against each other. */
+    external fun nativeSetSfizzLevel(value: Float)
+    external fun nativeGetSfizzLevel(): Float
 
     // ------------------------------------------------------------- surge xt
     //
@@ -186,7 +186,7 @@ object NativeBridge {
      * The graph, generically: enough to walk it without knowing what is in it.
      *
      * Saving a patch needs exactly this, and so will the editor — which is why
-     * it is a general surface rather than a save-the-organ function. Parameters
+     * it is a general surface rather than a save-setBfree function. Parameters
      * are addressed by index here and by NAME in the file: an index is what
      * changes when someone inserts an enum value, so a file must not contain one.
      */
@@ -262,7 +262,7 @@ object NativeBridge {
 
     /**
      * The rack (AudioEngine.h): engine [i]'s MIDI and audio wires, switched and
-     * ramped without a recompile. Order: sfizz, hammond, surge, dexed, plaits, fluid.
+     * ramped without a recompile. Order: sfizz, setBfree, surge, dexed, plaits, fluid.
      */
     external fun nativeRackWire(i: Int, midiOn: Boolean, audioOn: Boolean, gain: Float)
 
@@ -459,7 +459,7 @@ object NativeBridge {
             3 -> "listening…"
             4 -> "ROUND TRIP ${"%.2f".format(roundTripMs)} ms"
             5 -> "FAILED — nothing came back"
-            6 -> "ARMED — play a note on the piano"
+            6 -> "ARMED — play a note on the CP-88"
             else -> "?"
         }
 

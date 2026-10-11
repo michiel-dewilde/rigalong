@@ -57,7 +57,7 @@ public:
     // --- where a note went missing ------------------------------------------
     //
     // Michiel loses roughly one note-on or note-off in thirty, playing single
-    // notes, on any engine -- so it is not voice stealing and not the sampler's
+    // notes, on any engine -- so it is not voice stealing and not sfizz's
     // note-on queue. Reading the code did not find it, so the code counts
     // instead: every stage that CAN drop something now says how often it did.
     //

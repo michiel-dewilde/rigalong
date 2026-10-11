@@ -3,7 +3,7 @@
 **Decision (2026-09-19): Bag-O-Synths is free software, GPL-3.0-or-later.**
 
 The goal is the best instrument reachable for the stage. The highest-quality free
-engines — the tonewheel organ especially — are GPL, and working around that would
+engines — setBfree especially — are GPL, and working around that would
 mean either worse sound or a lot of reimplementation for no musical gain. So the
 project takes the GPL rather than designing around it.
 
@@ -261,16 +261,16 @@ and is the better design anyway given library sizes.
 The permissive layer is deliberately the load-bearing one, so this is not a dead
 end. What would have to be replaced:
 
-* **The organ (Beatrix)** — the hard one. There is no permissive tonewheel model
+* **setBfree (Beatrix)** — the hard one. There is no permissive tonewheel model
   of comparable quality. Options: write one (additive synthesis with tonewheel
-  leakage, key click and a Leslie is very achievable), or keep the organ in a
+  leakage, key click and a Leslie is very achievable), or keep setBfree in a
   personal-only build.
 * **Surge XT** — replaceable by building on DaisySP / Mutable / FAUST, at the cost
   of the patch library.
 * **Dragonfly Reverb** — easily replaced by an own FDN or convolution via
   FFTConvolver (MIT).
 
-Everything else — the sampler, FM, physical modelling, effects — is already
+Everything else — sfizz, Dexed, physical modelling, effects — is already
 permissive and would carry over untouched.
 
 ---

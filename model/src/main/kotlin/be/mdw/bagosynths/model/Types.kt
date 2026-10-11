@@ -57,7 +57,7 @@ data class Patch(
     /**
      * Installed content by name, until packs are in the library (PLAN.md M9):
      * an SFZ instrument id, a Surge "Category/Name", a DX7 voice name, a
-     * SoundFont file name, an organ registration, a Plaits model.
+     * SoundFont file name, a setBfree registration, a Plaits model.
      */
     val preset: String? = null,
     val engineVersion: String? = null,
@@ -68,10 +68,10 @@ data class Patch(
 
 // --------------------------------------------------------------------- songs
 
-/** One node of a song's graph: a synth instance, an effect, a MIDI processor or a port. */
+/** One node of a song's graph: an engine instance, an effect, a MIDI processor or a port. */
 @Serializable
 data class Node(
-    /** Factory type name: "sfizz", "hammond", "surge", "reverb", "midi.keyrange", "port.midiIn", ... */
+    /** Factory type name: "sfizz", "setBfree", "Surge XT", "reverb", "midi.keyrange", "port.midiIn", ... */
     val kind: String,
     /** For a port node: the environment port it stands for. */
     val port: String? = null,

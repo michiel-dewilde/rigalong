@@ -10,15 +10,15 @@ section 5c, and the numbers in [MEASUREMENTS.md](MEASUREMENTS.md) section 5c.
 
 ## What shipped
 
-Surge XT's synthesis engine runs as a graph node beside the sampler and the
-organ: three oscillators a voice across a dozen oscillator types including
+Surge XT's synthesis engine runs as a graph node beside sfizz and
+setBfree: three oscillators a voice across a dozen oscillator types including
 wavetable and FM, two filter units, dual FX chains, twelve modulation sources —
 and **641 factory patches**, browsable by name on the tablet.
 
 ```
 MIDI In --+--> sfizz    --+
           |               |
-          +--> Hammond  --+--> Reverb --> Limiter --> Audio Out
+          +--> setBfree --+--> Reverb --> Limiter --> Audio Out
           |               |
           +--> Surge XT --+
 ```
@@ -48,7 +48,7 @@ the rest is 3rd-party extra content, GUI skins and impulse responses we do not
 use. It installs beside the instrument library with
 `tools/install_surge_data.sh`. Absent, Surge still runs on its init patch.
 
-**4. What does it cost? About what the organ costs.** Median factory patch at
+**4. What does it cost? About what setBfree costs.** Median factory patch at
 eight voices: **0.064 ms per 128-frame block, 2.2%** of the 2.902 ms budget.
 Worst of all 641 at eight voices: 0.577 ms. The abort threshold was roughly 1 ms
 for a *single* voice; the worst patch in the library costs **0.157 ms** for one.

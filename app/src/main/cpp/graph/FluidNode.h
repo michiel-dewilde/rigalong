@@ -87,7 +87,7 @@ public:
 
     // ------------------------------------------------------- off the audio thread
 
-    // Builds the synth. Cheap -- it allocates voices and buffers but reads no
+    // Builds the fluid_synth. Cheap -- it allocates voices and buffers but reads no
     // files -- yet still not something to do on the audio thread.
     bool init(double sampleRate);
     bool ready() const { return mReady.load(std::memory_order_acquire); }
