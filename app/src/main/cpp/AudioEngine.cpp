@@ -1577,6 +1577,8 @@ AudioEngine::Stats AudioEngine::stats() const {
         s.usbErrors = static_cast<int32_t>(u.outLost + u.inBad);
         s.usbFeedbackRate = u.feedbackRate;
         s.usbMaxGapMs = u.maxGapMs;
+        s.usbMaxAltMs = u.maxAltMs;
+        s.usbLastAltMs = u.lastAltMs;
         for (int r = 1; r < UsbAudioOut::kHoldReasons; ++r) s.usbHoldsBy[r - 1] = static_cast<int32_t>(u.holdsBy[r]);
 
         // EVERY HOLD, as it happens, with why. A hold is a short silence by
@@ -1590,7 +1592,7 @@ AudioEngine::Stats AudioEngine::stats() const {
             if (u.holds > lastHolds || u.outLost + u.inBad > lastErr) {
                 LOGI("usb hold: %lld (+%lld) proof %lld gap %lld lost %lld badask %lld "
                      "slowburst %lld starve %lld  altErr %lld  outLost %lld inBad %lld  maxGap %.1f ms "
-                     "voices %d",
+                     "alt %.1f ms (worst %.1f) voices %d",
                      static_cast<long long>(u.holds),
                      static_cast<long long>(u.holds - lastHolds),
                      static_cast<long long>(u.holdsBy[UsbAudioOut::kHoldProof]),
@@ -1601,7 +1603,8 @@ AudioEngine::Stats AudioEngine::stats() const {
                      static_cast<long long>(u.holdsBy[UsbAudioOut::kHoldStarve]),
                      static_cast<long long>(u.altErrors),
                      static_cast<long long>(u.outLost), static_cast<long long>(u.inBad),
-                     static_cast<double>(u.maxGapMs), s.activeVoices);
+                     static_cast<double>(u.maxGapMs), static_cast<double>(u.lastAltMs),
+                     static_cast<double>(u.maxAltMs), s.activeVoices);
             }
         }
 

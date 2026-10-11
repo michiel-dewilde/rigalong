@@ -165,11 +165,16 @@ public:
         int64_t descentFrames = 0;      // frames left out to reach the op point
         int32_t queued = 0;             // OUT packets queued now
         float deficitMs = 0.0f;         // wall time minus wire time
-        float maxGapMs = 0.0f;          // worst reap interval since resetPeaks()
+        float maxGapMs = 0.0f;          // worst reap interval since resetPeaks(), own alt cycles left out
+        float maxAltMs = 0.0f;          // worst alt cycle since resetPeaks(): most of a hold's silence
+        float lastAltMs = 0.0f;         // the latest alt cycle
         float feedbackRate = 0.0f;      // frames the device asked for, per second
     };
     Stats stats() const;
-    void resetPeaks() { mMaxGapNs.store(0, std::memory_order_relaxed); }
+    void resetPeaks() {
+        mMaxGapNs.store(0, std::memory_order_relaxed);
+        mMaxAltNs.store(0, std::memory_order_relaxed);
+    }
 
     // A URB ON THIS DESCRIPTOR THAT IS NOT OURS. usbfs completions are per file
     // descriptor, so this loop reaps every async URB the process submits on the
@@ -250,6 +255,9 @@ private:
     // longer counts the device's frames and the anchor is wrong for good.
     // The next absence starts the anchor afresh. Loop thread only.
     bool mReanchor = false;
+    // Time this loop spent in its own alt cycles since the last reap returned:
+    // not a gap anyone else caused, so the gap figure leaves it out.
+    int64_t mOwnNs = 0;
     uint64_t mVerifyMark = 0;           // mInPackets at the previous OUT completion
     bool mVerifyArmed = false;
 
@@ -296,6 +304,7 @@ private:
     std::atomic<int64_t> mHoldsBy[kHoldReasons] = {};
     std::atomic<int32_t> mQueuedNow{0};
     std::atomic<int64_t> mMaxGapNs{0};
+    std::atomic<int64_t> mMaxAltNs{0}, mLastAltNs{0};
     std::atomic<int64_t> mStartNs{0};
     mutable std::atomic<int64_t> mRateAsked{0}, mRateNs{0};   // stats() only
     mutable std::atomic<float> mRateLast{0.0f};                // the last full-second measurement

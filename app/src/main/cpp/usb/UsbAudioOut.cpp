@@ -174,6 +174,9 @@ bool UsbAudioOut::start(const Config& config, PullFn pull, void* ctx, std::strin
     for (auto& h : mHoldsBy) h.store(0, std::memory_order_relaxed);
     mQueuedNow = 0;
     mMaxGapNs = 0;
+    mMaxAltNs = 0;
+    mLastAltNs = 0;
+    mOwnNs = 0;
     mRateAsked = 0;
     mRateNs = 0;
 
@@ -332,8 +335,11 @@ int64_t UsbAudioOut::lag() const {
 // The alt cycle, on an OUT queue that has run out: stopping the stream (alt 0)
 // is the one request that empties the CP-88's FIFO. Re-selecting alt 1 alone
 // and CLEAR_HALT were measured to leave its frames in place, and a stopped
-// CP-88 keeps them through any absence (3 s measured). 6,7 ms on the tablet.
+// CP-88 keeps them through any absence (3 s measured). 6,7 ms on the tablet
+// with the CP-88 on its own port, ~50 ms behind the dock's two hubs (LOG.md):
+// most of a hold's silence, so it is measured and reported.
 void UsbAudioOut::resetOut() {
+    const int64_t t0 = nowNs();
     usbdevfs_setinterface si{};
     si.interface = static_cast<unsigned>(mCfg.outIface);
     si.altsetting = 0;
@@ -341,6 +347,10 @@ void UsbAudioOut::resetOut() {
     si.altsetting = static_cast<unsigned>(mCfg.outAlt);
     const bool b = ioctl(mCfg.fd, USBDEVFS_SETINTERFACE, &si) == 0;
     if (!a || !b) mAltErrors.fetch_add(1, std::memory_order_relaxed);
+    const int64_t took = nowNs() - t0;
+    mOwnNs += took;
+    mLastAltNs.store(took, std::memory_order_relaxed);
+    if (took > mMaxAltNs.load(std::memory_order_relaxed)) mMaxAltNs.store(took, std::memory_order_relaxed);
 }
 
 // Nothing more onto a FIFO in doubt -- but what is queued goes out whole. The
@@ -696,8 +706,13 @@ void UsbAudioOut::reapLoop() {
             break;
         }
         const int64_t t = nowNs();
-        if (t - last > mMaxGapNs.load(std::memory_order_relaxed)) {
-            mMaxGapNs.store(t - last, std::memory_order_relaxed);
+        // The gap leaves out this loop's own alt cycle: that is a hold's cost,
+        // reported apart (maxAltMs), not lateness. Traced on 2026-10-11: the
+        // 40-66 ms "gaps" while Setup scrolled were alt cycles behind the dock.
+        const int64_t away = t - last - mOwnNs;
+        mOwnNs = 0;
+        if (away > mMaxGapNs.load(std::memory_order_relaxed)) {
+            mMaxGapNs.store(away, std::memory_order_relaxed);
         }
         // AWAY LONGER THAN THE IN QUEUE SPANS: it ran dry, and the device's
         // packets in between were never seen. lag() would read high for as long
@@ -737,6 +752,8 @@ UsbAudioOut::Stats UsbAudioOut::stats() const {
     s.descentFrames = mDescent.load(std::memory_order_relaxed);
     s.queued = mQueuedNow.load(std::memory_order_relaxed);
     s.maxGapMs = mMaxGapNs.load(std::memory_order_relaxed) / 1e6f;
+    s.maxAltMs = mMaxAltNs.load(std::memory_order_relaxed) / 1e6f;
+    s.lastAltMs = mLastAltNs.load(std::memory_order_relaxed) / 1e6f;
     const int64_t start = mStartNs.load(std::memory_order_relaxed);
     const int64_t now = nowNs();
     if (start != 0 && mOutFrameBytes > 0 && mCfg.rate > 0) {

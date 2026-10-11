@@ -3154,6 +3154,9 @@ class MainActivity : androidx.activity.ComponentActivity() {
 
     private val holdReasons = listOf("proof", "gap", "lost", "bad ask", "slow burst", "starve")
 
+    /** An alt cycle slower than this means something in the way: measured 6,7 ms direct, ~50 behind hubs. */
+    private val SLOW_ALT_MS = 20f
+
     private fun ms(v: Float, digits: Int = 1) = "%.${digits}f ms".format(v)
 
     /** Dropouts as "2 render, 1 USB" (causes with a count only), or null for none. */
@@ -3202,7 +3205,12 @@ class MainActivity : androidx.activity.ComponentActivity() {
             val by = s.usbHoldsBy.mapIndexedNotNull { i, n -> if (n > 0) "$n ${holdReasons[i]}" else null }
             line("usb", "${s.usbHolds} holds${if (by.isEmpty()) "" else " (${by.joinToString(", ")})"}  ·  " +
                 "${s.usbErrors} wire errors  ·  ${s.usbAltErrors} alt errors (must stay 0)  ·  since the transport started")
-            line("reap loop", "worst gap ${ms(s.usbMaxGapMs)} since the last reset  ·  " +
+            // What a hold costs: the alt cycle that empties the FIFO. ~7 ms with
+            // the CP-88 on the tablet's own port, ~50 ms behind the dock's hubs
+            // (LOG.md, 2026-10-05 and 2026-10-11).
+            if (s.usbMaxAltMs > 0f) line("hold cost", "alt cycle ${ms(s.usbLastAltMs)}, worst ${ms(s.usbMaxAltMs)}: " +
+                "most of each hold's silence" + if (s.usbMaxAltMs > SLOW_ALT_MS) "  ·  SLOW (on its own port: ~7 ms)" else "")
+            line("reap loop", "worst gap ${ms(s.usbMaxGapMs)} since the last reset (alt cycles left out)  ·  " +
                 "device clock ${"%.0f".format(s.usbFeedbackRate)} Hz")
         }
         // The render thread fills the ring a 128-frame block at a time; a block
@@ -3253,7 +3261,7 @@ class MainActivity : androidx.activity.ComponentActivity() {
             "reserve=${"%.1f".format(s.ringFillMs)} target=${"%.1f".format(s.ringTargetMs)} " +
             "drops[render,hold,usbErr,xrun]=${t.joinToString(",")} holds=${s.usbHolds} by=${s.usbHoldsBy} " +
             "altErr=${s.usbAltErrors} errors=${s.usbErrors} deficit=${"%.1f".format(s.usbDeficitMs)} " +
-            "maxGap=${"%.1f".format(s.usbMaxGapMs)} clock=${"%.1f".format(s.usbFeedbackRate)} " +
+            "maxGap=${"%.1f".format(s.usbMaxGapMs)} alt=${"%.1f".format(s.usbLastAltMs)}/${"%.1f".format(s.usbMaxAltMs)} clock=${"%.1f".format(s.usbFeedbackRate)} " +
             "renderPeak=${"%.2f".format(s.renderMaxMs)} voices=${s.activeVoices} xruns=${s.xRuns} " +
             "stalled=${"%.1f".format(s.stalledSeconds)} peak=${"%.3f".format(s.outputPeak)} ${thermal().first}"
     }

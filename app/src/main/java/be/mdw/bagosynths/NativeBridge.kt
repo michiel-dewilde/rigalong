@@ -443,6 +443,9 @@ object NativeBridge {
         val usbMaxGapMs get() = v.getOrElse(34) { 0f }
         /** Holds by reason: proof, gap, lost, bad ask, slow burst, starve. */
         val usbHoldsBy: List<Int> get() = (35..40).map { v.getOrElse(it) { 0f }.toInt() }
+        /** The alt cycle a hold ends with, which empties the device's FIFO: most of a hold's silence. */
+        val usbMaxAltMs get() = v.getOrElse(41) { 0f }
+        val usbLastAltMs get() = v.getOrElse(42) { 0f }
 
         /** The unambiguous combination: making signal, and nothing coming out. */
         val audioStalled get() = timestampOk && stalledSeconds > 1.0f && outputPeak > 0.001f

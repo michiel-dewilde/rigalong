@@ -341,7 +341,7 @@ private fun ModeRow(current: String, accent: Color, dim: Color, onMode: (String)
 
 /** A status reading worth the warning colour: a fault word, a dropout in the last minute, an alt error. */
 private fun needsAttention(line: String): Boolean {
-    val faults = listOf("FROZEN", "NOT CONNECTED", "CLIPPING", "DOWN", "WRONG", "STALLED", "SWITCHING", "NO USB", "HOT", "THROTTLING")
+    val faults = listOf("FROZEN", "NOT CONNECTED", "CLIPPING", "DOWN", "WRONG", "STALLED", "SWITCHING", "NO USB", "HOT", "THROTTLING", "SLOW")
     return faults.any { it in line } ||
         (line.startsWith("dropouts") && !line.drop(12).startsWith("none in the last minute")) ||
         Regex("""\b[1-9][0-9]* alt errors""").containsMatchIn(line)

@@ -296,8 +296,13 @@ Every setlist and song, with its history.
     and the worst figures below, again from now;
   * **usb** (direct path): holds by reason, wire errors, and alt errors,
     which must stay 0;
+  * **hold cost** (direct path, after a hold): how long the alt cycle took
+    that empties the device's FIFO -- most of a hold's silence. With the
+    CP-88 on the tablet's own USB port it takes about 7 ms; behind a dock's
+    hubs about 50 ms, and the line says SLOW;
   * **reap loop** (direct path): the worst gap in the thread that feeds the
-    wire, and the CP-88's clock as it asks for audio;
+    wire (its own alt cycles left out), and the CP-88's clock as it asks for
+    audio;
   * **presented** and **stream** (AAudio): whether the hardware position
     advances, and the stream's rate, burst and buffer;
   * **render**: the slowest 128-frame block against the time it plays, and

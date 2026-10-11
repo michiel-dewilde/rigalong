@@ -818,7 +818,7 @@ JNIEXPORT jfloatArray JNICALL
 Java_be_mdw_bagosynths_NativeBridge_nativeGetStats(JNIEnv* env, jobject) {
     const AudioEngine::Stats s = engine().stats();
 
-    constexpr int kCount = 41;
+    constexpr int kCount = 43;
     jfloat values[kCount] = {
             s.latencyMs,                             // 0
             s.cpuLoadPercent,                        // 1
@@ -868,6 +868,8 @@ Java_be_mdw_bagosynths_NativeBridge_nativeGetStats(JNIEnv* env, jobject) {
             static_cast<jfloat>(s.usbHoldsBy[3]),    // 38 bad ask
             static_cast<jfloat>(s.usbHoldsBy[4]),    // 39 slow burst
             static_cast<jfloat>(s.usbHoldsBy[5]),    // 40 starve
+            s.usbMaxAltMs,                           // 41 worst alt cycle
+            s.usbLastAltMs,                          // 42 latest alt cycle
     };
 
     jfloatArray array = env->NewFloatArray(kCount);
