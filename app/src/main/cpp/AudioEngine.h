@@ -786,6 +786,15 @@ private:
     static constexpr int kShrinkDivisor = 8;          // give back an eighth
     static constexpr int kShrinkMinFrames = 16;
     static constexpr double kShrinkAfterSeconds = 4.0;
+    // A STREAM'S FIRST SECONDS TEACH THE RESERVE NOTHING. Traced on 2026-10-11
+    // (LOG.md): straight after the app starts, the render thread waits runnable
+    // for 1,5-14 ms at a time behind the launch itself -- surfaceflinger,
+    // system_server, GMS -- nice -16 notwithstanding, for about 1,4 s. The
+    // misses grew the target to 12 ms, and the shrink took a minute to give it
+    // back. The reserve still grows during these seconds (someone may play at
+    // once), but when they are over it returns to the floor. The same 10 s
+    // AudioHealth leaves out of "the last minute".
+    static constexpr double kSettleSeconds = 10.0;
 
     // FLOAT, not int16. The engine renders in float and the devices differ:
     // the CP-88 wants 24-bit packed, the tablet speaker 16-bit. Keeping the ring

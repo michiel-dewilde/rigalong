@@ -288,7 +288,9 @@ Every setlist and song, with its history.
     and whether it runs;
   * **latency**: the total, and what it is made of: the queue on the wire (or
     the stream) plus the render reserve, which grows after a dropout and
-    shrinks again while all is calm;
+    shrinks again while all is calm. The first 10 s after the audio starts
+    (the tablet busy launching the app) don't count: the reserve goes back
+    to its floor when they are over;
   * **dropouts**: in the last minute, and since a time it names, by cause:
     *render* (the engines were late filling the reserve), *USB* (a hold: the
     direct path's short deliberate silence that keeps the CP-88 from

@@ -1176,6 +1176,8 @@ void AudioEngine::renderLoop() {
     int64_t seenUnderruns = mRingUnderruns.load(std::memory_order_relaxed);
     int64_t seenConcealed = mConcealedTotal.load(std::memory_order_relaxed);
     double lastChange = nowSeconds();
+    const double started = lastChange;
+    bool settling = true;
 
     while (mRenderRun.load(std::memory_order_acquire)) {
         // --- adapt the reserve -------------------------------------------
@@ -1186,7 +1188,19 @@ void AudioEngine::renderLoop() {
         const int64_t concealed = mConcealedTotal.load(std::memory_order_relaxed);
         const int64_t missed = concealed - seenConcealed;
         seenUnderruns = underruns;                  // kept for the health line
-        if (missed > 0) {
+        if (settling && now - started >= kSettleSeconds) {
+            // See kSettleSeconds: what the start cost is not kept as latency.
+            settling = false;
+            const int32_t floor = mMinFill.load(std::memory_order_relaxed);
+            if (target > floor) {
+                LOGI("render reserve: start-up over, target %.1f ms back to the floor, %.1f ms",
+                     1000.0 * target / currentRate(), 1000.0 * floor / currentRate());
+                target = floor;
+                mTargetFill.store(target, std::memory_order_relaxed);
+            }
+            seenConcealed = concealed;
+            lastChange = now;
+        } else if (missed > 0) {
             seenConcealed = concealed;
             // Any concealment at all counts as "not calm", so the reserve never
             // shrinks through a rough patch made of small misses.
