@@ -1,5 +1,6 @@
 package be.mdw.bagosynths.ui
 
+import be.mdw.bagosynths.model.Library
 import android.content.SharedPreferences
 import android.util.Log
 import androidx.compose.runtime.getValue
@@ -69,7 +70,7 @@ interface EngineHost {
  * Remembers setlist, song and live set in preferences on every move, so a
  * restart comes back where it was (S13.2).
  */
-class SongPlayer(private val lib: AppLibrary, private val host: EngineHost, private val prefs: SharedPreferences) {
+class SongPlayer(private val lib: Library, private val host: EngineHost, private val prefs: SharedPreferences) {
 
     var setlistId by mutableStateOf<Digest?>(null); private set
     var setlistName by mutableStateOf(""); private set

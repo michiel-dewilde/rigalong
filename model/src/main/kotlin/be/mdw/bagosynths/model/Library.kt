@@ -1,20 +1,5 @@
-package be.mdw.bagosynths.ui
+package be.mdw.bagosynths.model
 
-import be.mdw.bagosynths.model.Digest
-import be.mdw.bagosynths.model.Entry
-import be.mdw.bagosynths.model.EntryVersion
-import be.mdw.bagosynths.model.RackEngine
-import be.mdw.bagosynths.model.RackLiveSet
-import be.mdw.bagosynths.model.RackPart
-import be.mdw.bagosynths.model.RackSlot
-import be.mdw.bagosynths.model.RackSong
-import be.mdw.bagosynths.model.Ref
-import be.mdw.bagosynths.model.RefJ
-import be.mdw.bagosynths.model.Setlist
-import be.mdw.bagosynths.model.Song
-import be.mdw.bagosynths.model.Store
-import be.mdw.bagosynths.model.getTyped
-import be.mdw.bagosynths.model.putTyped
 import java.io.File
 import java.time.Instant
 
@@ -27,7 +12,7 @@ import java.time.Instant
  * on to the new one -- the edit rippling upward (I8.13). Only setlists holding
  * exactly that previous version move; nothing else changes by surprise (I8.5).
  */
-class AppLibrary(dir: File, private val author: String) {
+class Library(dir: File, private val author: String) {
     val store = Store(dir)
 
     private fun now() = Instant.now().toString()
@@ -44,14 +29,14 @@ class AppLibrary(dir: File, private val author: String) {
         .sortedBy { it.version.name.lowercase() }
 
     fun environments(): List<Entry> = store.entries()
-        .filter { it.version.target?.type == be.mdw.bagosynths.model.Environment.TYPE }
+        .filter { it.version.target?.type == Environment.TYPE }
         .sortedBy { it.version.name.lowercase() }
 
-    fun environment(id: Digest): be.mdw.bagosynths.model.Environment? =
+    fun environment(id: Digest): Environment? =
         store.entry(id)?.version?.target?.let { store.getTyped(it.digest) }
 
-    fun saveEnvironment(entryId: Digest?, name: String, env: be.mdw.bagosynths.model.Environment): Digest {
-        val target = Ref(store.putTyped(env), be.mdw.bagosynths.model.Environment.TYPE)
+    fun saveEnvironment(entryId: Digest?, name: String, env: Environment): Digest {
+        val target = Ref(store.putTyped(env), Environment.TYPE)
         return if (entryId == null) store.create(name, target, author, now())
         else store.update(entryId, author, now(), target = target, name = name)
     }

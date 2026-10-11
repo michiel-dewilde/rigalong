@@ -1,5 +1,6 @@
 package be.mdw.bagosynths
 
+import be.mdw.bagosynths.model.Library
 import android.app.Activity
 import android.content.Context
 import android.graphics.Color
@@ -187,7 +188,7 @@ class MainActivity : androidx.activity.ComponentActivity() {
         // ui/AppUi.kt) and the prototype's, which still owns routing and the
         // engine panels. The new one is the default; each has a way to the other.
         prototypeView = buildUi()
-        appLibrary = be.mdw.bagosynths.ui.AppLibrary(java.io.File(filesDir, "library"), Build.MODEL)
+        appLibrary = Library(java.io.File(filesDir, "library"), Build.MODEL)
         player = be.mdw.bagosynths.ui.SongPlayer(appLibrary, engineHost, prefs())
         composeView = androidx.compose.ui.platform.ComposeView(this).apply {
             setContent { be.mdw.bagosynths.ui.AppUi(player, appLibrary, engineHost) }
@@ -2530,7 +2531,7 @@ class MainActivity : androidx.activity.ComponentActivity() {
 
     private lateinit var prototypeView: View
     private lateinit var composeView: androidx.compose.ui.platform.ComposeView
-    private lateinit var appLibrary: be.mdw.bagosynths.ui.AppLibrary
+    private lateinit var appLibrary: Library
     private lateinit var player: be.mdw.bagosynths.ui.SongPlayer
 
     /**

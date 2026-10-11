@@ -1,5 +1,6 @@
 package be.mdw.bagosynths.ui
 
+import be.mdw.bagosynths.model.Library
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -51,7 +52,7 @@ data class Routing(
  * routing the prototype screen had, without needing it.
  */
 @Composable
-fun SetupScreen(player: SongPlayer, host: EngineHost, lib: AppLibrary) {
+fun SetupScreen(player: SongPlayer, host: EngineHost, lib: Library) {
     var tick by remember { mutableIntStateOf(0) }
     var routing by remember { mutableStateOf(host.routing()) }
     var status by remember { mutableStateOf(host.statusLines()) }
@@ -227,7 +228,7 @@ private fun decodeMidi(raw: IntArray): List<String> {
 /** Environments (S3.8, S3.10): saved rigs to switch between, and which ones fit what is plugged in. */
 @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 @Composable
-private fun EnvironmentSection(player: SongPlayer, host: EngineHost, lib: AppLibrary, accent: Color, dim: Color) {
+private fun EnvironmentSection(player: SongPlayer, host: EngineHost, lib: Library, accent: Color, dim: Color) {
     val prefs = androidx.compose.ui.platform.LocalContext.current
         .getSharedPreferences("bagosynths", android.content.Context.MODE_PRIVATE)
     var revision by remember { mutableIntStateOf(0) }

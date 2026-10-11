@@ -1,5 +1,6 @@
 package be.mdw.bagosynths.ui
 
+import be.mdw.bagosynths.model.Library
 import android.content.Context
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -55,7 +56,7 @@ private val PanelColor = Color(0xFF1A1D23)
 private val DimColor = Color(0xFF8A919C)
 
 @Composable
-fun LibraryScreen(player: SongPlayer, lib: AppLibrary, host: EngineHost, onOpened: () -> Unit) {
+fun LibraryScreen(player: SongPlayer, lib: Library, host: EngineHost, onOpened: () -> Unit) {
     val context = LocalContext.current
     var revision by remember { mutableIntStateOf(0) }
     var message by remember { mutableStateOf("") }
@@ -170,7 +171,7 @@ fun LibraryScreen(player: SongPlayer, lib: AppLibrary, host: EngineHost, onOpene
  */
 @OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
-private fun EntryDialog(id: Digest, lib: AppLibrary, player: SongPlayer, onChanged: () -> Unit, onDismiss: () -> Unit) {
+private fun EntryDialog(id: Digest, lib: Library, player: SongPlayer, onChanged: () -> Unit, onDismiss: () -> Unit) {
     var revision by remember { mutableIntStateOf(0) }
     val entry = remember(revision) { lib.store.entry(id) } ?: run { onDismiss(); return }
     val history = remember(revision) { lib.history(id) }

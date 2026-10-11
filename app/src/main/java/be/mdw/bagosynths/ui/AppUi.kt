@@ -1,5 +1,6 @@
 package be.mdw.bagosynths.ui
 
+import be.mdw.bagosynths.model.Library
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.ExperimentalFoundationApi
@@ -94,7 +95,7 @@ fun BagoTheme(content: @Composable () -> Unit) {
 }
 
 @Composable
-fun AppUi(player: SongPlayer, lib: AppLibrary, host: EngineHost) {
+fun AppUi(player: SongPlayer, lib: Library, host: EngineHost) {
     var screen by remember { mutableIntStateOf(0) }
     var health by remember { mutableStateOf("") }
     LaunchedEffect(Unit) {
@@ -356,7 +357,7 @@ private fun BigButton(label: String, enabled: Boolean, width: Int, selected: Boo
 // ------------------------------------------------------------------ songs
 
 @Composable
-private fun SongsScreen(player: SongPlayer, lib: AppLibrary, host: EngineHost) {
+private fun SongsScreen(player: SongPlayer, lib: Library, host: EngineHost) {
     var revision by remember { mutableIntStateOf(0) }
     val setlistId = player.setlistId
     var selected by remember { mutableStateOf<Digest?>(null) }
@@ -419,7 +420,7 @@ private fun SongsScreen(player: SongPlayer, lib: AppLibrary, host: EngineHost) {
 }
 
 @Composable
-private fun SetlistPanel(lib: AppLibrary, setlistId: Digest?, revision: Int, selected: Digest?,
+private fun SetlistPanel(lib: Library, setlistId: Digest?, revision: Int, selected: Digest?,
                          onSelect: (Digest) -> Unit, onNew: () -> Unit, onChanged: () -> Unit) {
     val songs = remember(setlistId, revision) { setlistId?.let { lib.songsOf(it) }.orEmpty() }
     val name = remember(setlistId, revision) { setlistId?.let { lib.store.entry(it)?.version?.name }.orEmpty() }
@@ -450,7 +451,7 @@ private fun SetlistPanel(lib: AppLibrary, setlistId: Digest?, revision: Int, sel
     }
 }
 
-private fun move(lib: AppLibrary, setlistId: Digest, ids: List<Digest>, i: Int, by: Int) {
+private fun move(lib: Library, setlistId: Digest, ids: List<Digest>, i: Int, by: Int) {
     val m = ids.toMutableList()
     val j = i + by
     if (j !in m.indices) return
