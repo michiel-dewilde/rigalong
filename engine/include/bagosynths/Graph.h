@@ -101,6 +101,14 @@ struct ProcessArgs {
     const float* paramIn = nullptr;        int numParamIn = 0;
 };
 
+// What a parameter may be set to (PLAN.md D6): its range, and whether only
+// whole numbers mean anything (a drawbar, a model number, semitones).
+struct ParamRange {
+    float min = 0.0f;
+    float max = 1.0f;
+    bool integer = false;
+};
+
 // ------------------------------------------------------------------- the node
 
 class Node {
@@ -138,6 +146,8 @@ public:
     virtual void setParam(int index, float value) {}
     virtual float getParam(int index) const { return 0.0f; }
     virtual const char* paramName(int index) const { return ""; }
+    // Defaults to 0..1, continuous: override where a parameter is not.
+    virtual ParamRange paramRange(int index) const { return {}; }
 
     // --- running or not ----------------------------------------------------
     //

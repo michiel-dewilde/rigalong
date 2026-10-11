@@ -82,6 +82,10 @@
     <string name="cancel">Cancel</string>
     <string name="patch_of">%1$s: patch</string>
     <string name="search">Search</string>
+    <string name="edit_patch">Patch…</string>
+    <string name="done">Done</string>
+    <string name="take_current">Take current</string>
+    <string name="clear">Clear</string>
 
     <string name="attach_lead_sheet">Lead sheet…</string>
     <string name="remove_lead_sheet">Remove lead sheet</string>

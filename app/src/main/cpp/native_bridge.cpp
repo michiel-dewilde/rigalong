@@ -613,6 +613,17 @@ Java_be_mdw_bagosynths_NativeBridge_nativeGetNodeParam(JNIEnv*, jobject, jint in
     return n ? n->getParam(param) : 0.0f;
 }
 
+// A parameter's range (PLAN.md D6): {min, max, 1 if whole numbers only}.
+JNIEXPORT jfloatArray JNICALL
+Java_be_mdw_bagosynths_NativeBridge_nativeNodeParamRange(JNIEnv* env, jobject, jint index, jint param) {
+    bagosynths::ParamRange r;
+    if (bagosynths::Node* n = engine().graph().nodeAt(index)) r = n->paramRange(param);
+    const jfloat v[3] = {r.min, r.max, r.integer ? 1.0f : 0.0f};
+    jfloatArray out = env->NewFloatArray(3);
+    env->SetFloatArrayRegion(out, 0, 3, v);
+    return out;
+}
+
 JNIEXPORT void JNICALL
 Java_be_mdw_bagosynths_NativeBridge_nativeSetNodeParam(JNIEnv*, jobject, jint index,
                                                      jint param, jfloat value) {

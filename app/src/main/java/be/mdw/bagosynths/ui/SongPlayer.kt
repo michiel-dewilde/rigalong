@@ -420,6 +420,33 @@ class SongPlayer(private val lib: AppLibrary, private val host: EngineHost, priv
         organ[index] = v
     }
 
+    /** One parameter of an engine, as the patch editor shows it (PLAN.md D6). */
+    data class ParamDesc(val name: String, val min: Float, val max: Float, val integer: Boolean, val value: Float)
+
+    /** Every parameter of engine [e] but its level, with its range and current value. */
+    fun engineParams(e: RackEngine): List<ParamDesc> {
+        val node = nodeIndex(e) ?: return emptyList()
+        return (0 until NativeBridge.nativeNodeParamCount(node)).mapNotNull { p ->
+            val name = NativeBridge.nativeNodeParamName(node, p)
+            if (name.isEmpty() || name == "Level") return@mapNotNull null
+            val r = NativeBridge.nativeNodeParamRange(node, p)
+            ParamDesc(name, r[0], r[1], r[2] > 0.5f, NativeBridge.nativeGetNodeParam(node, p))
+        }
+    }
+
+    /**
+     * Puts a slot's preset and parameters on its engine, so the patch editor
+     * shows -- and the keys play -- this song's patch, not whatever was last
+     * on stage. [reload] puts the stage's song back.
+     */
+    fun previewSlot(e: RackEngine, slot: be.mdw.bagosynths.model.RackSlot) {
+        loadPreset(e, slot.preset, slot.program)
+        for ((name, v) in slot.params) setNodeParam(e, name, v.toFloat())
+    }
+
+    /** Audition one parameter while editing a patch. */
+    fun auditionParam(e: RackEngine, name: String, v: Float) = setNodeParam(e, name, v)
+
     /** A stage fader moved. */
     fun setLevel(e: RackEngine, v: Float) {
         setNodeParam(e, "Level", v)
@@ -461,6 +488,8 @@ class SongPlayer(private val lib: AppLibrary, private val host: EngineHost, priv
                 continue
             }
             loadPreset(e, slot.preset, slot.program)
+            // The patch's own parameters, over its preset (M8).
+            for ((name, v) in slot.params) setNodeParam(e, name, v.toFloat())
         }
     }
 

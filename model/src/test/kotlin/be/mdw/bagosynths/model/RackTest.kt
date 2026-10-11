@@ -14,7 +14,8 @@ class RackTest {
     private val draft = RackSong(
         slots = mapOf(
             RackEngine.SFIZZ to RackSlot(preset = "salamander-grand", level = 0.9),
-            RackEngine.HAMMOND to RackSlot(preset = "Jimmy Smith", level = 0.7),
+            RackEngine.HAMMOND to RackSlot(preset = "Jimmy Smith", level = 0.7,
+                params = mapOf("Upper 16" to 8.0, "Leslie" to 2.0)),
         ),
         liveSets = listOf(
             RackLiveSet("Verse", mapOf(RackEngine.SFIZZ to RackPart(), RackEngine.HAMMOND to RackPart(plays = false))),

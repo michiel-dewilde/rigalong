@@ -414,6 +414,7 @@ private fun move(lib: AppLibrary, setlistId: Digest, ids: List<Digest>, i: Int, 
 private fun SongEditor(song: RackSong, name: String, host: EngineHost, player: SongPlayer, onName: (String) -> Unit,
                        onChange: (RackSong) -> Unit, onSave: () -> Unit) {
     var picker by remember { mutableStateOf<RackEngine?>(null) }
+    var patchEditor by remember { mutableStateOf<RackEngine?>(null) }
     Column(Modifier.fillMaxSize().background(Panel, RoundedCornerShape(10.dp)).padding(12.dp)
         .verticalScroll(rememberScrollState())) {
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -454,6 +455,9 @@ private fun SongEditor(song: RackSong, name: String, host: EngineHost, player: S
                     OutlinedButton(onClick = { picker = e }, modifier = Modifier.weight(1f)) {
                         Text(slot.preset ?: stringResource(R.string.as_loaded_paren), maxLines = 1, overflow = TextOverflow.Ellipsis)
                     }
+                    TextButton(onClick = { patchEditor = e }) {
+                        Text(stringResource(R.string.edit_patch) + if (slot.params.isNotEmpty()) " ●" else "")
+                    }
                     Spacer(Modifier.width(8.dp))
                     Text(stringResource(R.string.level), color = Dim)
                     Slider(value = slot.level.toFloat(), onValueChange = { v ->
@@ -473,6 +477,13 @@ private fun SongEditor(song: RackSong, name: String, host: EngineHost, player: S
         }
         song.liveSets.forEachIndexed { i, ls ->
             LiveSetCard(song, i, ls, player, onChange)
+        }
+    }
+    patchEditor?.let { e ->
+        song.slots[e]?.let { slot ->
+            PatchEditor(e, slot, player, onChange = { params ->
+                onChange(song.copy(slots = song.slots + (e to slot.copy(params = params))))
+            }, onDismiss = { patchEditor = null })
         }
     }
     picker?.let { e ->
@@ -580,6 +591,52 @@ private fun TempoBox(player: SongPlayer) {
         Spacer(Modifier.width(8.dp))
         BigButton(stringResource(R.string.tap), enabled = true, width = 88) { player.tap() }
     }
+}
+
+/**
+ * An engine's patch (M8, first slice): every parameter but the level, with a
+ * slider over its real range (whole numbers where only those mean anything).
+ * Moving a slider plays it at once; the values are kept in the song, over the
+ * preset. "Take current" stores what the engine has now -- after shaping it on
+ * the prototype's panels, for instance; "Clear" goes back to the plain preset.
+ */
+@Composable
+private fun PatchEditor(e: RackEngine, slot: RackSlot, player: SongPlayer,
+                        onChange: (Map<String, Double>) -> Unit, onDismiss: () -> Unit) {
+    val params = remember(e) { player.previewSlot(e, slot); player.engineParams(e) }
+    var values by remember(e) { mutableStateOf(slot.params) }
+    fun put(v: Map<String, Double>) { values = v; onChange(v) }
+    AlertDialog(onDismissRequest = onDismiss,
+        confirmButton = { TextButton(onClick = { player.reload(); onDismiss() }) { Text(stringResource(R.string.done)) } },
+        dismissButton = {
+            Row {
+                TextButton(onClick = { put(params.associate { it.name to it.value.toDouble() }) }) {
+                    Text(stringResource(R.string.take_current))
+                }
+                TextButton(onClick = { put(emptyMap()) }) { Text(stringResource(R.string.clear)) }
+            }
+        },
+        title = { Text(stringResource(R.string.patch_of, engineLabel(e))) },
+        text = {
+            LazyColumn(Modifier.height(480.dp)) {
+                itemsIndexed(params) { _, p ->
+                    val v = values[p.name]?.toFloat() ?: p.value
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(p.name, modifier = Modifier.width(150.dp), fontSize = 14.sp,
+                            color = if (values.containsKey(p.name)) Accent else Color.White)
+                        Slider(value = v.coerceIn(p.min, p.max), valueRange = p.min..p.max,
+                            steps = if (p.integer) ((p.max - p.min).toInt() - 1).coerceAtLeast(0) else 0,
+                            onValueChange = { nv ->
+                                val x = if (p.integer) Math.round(nv).toFloat() else nv
+                                player.auditionParam(e, p.name, x)
+                                put(values + (p.name to x.toDouble()))
+                            }, modifier = Modifier.weight(1f))
+                        Text(if (p.integer) v.toInt().toString() else "%.2f".format(v), modifier = Modifier.width(48.dp),
+                            textAlign = TextAlign.End, fontSize = 13.sp)
+                    }
+                }
+            }
+        })
 }
 
 /** Attach or remove the song's lead sheet: a PDF from the file picker, into the library (S9.3). */

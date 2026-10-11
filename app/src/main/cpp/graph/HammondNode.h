@@ -99,6 +99,18 @@ public:
     void setParam(int index, float value) override;
     float getParam(int index) const override;
     const char* paramName(int index) const override;
+    ParamRange paramRange(int i) const override {
+        if (i >= kUpper1 && i < kPercEnable) return {0, 8, true};          // drawbars
+        switch (i) {
+            case kPercEnable: case kPercFast: case kPercThird: case kPercSoft:
+            case kVibratoUpper: case kVibratoLower: case kOverdrive: return {0, 1, true};
+            case kVibratoKnob: return {0, 5, true};
+            case kRotary: return {0, 2, true};
+            case kSplitPedal: case kSplitLower: return {0, 127, true};
+            case kTranspose: return {-12, 12, true};
+            default: return {};
+        }
+    }
 
     // Applies a named factory registration -- the nine drawbar presets every
     // organist knows -- to one manual (0 upper, 1 lower, 2 pedal). Off the audio

@@ -76,6 +76,13 @@ public:
     void setParam(int index, float value) override;
     float getParam(int index) const override;
     const char* paramName(int index) const override;
+    ParamRange paramRange(int i) const override {
+        switch (i) {
+            case kTranspose: return {-24, 24, true};
+            case kBendRange: return {0, 12, true};
+            default: return {};
+        }
+    }
 
     // ------------------------------------------------------- off the audio thread
 

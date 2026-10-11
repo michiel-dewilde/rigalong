@@ -35,7 +35,13 @@ enum class RackEngine(val key: String, val nodeType: String, val label: String) 
 }
 
 /** One engine as a rack song uses it. */
-data class RackSlot(val preset: String? = null, val program: Int? = null, val level: Double = 0.8)
+data class RackSlot(
+    val preset: String? = null,
+    val program: Int? = null,
+    val level: Double = 0.8,
+    /** The engine's own parameters, by their stable names, over the preset (M8). */
+    val params: Map<String, Double> = emptyMap(),
+)
 
 /** One engine in one live set. */
 data class RackPart(
@@ -83,7 +89,8 @@ data class RackSong(
         nodes["out"] = Node(kind = "port.audioOut", port = "Main Out")
         wires["mix.out"] = Wire("mix:out", "out:in")
         for ((e, slot) in slots.toSortedMap()) {
-            val patch = store.putTyped(Patch(engine = e.key, preset = slot.preset, program = slot.program))
+            val patch = store.putTyped(Patch(engine = e.key, preset = slot.preset, program = slot.program,
+                params = slot.params))
             nodes[e.key] = Node(kind = e.nodeType, patch = RefJ.of(patch, Patch.TYPE),
                 params = mapOf("Level" to slot.level))
             nodes["${e.key}.zone"] = Node(kind = "midi.zone")
@@ -126,7 +133,8 @@ data class RackSong(
                 val e = RackEngine.ofKey(name) ?: continue
                 if (node.kind != e.nodeType) return null
                 val patch = node.patch?.let { store.getTyped<Patch>(it.toRef().digest) }
-                slots[e] = RackSlot(patch?.preset, patch?.program, node.params["Level"] ?: 0.8)
+                slots[e] = RackSlot(patch?.preset, patch?.program, node.params["Level"] ?: 0.8,
+                    patch?.params ?: emptyMap())
             }
             val liveSets = song.liveSets.map { r ->
                 val ls = store.getTyped<LiveSet>(r.toRef().digest)
