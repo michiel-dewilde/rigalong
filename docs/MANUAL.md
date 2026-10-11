@@ -80,6 +80,9 @@ song being edited:
     plain patch.
 * **Tempo**, if the song has one, with its beats per bar and count-in bars,
   and a **Lead sheet…** (a PDF).
+* **Reverb…**: the room all of the song's sounds meet in (size, damping,
+  width, mix), heard at once while you move it. A song that sets nothing gets
+  the default room.
 * **Live sets**: for each live set and each engine:
   * whether it **plays**;
   * a **key range**, from low to high, which makes a split;

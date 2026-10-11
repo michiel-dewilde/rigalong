@@ -37,6 +37,8 @@
     <string name="no_tempo">no tempo</string>
     <string name="tap">TAP</string>
     <string name="save_tempo">save</string>
+    <string name="reverb">Reverb</string>
+    <string name="reverb_button">Reverb…</string>
     <string name="count_in">COUNT</string>
     <string name="click_on">CLICK</string>
     <string name="click_stop">STOP</string>

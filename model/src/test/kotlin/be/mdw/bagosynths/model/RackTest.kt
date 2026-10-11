@@ -76,6 +76,16 @@ class RackTest {
     }
 
     @Test
+    fun theReverbTravelsWithTheSong() {
+        val wet = draft.copy(reverb = mapOf("Mix" to 0.4, "Room size" to 0.9))
+        val back = assertNotNull(RackSong.fromObjects(store, wet.toObjects(store)))
+        assertEquals(wet.reverb, back.reverb)
+        // A song that leaves the reverb alone is the same object as before the
+        // reverb could be set: no song changes hash by this alone.
+        assertEquals(Node(kind = "reverb"), draft.toObjects(store).nodes["mix"])
+    }
+
+    @Test
     fun theSameDraftIsTheSameSong() {
         assertEquals(store.putTyped(draft.toObjects(store)), store.putTyped(draft.toObjects(store)))
     }

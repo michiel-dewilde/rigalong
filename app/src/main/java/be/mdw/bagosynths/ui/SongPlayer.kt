@@ -648,6 +648,33 @@ class SongPlayer(private val lib: AppLibrary, private val host: EngineHost, priv
         for ((name, v) in slot.params) setNodeParam(e, name, v.toFloat())
     }
 
+    /** The reverb's parameters, with their ranges and current values. */
+    fun reverbParams(): List<ParamDesc> {
+        val node = reverbIndex() ?: return emptyList()
+        return (0 until NativeBridge.nativeNodeParamCount(node)).mapNotNull { p ->
+            val name = NativeBridge.nativeNodeParamName(node, p)
+            if (name.isEmpty()) return@mapNotNull null
+            val r = NativeBridge.nativeNodeParamRange(node, p)
+            ParamDesc(name, r[0], r[1], r[2] > 0.5f, NativeBridge.nativeGetNodeParam(node, p))
+        }
+    }
+
+    /** Puts a song's reverb on the engine: its own values over the defaults. */
+    fun previewReverb(values: Map<String, Double>) {
+        for ((name, v) in REVERB_DEFAULTS + values) auditionReverb(name, v.toFloat())
+    }
+
+    fun auditionReverb(name: String, v: Float) {
+        val node = reverbIndex() ?: return
+        val p = (0 until NativeBridge.nativeNodeParamCount(node))
+            .firstOrNull { NativeBridge.nativeNodeParamName(node, it) == name } ?: return
+        NativeBridge.nativeSetNodeParam(node, p, v)
+    }
+
+    private var reverbNode: Int? = null
+    private fun reverbIndex(): Int? = reverbNode ?: (0 until NativeBridge.nativeNodeCount())
+        .firstOrNull { NativeBridge.nativeNodeType(it) == "Reverb" }?.also { reverbNode = it }
+
     /** Audition one parameter while editing a patch. */
     fun auditionParam(e: RackEngine, name: String, v: Float) = setNodeParam(e, name, v)
 
@@ -681,6 +708,9 @@ class SongPlayer(private val lib: AppLibrary, private val host: EngineHost, priv
     /** The song's engines and patches; engines it does not use are silenced and parked. */
     private fun setUpEngines() {
         val r = rack
+        // Every song sets the whole reverb, so one song's room never stays
+        // with the next.
+        previewReverb(r?.reverb.orEmpty())
         for (e in RackEngine.entries) {
             val slot = r?.slots?.get(e)
             if (slot == null) {
@@ -785,6 +815,8 @@ class SongPlayer(private val lib: AppLibrary, private val host: EngineHost, priv
         private const val TAG = "bos-stage"
         /** What a switching controller can be taught (I10.4, I12.3). */
         val CONTROLLER_ACTIONS = listOf("next", "previous", "tap", "click")
+        /** ReverbNode's own defaults (graph/Nodes.h), for a song that sets none. */
+        val REVERB_DEFAULTS = mapOf("Room size" to 0.72, "Damping" to 0.35, "Width" to 1.0, "Mix" to 0.25)
         const val ORGAN_LESLIE = 37
         const val ORGAN_PERC = 27
         val ORGAN_STAGE_PARAMS = (0..8).toList() + listOf(ORGAN_PERC, ORGAN_LESLIE)

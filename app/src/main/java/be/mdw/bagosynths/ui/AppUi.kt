@@ -463,6 +463,7 @@ private fun SongEditor(song: RackSong, name: String, host: EngineHost, player: S
                        onChange: (RackSong) -> Unit, onSave: () -> Unit) {
     var picker by remember { mutableStateOf<RackEngine?>(null) }
     var patchEditor by remember { mutableStateOf<RackEngine?>(null) }
+    var reverbEditor by remember { mutableStateOf(false) }
     Column(Modifier.fillMaxSize().background(Panel, RoundedCornerShape(10.dp)).padding(12.dp)
         .verticalScroll(rememberScrollState())) {
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -470,6 +471,10 @@ private fun SongEditor(song: RackSong, name: String, host: EngineHost, player: S
                 singleLine = true, modifier = Modifier.weight(1f))
             Spacer(Modifier.width(12.dp))
             LeadSheetButton(song, player, onChange)
+            Spacer(Modifier.width(12.dp))
+            OutlinedButton(onClick = { reverbEditor = true }) {
+                Text(stringResource(R.string.reverb_button), color = if (song.reverb.isEmpty()) Color.White else Accent)
+            }
             Spacer(Modifier.width(12.dp))
             Button(onClick = onSave, modifier = Modifier.height(56.dp)) { Text(stringResource(R.string.save)) }
         }
@@ -532,6 +537,10 @@ private fun SongEditor(song: RackSong, name: String, host: EngineHost, player: S
         song.liveSets.forEachIndexed { i, ls ->
             LiveSetCard(song, i, ls, player, onChange)
         }
+    }
+    if (reverbEditor) {
+        ReverbEditor(song, player, onChange = { onChange(song.copy(reverb = it)) },
+            onDismiss = { reverbEditor = false })
     }
     patchEditor?.let { e ->
         song.slots[e]?.let { slot ->
@@ -676,9 +685,25 @@ private fun TempoBox(player: SongPlayer) {
  */
 @Composable
 private fun PatchEditor(e: RackEngine, slot: RackSlot, player: SongPlayer,
+                        onChange: (Map<String, Double>) -> Unit, onDismiss: () -> Unit) =
+    ParamEditor(stringResource(R.string.patch_of, engineLabel(e)), e, slot.params, player,
+        load = { player.previewSlot(e, slot); player.engineParams(e) },
+        audition = { name, v -> player.auditionParam(e, name, v) }, onChange = onChange, onDismiss = onDismiss)
+
+/** The song's reverb, where its engines meet, edited like a patch. */
+@Composable
+private fun ReverbEditor(song: RackSong, player: SongPlayer, onChange: (Map<String, Double>) -> Unit,
+                         onDismiss: () -> Unit) =
+    ParamEditor(stringResource(R.string.reverb), "reverb", song.reverb, player,
+        load = { player.previewReverb(song.reverb); player.reverbParams() },
+        audition = player::auditionReverb, onChange = onChange, onDismiss = onDismiss)
+
+@Composable
+private fun ParamEditor(title: String, key: Any, current: Map<String, Double>, player: SongPlayer,
+                        load: () -> List<SongPlayer.ParamDesc>, audition: (String, Float) -> Unit,
                         onChange: (Map<String, Double>) -> Unit, onDismiss: () -> Unit) {
-    val params = remember(e) { player.previewSlot(e, slot); player.engineParams(e) }
-    var values by remember(e) { mutableStateOf(slot.params) }
+    val params = remember(key) { load() }
+    var values by remember(key) { mutableStateOf(current) }
     fun put(v: Map<String, Double>) { values = v; onChange(v) }
     AlertDialog(onDismissRequest = onDismiss,
         confirmButton = { TextButton(onClick = { player.reload(); onDismiss() }) { Text(stringResource(R.string.done)) } },
@@ -690,7 +715,7 @@ private fun PatchEditor(e: RackEngine, slot: RackSlot, player: SongPlayer,
                 TextButton(onClick = { put(emptyMap()) }) { Text(stringResource(R.string.clear)) }
             }
         },
-        title = { Text(stringResource(R.string.patch_of, engineLabel(e))) },
+        title = { Text(title) },
         text = {
             LazyColumn(Modifier.height(480.dp)) {
                 itemsIndexed(params) { _, p ->
@@ -702,7 +727,7 @@ private fun PatchEditor(e: RackEngine, slot: RackSlot, player: SongPlayer,
                             steps = if (p.integer) ((p.max - p.min).toInt() - 1).coerceAtLeast(0) else 0,
                             onValueChange = { nv ->
                                 val x = if (p.integer) Math.round(nv).toFloat() else nv
-                                player.auditionParam(e, p.name, x)
+                                audition(p.name, x)
                                 put(values + (p.name to x.toDouble()))
                             }, modifier = Modifier.weight(1f))
                         Text(if (p.integer) v.toInt().toString() else "%.2f".format(v), modifier = Modifier.width(48.dp),

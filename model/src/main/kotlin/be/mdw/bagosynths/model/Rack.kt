@@ -13,7 +13,9 @@ package be.mdw.bagosynths.model
  *   wire  `e.midi`   zone -> engine: off means the engine takes no new notes,
  *                    while held ones still end and tails still ring (Wire.h)
  *   wire  `e.audio`  engine -> mix
- * so a parameter key is `e.Level` or `e.zone.keyLow`.
+ * so a parameter key is `e.Level` or `e.zone.keyLow`. The engines meet in
+ * node `mix`, the reverb, whose parameters ("Room size", "Damping", "Width",
+ * "Mix") the song may set; those it leaves out keep the reverb's defaults.
  */
 enum class RackEngine(val key: String, val nodeType: String, val label: String) {
     SFIZZ("sfizz", "sfizz", "Piano"),
@@ -79,13 +81,15 @@ data class RackSong(
     val tempo: Tempo? = null,
     /** The song's lead sheet, a PDF object (S9.3). */
     val leadSheet: Digest? = null,
+    /** The reverb the engines meet in, by parameter name; empty = its defaults. */
+    val reverb: Map<String, Double> = emptyMap(),
 ) {
     /** The song and its live sets as library objects. Live sets are put into [store]. */
     fun toObjects(store: Store): Song {
         val nodes = LinkedHashMap<String, Node>()
         val wires = LinkedHashMap<String, Wire>()
         nodes["in"] = Node(kind = "port.midiIn", port = "Keys")
-        nodes["mix"] = Node(kind = "reverb")
+        nodes["mix"] = Node(kind = "reverb", params = reverb)
         nodes["out"] = Node(kind = "port.audioOut", port = "Main Out")
         wires["mix.out"] = Wire("mix:out", "out:in")
         for ((e, slot) in slots.toSortedMap()) {
@@ -155,7 +159,8 @@ data class RackSong(
                 } ?: RackCp88()
                 RackLiveSet(ls.name, parts, cp)
             }
-            return RackSong(slots, liveSets, song.tempo, song.leadSheet?.toRef()?.digest)
+            return RackSong(slots, liveSets, song.tempo, song.leadSheet?.toRef()?.digest,
+                song.nodes["mix"]?.params ?: emptyMap())
         }
 
         /** A new song: one engine, one live set. */
