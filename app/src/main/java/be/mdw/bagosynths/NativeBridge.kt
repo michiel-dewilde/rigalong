@@ -181,6 +181,8 @@ object NativeBridge {
     external fun nativeNodeParamCount(index: Int): Int
     external fun nativeNodeParamName(index: Int, param: Int): String
     external fun nativeGetNodeParam(index: Int, param: Int): Float
+    /** A song's insert effect, whole: a fresh effect of [type] that starts at these values. */
+    external fun nativeFxConfigure(index: Int, type: Int, names: Array<String>, values: FloatArray)
     /** A value as the player reads it ("250 ms", "1/8"), or null. */
     external fun nativeNodeParamDisplay(index: Int, param: Int, value: Float): String?
     /** A parameter's range: [min, max, 1 if whole numbers only] (PLAN.md D6). */

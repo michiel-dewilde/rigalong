@@ -6,6 +6,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <thread>
+#include <vector>
 
 #include "sst/basic-blocks/simd/setup.h"
 
@@ -112,6 +113,7 @@ public:
         return {m.minVal, m.maxVal, m.type == PMD::INT || m.type == PMD::BOOL};
     }
     bool canSync(int i) const override { return i >= 0 && i < mCount && mMeta[i].canTemposync; }
+    void reinit() override { mFx->initialize(); }
     bool display(int i, float v, char* out, int capacity) const override {
         if (i < 0 || i >= mCount) return false;
         auto s = mMeta[i].valueToString(v, PMD::FeatureState().withTemposync(mEs.synced[i]));
@@ -128,14 +130,19 @@ private:
     int mCount = 0;
 };
 
+std::atomic<double> gHostTempo{120.0};
+
 const char* const kTypeNames[FxNode::kNumTypes] = {"Off", "Delay", "Phaser", "Flanger", "Rotary", "Reverb"};
 
-// Queue indices: the effect's parameter, tagged with the type it was meant for.
+// Queue indices: the effect's parameter, tagged with the generation it was sent to.
 constexpr int kTagStride = 64;
+constexpr int kGenWrap = 1 << 20;   // kGenWrap * kTagStride stays inside an int
 
 }  // namespace
 
 FxNode::FxNode() = default;
+
+void FxNode::setHostTempo(double bpm) { gHostTempo.store(bpm > 0.0 ? bpm : 120.0, std::memory_order_relaxed); }
 
 FxNode::~FxNode() { delete mEffect.load(); }
 
@@ -170,13 +177,44 @@ void FxNode::setType(int type) {
     Effect* fresh = make(type);   // allocation here, never on the render thread
     if (fresh) {
         fresh->type = type;
-        fresh->setTempo(mTempo.load());
+        fresh->setTempo(gHostTempo.load(std::memory_order_relaxed));
     }
+    publish(fresh, type);
+}
+
+void FxNode::configure(int type, const std::vector<std::string>& names, const std::vector<float>& values) {
+    type = std::clamp(type, 0, kNumTypes - 1);
+    Effect* fresh = make(type);
+    if (fresh) {
+        fresh->type = type;
+        fresh->setTempo(gHostTempo.load(std::memory_order_relaxed));
+        const size_t n = std::min(names.size(), values.size());
+        // Syncs before values: a synced value snaps to a note value.
+        for (int pass = 0; pass < 2; ++pass) {
+            for (size_t k = 0; k < n; ++k) {
+                for (int i = 0; i < fresh->count(); ++i) {
+                    const bool isSync = fresh->canSync(i) && names[k] == fresh->name(i) + " sync";
+                    if (pass == 0 && isSync) fresh->setSync(i, values[k] > 0.5f);
+                    if (pass == 1 && !isSync && names[k] == fresh->name(i)) fresh->setValue(i, values[k]);
+                }
+            }
+        }
+        fresh->reinit();   // starts AT these values: no glide from the defaults
+    }
+    publish(fresh, type);
+}
+
+void FxNode::publish(Effect* fresh, int type) {
+    const int gen = (mGen.load() + 1) % kGenWrap;
+    if (fresh) fresh->gen = gen;
     for (int i = 0; i < kMaxParams; ++i) {
         mSyncNames[i] = fresh && fresh->canSync(i) ? fresh->name(i) + " sync" : std::string();
     }
     mType.store(type);
     Effect* old = mEffect.exchange(fresh, std::memory_order_seq_cst);
+    // After the exchange: a change tagged in between can only be dropped, never
+    // applied to the wrong effect.
+    mGen.store(gen);
     if (old == nullptr) return;
     // The render thread may have loaded `old` before the exchange; it bumps
     // mRenderSeq to odd before loading and back to even after its block. Once
@@ -200,8 +238,8 @@ void FxNode::setParam(int index, float value) {
         mAmountTarget.store(std::clamp(value, 0.0f, 1.0f), std::memory_order_relaxed);
         return;
     }
-    // Tagged with the type now in force: drained only into that effect.
-    mQueue.push(mType.load() * kTagStride + index, value);
+    // Tagged with the effect now in force: drained only into that one.
+    mQueue.push(mGen.load() * kTagStride + index, value);
 }
 
 float FxNode::getParam(int index) const {
@@ -256,7 +294,7 @@ void FxNode::process(const ProcessArgs& args) {
     Effect* e = mEffect.load(std::memory_order_seq_cst);
 
     mQueue.drain([&](int tagged, float v) {
-        if (e == nullptr || tagged / kTagStride != e->type) return;   // meant for another effect
+        if (e == nullptr || tagged / kTagStride != e->gen) return;   // meant for another effect
         const int index = tagged % kTagStride;
         if (index >= kSyncBase) e->setSync(index - kSyncBase, v > 0.5f);
         else e->setValue(index - 1, v);

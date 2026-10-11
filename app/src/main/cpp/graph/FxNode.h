@@ -3,6 +3,7 @@
 #include <atomic>
 #include <memory>
 #include <string>
+#include <vector>
 
 #include <bagosynths/Graph.h>
 #include <bagosynths/ParamQueue.h>
@@ -23,8 +24,8 @@ namespace bagosynths {
 // effect is allocated and initialised there, published with one atomic store,
 // and the old one freed only once the render thread is provably not inside it
 // (a sequence count it bumps around every block). Parameter changes go through
-// a queue tagged with the type they were meant for, so a value sent to the old
-// effect never lands on the new one.
+// a queue tagged with the generation of the effect they were sent to, so a
+// value sent to the old effect never lands on the new one, even of the same type.
 //
 // AMOUNT (index kAmount) is a send, not a mix: the effect is fed the signal
 // times the amount, and the rest passes dry. Taken to 0 -- a live set without
@@ -45,6 +46,19 @@ public:
     FxNode();
     ~FxNode() override;
 
+    // The host's tempo, for effects created from now on: they start at it
+    // rather than at the last tempo a block carried, which a synced delay
+    // would otherwise glide away from over seconds (Surge glides its times).
+    static void setHostTempo(double bpm);
+
+    // A song's effect, whole: a fresh one of `type` (even the same type as now,
+    // so nothing carries over from the last song), its named values -- syncs
+    // first -- applied and the effect initialised WITH them before the render
+    // thread ever sees it. Through the queue instead, a delay would glide from
+    // its default time to the song's over seconds, as Surge glides its times.
+    // Names it does not know are ignored. Off the render thread.
+    void configure(int type, const std::vector<std::string>& names, const std::vector<float>& values);
+
     const char* typeName() const override { return "Fx"; }
     int numInputs() const override { return 1; }
     PinSpec inputPin(int) const override { return {DataType::Audio, 2, "in"}; }
@@ -64,7 +78,10 @@ public:
 
     // The effect behind it: the type-erased face of sst-effects' templates.
     struct Effect {
-        int type = kOff;   // what it is, so a tagged change is checked against the effect itself
+        int type = kOff;
+        // Which publish this is: a queued change carries the generation it was
+        // sent to, so it never lands on a later effect, even one of the same type.
+        int gen = 0;
         virtual ~Effect() = default;
         virtual void processBlock(float* l, float* r) = 0;
         virtual void setValue(int i, float v) = 0;
@@ -77,15 +94,18 @@ public:
         virtual ParamRange range(int i) const = 0;
         virtual bool canSync(int i) const = 0;
         virtual bool display(int i, float v, char* out, int capacity) const = 0;
+        virtual void reinit() = 0;
     };
 
 private:
     void setType(int type);
+    void publish(Effect* fresh, int type);
     Effect* make(int type) const;
 
     double mRate = 44100.0;
     std::atomic<Effect*> mEffect{nullptr};
     std::atomic<int> mType{kOff};
+    std::atomic<int> mGen{0};
     // Odd while the render thread is inside process(): see setType.
     std::atomic<uint32_t> mRenderSeq{0};
     ParamQueue<256> mQueue;

@@ -622,6 +622,26 @@ Java_be_mdw_bagosynths_NativeBridge_nativeNodeParamName(JNIEnv* env, jobject, ji
     return env->NewStringUTF(n ? n->paramName(param) : "");
 }
 
+// A song's insert effect, whole (FxNode::configure): type, then named values.
+JNIEXPORT void JNICALL
+Java_be_mdw_bagosynths_NativeBridge_nativeFxConfigure(JNIEnv* env, jobject, jint index, jint type,
+                                                     jobjectArray names, jfloatArray values) {
+    auto* fx = dynamic_cast<bagosynths::FxNode*>(engine().graph().nodeAt(index));
+    if (fx == nullptr) return;
+    std::vector<std::string> n;
+    const jsize count = env->GetArrayLength(names);
+    for (jsize i = 0; i < count; ++i) {
+        auto s = static_cast<jstring>(env->GetObjectArrayElement(names, i));
+        const char* c = env->GetStringUTFChars(s, nullptr);
+        n.emplace_back(c);
+        env->ReleaseStringUTFChars(s, c);
+        env->DeleteLocalRef(s);
+    }
+    std::vector<float> v(static_cast<size_t>(env->GetArrayLength(values)));
+    if (!v.empty()) env->GetFloatArrayRegion(values, 0, static_cast<jsize>(v.size()), v.data());
+    fx->configure(type, n, v);
+}
+
 // A value as the player reads it ("250 ms", "1/8"), or null where the node has
 // nothing better than the number.
 JNIEXPORT jstring JNICALL

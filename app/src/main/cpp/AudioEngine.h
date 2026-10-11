@@ -93,7 +93,10 @@ public:
     // The metronome (I12.2), mixed into the main out before the master volume.
     bagosynths::Click& click() { return mClick; }
     // The song's tempo for tempo-synced parameters (I12.1); 0 or less = none (120).
-    void setTempo(double bpm) { mTempo.store(bpm > 0.0 ? bpm : 120.0, std::memory_order_relaxed); }
+    void setTempo(double bpm) {
+        mTempo.store(bpm > 0.0 ? bpm : 120.0, std::memory_order_relaxed);
+        bagosynths::FxNode::setHostTempo(bpm);
+    }
 
     // --- graph -------------------------------------------------------------
     // The signal path is a node graph (see GRAPH.md). M3 builds a fixed default

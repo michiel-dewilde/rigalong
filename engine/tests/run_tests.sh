@@ -22,10 +22,18 @@ OUT="${TMPDIR:-/tmp}/bagosynths-engine-tests"
 
 : "${CXX:=g++}"
 
-"$CXX" -std=c++20 -O1 -g -Wall -Wextra -Wno-unused-parameter \
+# FxNode (app/src/main/cpp/graph) is compiled in too: it is Android-free, and
+# sst-effects is header-only. SSE4.2, simde and fmt as Surge's own build has them.
+SURGE="$ENGINE/../third_party/surge/libs"
+
+"$CXX" -std=c++20 -O1 -g -Wall -Wextra -Wno-unused-parameter -msse4.2 \
     -fno-omit-frame-pointer \
     -I"$ENGINE/include" \
     -I"$HERE" \
+    -I"$ENGINE/../app/src/main/cpp/graph" \
+    -isystem "$SURGE/sst/sst-effects/include" -isystem "$SURGE/sst/sst-basic-blocks/include" \
+    -isystem "$SURGE/sst/sst-filters/include" -isystem "$SURGE/sst/sst-waveshapers/include" \
+    -isystem "$SURGE/simde" -isystem "$SURGE/fmt/include" -DFMT_HEADER_ONLY \
     -o "$OUT" \
     "$ENGINE/src/Graph.cpp" \
     "$ENGINE/src/UsbDescriptors.cpp" \
@@ -38,7 +46,9 @@ OUT="${TMPDIR:-/tmp}/bagosynths-engine-tests"
     "$HERE/test_gain.cpp" \
     "$HERE/test_wire.cpp" \
     "$HERE/test_midizone.cpp" \
-    "$HERE/test_click.cpp"
+    "$HERE/test_click.cpp" \
+    "$ENGINE/../app/src/main/cpp/graph/FxNode.cpp" \
+    "$HERE/test_fxnode.cpp"
 
 echo "engine tests ($("$CXX" --dumpversion 2>/dev/null || echo "$CXX"))"
 exec "$OUT" "$@"

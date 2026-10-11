@@ -146,10 +146,8 @@ class SongPlayer(private val lib: Library, private val host: EngineHost, private
         prefs.edit().putInt("stage.song", index).apply()
         note("song ${index + 1} '${songNames.getOrNull(index)}': engines ${rack?.slots?.keys?.map { it.key }}, " +
                 "live sets ${liveSets.map { it.name }}")
-        setUpEngines()
-        if (rack?.slots?.containsKey(RackEngine.HAMMOND) == true) refreshOrgan()
-        sheetPage = 0
-        sheetPages = 0
+        // The tempo before the engines: a synced effect is created at the song's
+        // tempo, instead of gliding to it from the last song's over seconds.
         if (!sameSong) {
             if (clickRunning) retempo(s.tempo?.bpm) else bpm = s.tempo?.bpm
             bpmTapped = false
@@ -157,6 +155,10 @@ class SongPlayer(private val lib: Library, private val host: EngineHost, private
             taps.clear()
         }
         applyMidiClock()
+        setUpEngines()
+        if (rack?.slots?.containsKey(RackEngine.HAMMOND) == true) refreshOrgan()
+        sheetPage = 0
+        sheetPages = 0
         sheetFile = s.leadSheet?.toRef()?.digest?.let { java.io.File(lib.store.root, "blobs/sha256/${it.hex}") }
             ?.takeIf { it.exists() }
         writeSongPage(liveSets)
@@ -699,18 +701,20 @@ class SongPlayer(private val lib: Library, private val host: EngineHost, private
     private fun fxParamIndex(node: Int, name: String): Int? = (0 until NativeBridge.nativeNodeParamCount(node))
         .firstOrNull { NativeBridge.nativeNodeParamName(node, it) == name }
 
-    /** Puts [fx] in effect slot [slot]: its type, then its sync switches, then its values (which snap to note values when synced). */
+    /**
+     * Puts [fx] in effect slot [slot]: a fresh effect that starts at the song's
+     * values (FxNode::configure), so nothing comes from the last song and no
+     * delay glides in from its default time.
+     */
     fun applyFx(slot: Int, fx: be.mdw.bagosynths.model.RackFx?) {
         val node = fxIndex(slot) ?: return
         val type = be.mdw.bagosynths.model.RackFx.TYPES.indexOf(fx?.type ?: "off").coerceAtLeast(0)
-        NativeBridge.nativeSetNodeParam(node, 0, type.toFloat())
+        val params = fx?.params.orEmpty()
+        NativeBridge.nativeFxConfigure(node, type, params.keys.toTypedArray(),
+            params.values.map { it.toFloat() }.toFloatArray())
         // Fully on until a live set says otherwise: an amount left at 0 by the
         // previous song would make a new effect silent.
         fxParamIndex(node, "Amount")?.let { NativeBridge.nativeSetNodeParam(node, it, 1f) }
-        val params = fx?.params.orEmpty()
-        for ((name, v) in params.filterKeys { it.endsWith(" sync") } + params.filterKeys { !it.endsWith(" sync") }) {
-            fxParamIndex(node, name)?.let { NativeBridge.nativeSetNodeParam(node, it, v.toFloat()) }
-        }
     }
 
     /** The effect's parameters as they are in slot [slot] now (the type excluded). */
