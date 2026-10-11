@@ -36,7 +36,9 @@ What you play from.
 * **Live sets**: the large buttons. A live set is one state of the song, such
   as "Verse", "Chorus" or "Solo". **Hold** a live set button to edit it: the
   song opens in Songs at that live set. **Hold** a sound's name above its
-  fader to open its patch. Switching never cuts a note: a key you are
+  fader to open its sound for the live set that is playing: what you change
+  there is that live set's own (see Songs, "a live set's own sound"), unless
+  you pick "Whole song" at the top. Switching never cuts a note: a key you are
   holding keeps sounding until you release it, even if the new live set no
   longer uses that sound, and tails ring out naturally.
 * **Levels**: one fader per sound the song uses (two pianos, two faders). Faders move only when you
@@ -112,9 +114,30 @@ song being edited:
   * optionally its **own level**;
   * when the sound has an effect, whether the **effect** is on in this live
     set. Turned off, it stops taking new sound and lets its echoes and tail
-    ring out.
+    ring out;
+  * **Sound…**: its sound in this live set (see below). It reads
+    "Sound (2)" when the live set has two values of its own.
 
   Copy a live set to make the next one quickly.
+
+  **A live set's own sound.** The song holds the sounds; a live set switches
+  them on and off and adjusts them. Its sound dialog has two choices at the
+  top:
+  * **Whole song**: you change the sound's patch, so every live set hears it.
+  * **Only in "Solo"** (the live set): you change it for this live set
+    alone, such as pulling the organ's drawbars or opening a filter. These
+    values sit on top of the song's: other live sets keep the song's, and
+    leaving this live set puts the song's values back. They are plain values,
+    so switching stays instant. A value of its own is marked ●; ↺ takes it
+    back to the song's value, and **Use in song** makes it the song's, so
+    every live set has it. A library patch is not changed by a live set's own
+    values.
+
+  To give one live set a different preset, use **New sound for this live
+  set**. It adds a sound that starts as this one sounds here, plays only in
+  this live set (where the original stops), and opens the preset list for
+  it. Both sounds are loaded with the song, so switching to it is still
+  instant; a live set that loaded a preset itself would cut the sound.
 * **Program change**, per live set: for any other keyboard or sound module
   on the MIDI out, a program (and, if it needs one, a bank) sent on its
   channel when the live set is selected. Direct USB modes.

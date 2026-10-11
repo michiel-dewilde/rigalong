@@ -184,4 +184,93 @@ class RackTest {
     fun theSameDraftIsTheSameSong() {
         assertEquals(store.putTyped(draft.toObjects(store)), store.putTyped(draft.toObjects(store)))
     }
+
+    // ------------------------------------------- a live set's own sound values
+
+    // "Upper 16" the patch sets; "Upper 8" it leaves to the preset, heard at 8.
+    private val tweaked = draft.withLiveSetValue(1, "hammond", "Upper 16", 4.0, songValue = 8.0)
+        .withLiveSetValue(1, "hammond", "Upper 8", 6.0, songValue = 8.0)
+
+    @Test
+    fun theSongKeepsTheValueThePatchLeavesToItsPreset() {
+        val slot = tweaked.instance("hammond")!!.slot
+        assertEquals(mapOf("Upper 8" to 8.0), slot.songValues, "not Upper 16: the patch has that")
+        assertEquals(draft.instance("hammond")!!.slot.params, slot.params, "the patch is untouched")
+        assertEquals(8.0, tweaked.songValue("hammond", "Upper 16"))
+        assertEquals(8.0, tweaked.songValue("hammond", "Upper 8"))
+        // A second value of its own keeps the first song value.
+        val again = tweaked.withLiveSetValue(1, "hammond", "Upper 8", 2.0, songValue = 6.0)
+        assertEquals(mapOf("Upper 8" to 8.0), again.instance("hammond")!!.slot.songValues)
+        // No live set differs any more: the song value goes too.
+        val back = tweaked.withPart(1, "hammond", tweaked.liveSets[1].parts["hammond"]!!.copy(params = emptyMap()))
+        assertEquals(emptyMap(), back.instance("hammond")!!.slot.songValues)
+    }
+
+    @Test
+    fun aLiveSetsOwnValuesRoundTrip() {
+        val back = RackSong.fromObjects(store, tweaked.toObjects(store))!!
+        assertEquals(mapOf("Upper 16" to 4.0, "Upper 8" to 6.0), back.liveSets[1].parts["hammond"]?.params)
+        assertEquals(emptyMap(), back.liveSets[0].parts["hammond"]?.params)
+        assertEquals(tweaked, back)
+    }
+
+    @Test
+    fun noOwnValuesKeepsTheSongsHash() {
+        // Songs written before live sets had sound values are the same objects.
+        assertEquals(store.putTyped(draft.toObjects(store)),
+            store.putTyped(draft.withPart(1, "hammond", draft.liveSets[1].parts["hammond"]!!).toObjects(store)))
+    }
+
+    @Test
+    fun leavingALiveSetPutsTheSongsValueBack() {
+        val song = tweaked.toObjects(store)
+        val liveSets = song.liveSets.map { store.getTyped<LiveSet>(it.toRef().digest) }
+        val s = LiveSetSwitcher(song, liveSets)
+        s.select(0)
+        val into = s.select(1).filterIsInstance<Change.Param>().associate { it.key to it.value }
+        assertEquals(4.0, into["hammond.Upper 16"])
+        assertEquals(6.0, into["hammond.Upper 8"])
+        val back = s.select(0).filterIsInstance<Change.Param>().associate { it.key to it.value }
+        assertEquals(8.0, back["hammond.Upper 16"], "the patch's value")
+        assertEquals(8.0, back["hammond.Upper 8"], "the preset's value")
+    }
+
+    @Test
+    fun useInSongMovesTheValueIntoThePatch() {
+        val s = tweaked.useInSong(1, "hammond", "Upper 8")
+        assertEquals(6.0, s.instance("hammond")!!.slot.params["Upper 8"])
+        assertEquals(mapOf("Upper 16" to 4.0), s.liveSets[1].parts["hammond"]!!.params)
+        assertEquals(emptyMap(), s.instance("hammond")!!.slot.songValues, "the patch has it now")
+        // Already the song's: nothing more to move.
+        assertEquals(s, s.useInSong(1, "hammond", "Upper 8"))
+    }
+
+    @Test
+    fun aLayerForOneLiveSet() {
+        val (s, id) = tweaked.layerFor(1, "hammond")
+        assertEquals("hammond-2", id)
+        val layer = s.instance(id)!!
+        assertEquals("Jimmy Smith", layer.slot.preset)
+        assertEquals(mapOf("Upper 16" to 4.0, "Leslie" to 2.0, "Upper 8" to 6.0), layer.slot.params)
+        assertEquals(emptyMap(), layer.slot.songValues)
+        val split = s.liveSets[1]
+        assertEquals(false, split.parts["hammond"]!!.plays)
+        val part = split.parts[id]!!
+        assertTrue(part.plays)
+        assertEquals(59, part.keyHigh, "it plays where the organ played")
+        assertEquals(12, part.transpose)
+        assertEquals(emptyMap(), part.params)
+        assertEquals(false, s.liveSets[0].parts[id]!!.plays, "and nowhere else")
+        assertEquals(s, RackSong.fromObjects(store, s.toObjects(store)))
+    }
+
+    @Test
+    fun aLayerOfAnUnchangedLibraryPatchKeepsItsLink() {
+        val linked = draft.withSlot("sfizz", draft.instance("sfizz")!!.slot.copy(libraryPatch = Digest.of(byteArrayOf(7))))
+        val (s, id) = linked.layerFor(1, "sfizz")
+        assertEquals(linked.instance("sfizz")!!.slot.libraryPatch, s.instance(id)!!.slot.libraryPatch)
+        val (t, id2) = tweaked.withSlot("hammond", tweaked.instance("hammond")!!.slot.copy(libraryPatch = Digest.of(byteArrayOf(7))))
+            .layerFor(1, "hammond")
+        assertEquals(null, t.instance(id2)!!.slot.libraryPatch, "changed here: a sound of its own")
+    }
 }

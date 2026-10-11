@@ -116,8 +116,11 @@ class Flow:
         found = find_all(text, exact)
         if not found:
             raise AssertionError(f"nothing reads {text!r}")
+        low = max(n.y for n in found)
         n = {"first": found[0], "last": found[-1],
-             "lowest": max(found, key=lambda n: n.y), "highest": min(found, key=lambda n: n.y)}[pick]
+             "lowest": max(found, key=lambda n: n.y), "highest": min(found, key=lambda n: n.y),
+             # the leftmost of the lowest row: a fader's name, not the panel beside it
+             "lowest-left": min((n for n in found if n.y > low - 40), key=lambda n: n.x)}[pick]
         for k in range(times):
             if long:
                 shell(f"input swipe {n.x} {n.y} {n.x} {n.y} 900")
@@ -125,6 +128,22 @@ class Flow:
                 shell(f"input tap {n.x} {n.y}")
             self.taps += 1
             time.sleep(interval if k + 1 < times else 0.6)
+
+    def slide(self, label, at=0.05):
+        """A tap on the slider in the row of parameter [label], [at] of the way along: one tap."""
+        found = find_all(label)
+        if not found:
+            raise AssertionError(f"no parameter {label!r}")
+        n = found[0]
+        # The slider runs from the end of the name column to the value column, the next text in the row.
+        right = [m for m in screen() if abs(m.y - n.y) < 12 and m.box[0] > n.box[2]]
+        if not right:
+            raise AssertionError(f"no value beside {label!r}")
+        x1 = n.box[2] + 30
+        x2 = min(m.box[0] for m in right) - 30
+        shell(f"input tap {int(x1 + (x2 - x1) * at)} {n.y}")
+        self.taps += 1
+        time.sleep(0.6)
 
     def see(self, text, exact=True, timeout=6.0):
         if not wait_for(text, exact, timeout):
@@ -283,6 +302,87 @@ def flow_second_piano(f):
     time.sleep(1.0)
 
 
+def undo_last():
+    """Undo the last save, from the Library (not counted)."""
+    to_library()
+    for n in find_all("Undo", exact=False):
+        shell(f"input tap {n.x} {n.y}")
+        break
+    time.sleep(1.0)
+
+
+def stage_switch(liveset, pattern):
+    """Selects a live set of the stage song, true if the log then matches [pattern]."""
+    logcat_clear()
+    broadcast("STAGE", f"--ei liveset {liveset}")
+    return logcat_has(pattern, timeout=3)
+
+
+# A live set's own sound values: the organ's 16' drawbar pulled in live set 1
+# ("Organ") only. From the stage the sound opens on the live set playing.
+def flow_tweak_in_live_set(f):
+    f.tap("Organ", long=True, pick="lowest-left")
+    f.see("Only in “Organ”")
+    f.slide("Upper 16", at=0.0)
+    f.see("Upper 16 ●")
+    f.see("↺")
+    f.tap("Done")
+    f.tap("Save •")
+    to_stage()
+    try:
+        if not stage_switch(2, r"live set 2 'Piano'.*hammond\.Upper 16=[1-9]"):
+            raise AssertionError("leaving the live set did not put the song's drawbar back")
+        if not stage_switch(1, r"live set 1 'Organ'.*hammond\.Upper 16=0[.,]00"):
+            raise AssertionError("the live set's own drawbar was not applied")
+    finally:
+        undo_last()
+
+
+def flow_use_in_whole_song(f):
+    f.tap("Organ", long=True, pick="lowest-left")
+    f.slide("Upper 16", at=0.0)
+    f.tap("Use in song")
+    if wait_for("Upper 16 ●", timeout=1.5):
+        raise AssertionError("still the live set's own after Use in song")
+    f.tap("Done")
+    f.tap("Save •")
+    to_stage()
+    try:
+        # The song's value now: the same in every live set, so no change on switching.
+        if stage_switch(2, r"hammond\.Upper 16="):
+            raise AssertionError("the drawbar still differs between live sets")
+    finally:
+        undo_last()
+
+
+def flow_sound_for_live_set(f):
+    # A different preset in one live set: a sound of its own, loaded with the song.
+    f.tap("Organ", long=True, pick="lowest-left")
+    f.tap("New sound for this live set")
+    f.see("Organ: patch")          # the preset picker for the new sound
+    picks = [n for n in screen() if n.text and n.text not in ("Organ: patch", "As loaded", "Cancel", "Search")
+             and n.y > find_all("Search")[0].y + 60]
+    if len(picks) < 2:
+        raise AssertionError("no presets to pick")
+    shell(f"input tap {picks[1].x} {picks[1].y}")
+    f.taps += 1
+    time.sleep(0.8)
+    f.tap("Save •")
+    to_stage()
+    try:
+        if not (wait_for("Organ 1") and wait_for("Organ 2")):
+            raise AssertionError("the stage does not show the new sound")
+        if not stage_switch(2, r"live set 2 'Piano'"):
+            raise AssertionError("no live set 2")
+        # From live set 2, where neither organ plays: only the new one comes on.
+        if not stage_switch(1, r"live set 1 'Organ'.*hammond-2\.midi=on"):
+            raise AssertionError("live set 1 does not play the new sound")
+        if re.search(r"hammond\.midi=on", adb("logcat", "-d", "-s", "bos-stage:I")):
+            raise AssertionError("live set 1 still plays the old organ too")
+    finally:
+        undo_last()
+
+
 FLOWS = [
     # name, budget (taps), function
     ("select-live-set", 1, flow_select_live_set),
@@ -295,6 +395,9 @@ FLOWS = [
     ("update-everywhere", 5, flow_update_everywhere),
     ("undo-all", 4, flow_undo_all),
     ("second-piano", 3, flow_second_piano),
+    ("tweak-in-live-set", 4, flow_tweak_in_live_set),
+    ("use-in-whole-song", 5, flow_use_in_whole_song),
+    ("sound-for-live-set", 4, flow_sound_for_live_set),
 ]
 
 

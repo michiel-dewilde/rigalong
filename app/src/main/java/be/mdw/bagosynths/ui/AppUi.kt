@@ -535,8 +535,9 @@ private fun SongEditor(song: RackSong, name: String, host: EngineHost, player: S
                        onChange: (RackSong) -> Unit, onSave: () -> Unit) {
     // Instance ids: which sound's preset list, patch or effect is open.
     var picker by remember { mutableStateOf<String?>(null) }
-    var patchEditor by remember { mutableStateOf<String?>(null) }
-    LaunchedEffect(focus) { focus?.instance?.let { if (song.instance(it) != null) patchEditor = it } }
+    // The sound being edited, and the live set it is edited for (null: the whole song).
+    var soundEditor by remember { mutableStateOf<Pair<String, Int?>?>(null) }
+    LaunchedEffect(focus) { focus?.instance?.let { if (song.instance(it) != null) soundEditor = it to focus.liveSet } }
     var reverbEditor by remember { mutableStateOf(false) }
     var fxEditor by remember { mutableStateOf<String?>(null) }
     var renaming by remember { mutableStateOf<String?>(null) }
@@ -594,7 +595,7 @@ private fun SongEditor(song: RackSong, name: String, host: EngineHost, player: S
                 OutlinedButton(onClick = { picker = inst.id }, modifier = Modifier.weight(1f)) {
                     Text(slot.preset ?: stringResource(R.string.as_loaded_paren), maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
-                TextButton(onClick = { patchEditor = inst.id }) {
+                TextButton(onClick = { soundEditor = inst.id to null }) {
                     Text(stringResource(R.string.edit_patch) + if (slot.params.isNotEmpty()) " ●" else "")
                 }
                 TextButton(onClick = { fxEditor = inst.id }) {
@@ -624,7 +625,8 @@ private fun SongEditor(song: RackSong, name: String, host: EngineHost, player: S
             }) { Text(stringResource(R.string.add_live_set)) }
         }
         song.liveSets.forEachIndexed { i, ls ->
-            LiveSetCard(song, i, ls, player, focused = focus?.liveSet == i, onChange)
+            LiveSetCard(song, i, ls, player, focused = focus?.liveSet == i, onChange,
+                onSound = { id -> soundEditor = id to i })
         }
     }
     fxEditor?.let { id ->
@@ -652,13 +654,16 @@ private fun SongEditor(song: RackSong, name: String, host: EngineHost, player: S
         ReverbEditor(song, player, onChange = { onChange(song.copy(reverb = it)) },
             onDismiss = { reverbEditor = false })
     }
-    patchEditor?.let { id ->
+    soundEditor?.let { (id, ls) ->
         song.instance(id)?.let { inst ->
-            PatchEditor(song, inst, player, lib, onChange = { params ->
-                onChange(song.withSlot(id, inst.slot.copy(params = params)))
-            }, onReplace = { p, link ->
-                onChange(song.withSlot(id, inst.slot.withPatch(p, link)))
-            }, onDismiss = { patchEditor = null })
+            SoundEditor(song, inst, ls, player, lib, onChange = onChange,
+                onLayer = { scope ->
+                    // A sound of its own for this live set: then straight to picking what it plays.
+                    val (s, newId) = song.layerFor(scope, id)
+                    onChange(s)
+                    soundEditor = null
+                    picker = newId
+                }, onDismiss = { soundEditor = null })
         }
     }
     picker?.let { id ->
@@ -678,7 +683,7 @@ private fun SongEditor(song: RackSong, name: String, host: EngineHost, player: S
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun LiveSetCard(song: RackSong, i: Int, ls: RackLiveSet, player: SongPlayer, focused: Boolean,
-                        onChange: (RackSong) -> Unit) {
+                        onChange: (RackSong) -> Unit, onSound: (String) -> Unit) {
     fun put(n: RackLiveSet) = onChange(song.copy(liveSets = song.liveSets.toMutableList().also { it[i] = n }))
     var importing by remember { mutableStateOf("") }
     val copyName = stringResource(R.string.copy_of, ls.name)
@@ -709,6 +714,12 @@ private fun LiveSetCard(song: RackSong, i: Int, ls: RackLiveSet, player: SongPla
             Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.horizontalScroll(rememberScrollState())) {
                 Checkbox(checked = p.plays, onCheckedChange = { putPart(p.copy(plays = it)) })
                 Text(song.displayName(inst), modifier = Modifier.width(100.dp), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                // Its sound in this live set: values of its own over the song's patch.
+                TextButton(onClick = { onSound(inst.id) }) {
+                    Text(if (p.params.isEmpty()) stringResource(R.string.live_set_sound)
+                        else stringResource(R.string.live_set_sound_n, p.params.size),
+                        color = if (p.params.isEmpty()) Color.White else Warn)
+                }
                 NumberField(stringResource(R.string.key_low), p.keyLow, 0..127, noteName = true) { putPart(p.copy(keyLow = it)) }
                 NumberField(stringResource(R.string.key_high), p.keyHigh, 0..127, noteName = true) { putPart(p.copy(keyHigh = it)) }
                 NumberField(stringResource(R.string.transpose_short), p.transpose, -48..48) { putPart(p.copy(transpose = it)) }
@@ -830,21 +841,117 @@ private fun TempoBox(player: SongPlayer) {
 }
 
 /**
- * An engine's patch (M8, first slice): every parameter but the level, with a
- * slider over its real range (whole numbers where only those mean anything).
- * Moving a slider plays it at once; the values are kept in the song, over the
- * preset. "Take current" stores what the engine has now -- after shaping it on
- * the prototype's panels, for instance; "Clear" goes back to the plain preset.
+ * A sound's parameters (M8): every one but the level, with a slider over its
+ * real range, heard as it moves -- for the whole song (its patch, over the
+ * preset) or for one live set (values of its own, over the song's: I6.3).
+ * Where the change goes is chosen at the top, never asked afterwards; opened
+ * from the stage or a live set it starts on that live set. A live set's own
+ * value can go back to the song's, or become the song's; a different preset
+ * for one live set is a sound of its own ("New sound for this live set").
  */
 @Composable
-private fun PatchEditor(song: RackSong, inst: be.mdw.bagosynths.model.RackInstance, player: SongPlayer, lib: Library,
-                        onChange: (Map<String, Double>) -> Unit,
-                        onReplace: (be.mdw.bagosynths.model.Patch, Digest?) -> Unit,
-                        onDismiss: () -> Unit) =
-    ParamEditor(stringResource(R.string.patch_of, song.displayName(inst)), inst.id, inst.slot.params, player,
-        load = { player.previewSlot(song, inst.id, inst.slot); player.engineParams(song, inst.id) },
-        audition = { name, v -> player.auditionParam(song, inst.id, name, v) }, onChange = onChange, onDismiss = onDismiss,
-        header = { values -> LibraryPatchLine(inst.engine, inst.slot, values, lib, onReplace) })
+private fun SoundEditor(song: RackSong, inst: be.mdw.bagosynths.model.RackInstance, liveSet: Int?, player: SongPlayer,
+                        lib: Library, onChange: (RackSong) -> Unit, onLayer: (Int) -> Unit, onDismiss: () -> Unit) {
+    val id = inst.id
+    val slot = inst.slot
+    var scope by remember(id) { mutableStateOf(liveSet?.takeIf { it in song.liveSets.indices }) }
+    val part = scope?.let { song.liveSets.getOrNull(it) }?.parts?.get(id) ?: RackPart(plays = false)
+    // Read with the song's patch on, so each value shown under a live set's own is the song's --
+    // once a preset loading in the background has landed (it resets the engine), and the patch is on again.
+    var params by remember(id) { mutableStateOf<List<SongPlayer.ParamDesc>>(emptyList()) }
+    var loaded by remember(id) { mutableStateOf(false) }
+    LaunchedEffect(id) {
+        player.previewSlot(song, id, slot)
+        for (k in 0 until 200) { if (!player.loading(song, id)) break; delay(50) }
+        player.previewSlot(song, id, slot)
+        params = player.engineParams(song, id)
+        loaded = true
+    }
+    // The song's value: its patch's, one it keeps for its live sets, or as heard from the preset.
+    fun songValue(p: SongPlayer.ParamDesc) = song.songValue(id, p.name)?.toFloat() ?: p.value
+    // Every parameter some live set has a value of its own for.
+    val ownSomewhere = song.liveSets.flatMap { l -> l.parts[id]?.params?.keys.orEmpty() }.toSet()
+    // Heard as edited: this live set's own values on, or off again for the whole song.
+    LaunchedEffect(scope, loaded) {
+        for (p in params) if (p.name in ownSomewhere) {
+            player.auditionParam(song, id, p.name, part.params[p.name]?.toFloat() ?: songValue(p))
+        }
+    }
+    AlertDialog(onDismissRequest = onDismiss, modifier = WideDialog, properties = WideDialogProperties,
+        confirmButton = { TextButton(onClick = { player.reload(); onDismiss() }) { Text(stringResource(R.string.done)) } },
+        dismissButton = {
+            Row {
+                val sc = scope
+                if (sc == null) {
+                    TextButton(onClick = {
+                        val now = player.engineParams(song, id).associate { it.name to it.value.toDouble() }
+                        onChange(song.withSlot(id, slot.copy(params = now)))
+                    }) { Text(stringResource(R.string.take_current)) }
+                    TextButton(onClick = { onChange(song.withSlot(id, slot.copy(params = emptyMap()))) }) {
+                        Text(stringResource(R.string.clear))
+                    }
+                } else {
+                    // Every value of this live set's own back to the song's.
+                    TextButton(enabled = part.params.isNotEmpty(), onClick = {
+                        for (p in params) if (p.name in part.params) player.auditionParam(song, id, p.name, songValue(p))
+                        onChange(song.withPart(sc, id, part.copy(params = emptyMap())))
+                    }) { Text(stringResource(R.string.clear)) }
+                }
+            }
+        },
+        title = { Text(stringResource(R.string.patch_of, song.displayName(inst))) },
+        text = {
+            Column {
+                liveSet?.takeIf { it in song.liveSets.indices }?.let { here ->
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                        for ((target, label) in listOf(null to stringResource(R.string.scope_song),
+                                here to stringResource(R.string.scope_live_set, song.liveSets[here].name))) {
+                            if (scope == target) Button(onClick = {}) { Text(label) }
+                            else OutlinedButton(onClick = { scope = target }) { Text(label) }
+                        }
+                    }
+                    Spacer(Modifier.height(6.dp))
+                }
+                val sc = scope
+                if (sc == null) {
+                    LibraryPatchLine(inst.engine, slot, slot.params, lib) { p, link -> onChange(song.withSlot(id, slot.withPatch(p, link))) }
+                    if (ownSomewhere.isNotEmpty()) Text(stringResource(R.string.own_in_a_live_set), color = Dim, fontSize = 13.sp)
+                } else {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(stringResource(R.string.live_set_scope_hint), color = Dim, fontSize = 13.sp, modifier = Modifier.weight(1f))
+                        TextButton(onClick = { onLayer(sc) }) { Text(stringResource(R.string.new_sound_for_live_set)) }
+                    }
+                }
+                if (!loaded) Text(stringResource(R.string.loading), color = Dim, modifier = Modifier.padding(vertical = 12.dp))
+                LazyColumn(Modifier.height(420.dp)) {
+                    itemsIndexed(params) { _, p ->
+                        val own = sc != null && p.name in part.params
+                        val v = (if (sc != null) part.params[p.name]?.toFloat() else null) ?: songValue(p)
+                        ParamRow(p, v, set = slot.params.containsKey(p.name), display = { null },
+                            mark = when {
+                                own -> Warn
+                                sc == null && p.name in ownSomewhere -> Warn.copy(alpha = 0.6f)
+                                else -> null
+                            },
+                            trailing = if (!own || sc == null) null else { {
+                                // Back to the song's value, or make this the song's.
+                                TextButton(onClick = {
+                                    player.auditionParam(song, id, p.name, songValue(p))
+                                    onChange(song.withPart(sc, id, part.copy(params = part.params - p.name)))
+                                }) { Text("↺") }
+                                TextButton(onClick = { onChange(song.useInSong(sc, id, p.name)) }) {
+                                    Text(stringResource(R.string.use_in_song))
+                                }
+                            } }) { x ->
+                            player.auditionParam(song, id, p.name, x)
+                            if (sc == null) onChange(song.withSlot(id, slot.copy(params = slot.params + (p.name to x.toDouble()))))
+                            else onChange(song.withLiveSetValue(sc, id, p.name, x.toDouble(), songValue(p).toDouble()))
+                        }
+                    }
+                }
+            }
+        })
+}
 
 /** A sound's name. */
 @Composable
@@ -1044,9 +1151,11 @@ private val WideDialogProperties = androidx.compose.ui.window.DialogProperties(u
  * ("250 ms", "1/8") and the number where it cannot.
  */
 @Composable
-private fun ParamRow(p: SongPlayer.ParamDesc, v: Float, set: Boolean, display: (Float) -> String?, onValue: (Float) -> Unit) {
+private fun ParamRow(p: SongPlayer.ParamDesc, v: Float, set: Boolean, display: (Float) -> String?,
+                     mark: Color? = null, trailing: (@Composable () -> Unit)? = null, onValue: (Float) -> Unit) {
     Row(verticalAlignment = Alignment.CenterVertically) {
-        Text(p.name, modifier = Modifier.width(150.dp), fontSize = 14.sp, color = if (set) Accent else Color.White)
+        Text(p.name + if (mark != null) " ●" else "", modifier = Modifier.width(150.dp), fontSize = 14.sp,
+            color = mark ?: if (set) Accent else Color.White)
         if (p.integer && p.min == 0f && p.max == 1f) {
             androidx.compose.material3.Switch(checked = v > 0.5f, onCheckedChange = { onValue(if (it) 1f else 0f) })
             Spacer(Modifier.weight(1f))
@@ -1058,6 +1167,7 @@ private fun ParamRow(p: SongPlayer.ParamDesc, v: Float, set: Boolean, display: (
         }
         Text(display(v) ?: if (p.integer) v.toInt().toString() else "%.2f".format(v), modifier = Modifier.width(96.dp),
             textAlign = TextAlign.End, fontSize = 13.sp, maxLines = 1)
+        trailing?.invoke()
     }
 }
 

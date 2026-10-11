@@ -116,6 +116,15 @@
     <string name="patch_of">%1$s: patch</string>
     <string name="search">Search</string>
     <string name="edit_patch">Patch…</string>
+    <string name="loading">Loading…</string>
+    <string name="scope_song">Whole song</string>
+    <string name="scope_live_set">Only in “%1$s”</string>
+    <string name="live_set_scope_hint">Changes here are this live set’s own; the song’s patch stays as it is.</string>
+    <string name="own_in_a_live_set">● a live set has a value of its own</string>
+    <string name="new_sound_for_live_set">New sound for this live set</string>
+    <string name="use_in_song">Use in song</string>
+    <string name="live_set_sound">Sound…</string>
+    <string name="live_set_sound_n">Sound (%1$d)</string>
     <string name="done">Done</string>
     <string name="share_diagnostics">Share diagnostics…</string>
     <string name="share_diagnostics_note">The log of the audio path, the CP-88 and the heat, kept on this tablet. It leaves only when you send it, to whom you choose.</string>

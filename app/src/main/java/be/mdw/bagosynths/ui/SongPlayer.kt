@@ -135,6 +135,9 @@ class SongPlayer(private val lib: Library, private val host: EngineHost, private
 
     fun selectSong(index: Int, liveSet: Int = 0) {
         val s = songs.getOrNull(index) ?: return
+        // The last song's live set values off its engines first, so none stays
+        // on into a song that leaves that parameter to its preset.
+        restoreSongValues()
         // The same song again (a reload after saving): a tapped tempo holds for
         // the session (I12.3) and a running click goes on. Another song stops it.
         val sameSong = index == songIndex && bpmTapped
@@ -159,6 +162,9 @@ class SongPlayer(private val lib: Library, private val host: EngineHost, private
         }
         applyMidiClock()
         setUpEngines()
+        // A preset loading in the background resets its engine when it lands:
+        // then the song's values go on again ([settle]).
+        settling = onEngine.values.any { busy(it) }
         if (rack?.instances?.any { it.engine == RackEngine.HAMMOND } == true) refreshOrgan()
         sheetPage = 0
         sheetPages = 0
@@ -185,9 +191,50 @@ class SongPlayer(private val lib: Library, private val host: EngineHost, private
                     else -> c.toString()
                 } })
         prefs.edit().putInt("stage.liveSet", index).apply()
+        // A live set may set the organ's drawbars: the stage shows them as they are.
+        if (rack?.instances?.any { it.engine == RackEngine.HAMMOND } == true) refreshOrgan()
     }
 
     private var pendingLiveSet = -1
+
+    // ------------------------------------------- a live set's own sound values
+
+    private var settling = false
+
+    /** Every "<instance>.<parameter>" a live set of the stage song gives a value of its own. */
+    private fun liveSetKeys(): Set<String> = rack?.liveSets.orEmpty()
+        .flatMap { ls -> ls.parts.flatMap { (id, p) -> p.params.keys.map { "$id.$it" } } }.toSet()
+
+    /** The song's value of [key]: its patch's, or the one it keeps for its live sets (RackSlot.songValues). */
+    private fun songValue(key: String): Double? {
+        val dot = key.indexOf('.')
+        return if (dot < 0) null else rack?.songValue(key.substring(0, dot), key.substring(dot + 1))
+    }
+
+    /** The song's values back where a live set had its own, so they do not stay on into the next song. */
+    private fun restoreSongValues() {
+        for (k in liveSetKeys()) songValue(k)?.let { applyParam(k, it.toFloat()) }
+    }
+
+    private fun busy(i: Int) = runCatching { NativeBridge.nativeInstanceBusy(i) }.getOrDefault(false)
+
+    /**
+     * Once the presets that loaded in the background have landed: the patches'
+     * values on again, and the live set's values over them. Called from
+     * [pollSelections].
+     */
+    private fun settle() {
+        if (!settling || onEngine.values.any { busy(it) }) return
+        settling = false
+        for (inst in rack?.instances.orEmpty()) {
+            val i = onEngine[inst.id] ?: continue
+            for ((name, v) in inst.slot.params) setParamAt(i, name, v.toFloat())
+        }
+        val sw = switcher ?: return
+        val ls = liveSetIndex.takeIf { it in liveSetNames.indices } ?: return
+        for (k in liveSetKeys()) sw.storedValue(ls, k)?.let { applyParam(k, it.toFloat()); sw.noteValue(k, it) }
+        note("presets landed: the song's values and live set ${ls + 1}'s own on again")
+    }
 
     // ------------------------------------------------------------ the CP-88
 
@@ -483,10 +530,14 @@ class SongPlayer(private val lib: Library, private val host: EngineHost, private
     /** Set by the UI: shows the Songs screen. */
     var showSongs: (() -> Unit)? = null
 
-    /** From the stage, one long press: the current song in the editor, at [liveSet] or [engine]'s patch. */
+    /**
+     * From the stage, one long press: the current song in the editor, at
+     * [liveSet], or with [instance]'s sound open -- for the live set playing,
+     * where a change is that live set's own unless the player says "whole song".
+     */
     fun requestEdit(liveSet: Int? = null, instance: String? = null) {
         val id = songEntries.getOrNull(songIndex) ?: return
-        editRequest = EditRequest(id, liveSet, instance)
+        editRequest = EditRequest(id, liveSet ?: liveSetIndex.takeIf { instance != null && it >= 0 }, instance)
         showSongs?.invoke()
     }
 
@@ -611,6 +662,7 @@ class SongPlayer(private val lib: Library, private val host: EngineHost, private
      */
     fun pollSelections() {
         watchMidiOut()
+        settle()
         // A count-in ends on its own; the visual beat stops with the last click heard.
         if (clickRunning && !NativeBridge.nativeClickRunning()) {
             val b = bpm
@@ -726,8 +778,12 @@ class SongPlayer(private val lib: Library, private val host: EngineHost, private
         val i = assignment(song)[id] ?: return
         loadPresetAt(i, inst.engine, slot.preset, slot.program)
         applyFxAt(fxNodeOf(i), slot.fx)
-        for ((name, v) in slot.params) setParamAt(i, name, v.toFloat())
+        // The song's sound: its patch, and the values it keeps for its live sets.
+        for ((name, v) in slot.songValues + slot.params) setParamAt(i, name, v.toFloat())
     }
+
+    /** Whether [song]'s instance [id] is loading a preset in the background (its values not yet its own). */
+    fun loading(song: RackSong, id: String): Boolean = assignment(song)[id]?.let { busy(it) } ?: false
 
     /** Audition one parameter while editing a patch. */
     fun auditionParam(song: RackSong, id: String, name: String, v: Float) {

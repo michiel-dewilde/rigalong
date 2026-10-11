@@ -11,6 +11,10 @@ package be.mdw.bagosynths.model
  * engine's key for the first of an engine, "sfizz", then "sfizz-2", ...):
  *   node  `i`        the engine; parameter `Level`; `label` if the player named it
  *   node  `i.zone`   its zone; `keyLow`, `keyHigh`, `transpose`, `channelIn`, ...
+ *   (a live set may give the engine's own parameters values of its own too,
+ *   `i.<parameter>`, over the song's patch: the organ's drawbars in one part;
+ *   node `i` then holds the song's value of it next to `Level` -- the patch's,
+ *   or the one heard from the preset -- so leaving the live set restores it)
  *   wire  `i.midi`   zone -> engine: off means the engine takes no new notes,
  *                    while held ones still end and tails still ring (Wire.h)
  *   wire  `i.audio`  engine -> mix, or its insert effect -> mix
@@ -69,6 +73,13 @@ data class RackSlot(
     val fx: RackFx? = null,
     /** The library patch this slot uses (picked or saved by the player), or null. */
     val libraryPatch: Digest? = null,
+    /**
+     * The song's values of parameters a live set gives values of its own and
+     * the patch leaves to its preset, as heard when the live set first
+     * differed: what leaving that live set goes back to. Kept with the song,
+     * not the patch, so a library patch stays as it is.
+     */
+    val songValues: Map<String, Double> = emptyMap(),
 ) {
     /** The patch object this slot is stored as. */
     fun patch(e: RackEngine) = Patch(engine = e.key, preset = preset, program = program, params = params)
@@ -99,6 +110,13 @@ data class RackPart(
     val channelIn: Int = 0,              // 0: any
     /** How much of the engine goes through its insert effect here, 0-1 (a send: tails ring on at 0). */
     val fxAmount: Double = 1.0,
+    /**
+     * The sound's own parameters as this live set has them, by their stable
+     * names, over the song's patch: only what differs here. Plain values, so
+     * selecting the live set is as quick as ever -- a preset of its own would
+     * have to load; that is another instance ([RackSong.layerFor]).
+     */
+    val params: Map<String, Double> = emptyMap(),
 )
 
 /**
@@ -202,6 +220,74 @@ data class RackSong(
     fun minus(id: String) = copy(instances = instances.filter { it.id != id },
         liveSets = liveSets.map { it.copy(parts = it.parts - id) })
 
+    /** Live set [liveSet]'s part for instance [id] replaced by [part]. */
+    fun withPart(liveSet: Int, id: String, part: RackPart) = copy(liveSets = liveSets.mapIndexed { k, ls ->
+        if (k == liveSet) ls.copy(parts = ls.parts + (id to part)) else ls
+    }).tidy()
+
+    /**
+     * Live set [liveSet]'s own [value] of [param] on instance [id]. Where the
+     * patch leaves [param] to its preset, [songValue] -- the value heard with
+     * the song's patch on -- is kept as the song's, the first time.
+     */
+    fun withLiveSetValue(liveSet: Int, id: String, param: String, value: Double, songValue: Double): RackSong {
+        val inst = instance(id) ?: return this
+        val part = liveSets.getOrNull(liveSet)?.parts?.get(id) ?: RackPart(plays = false)
+        val slot = inst.slot
+        val keep = if (param in slot.params || param in slot.songValues) slot
+        else slot.copy(songValues = slot.songValues + (param to songValue))
+        return withSlot(id, keep).withPart(liveSet, id, part.copy(params = part.params + (param to value)))
+    }
+
+    /** The song's value of [param] on instance [id] where it has one: the patch's, or kept for a live set. */
+    fun songValue(id: String, param: String): Double? =
+        instance(id)?.slot?.let { it.params[param] ?: it.songValues[param] }
+
+    /** Song values no live set needs any more dropped: the patch sets them, or no live set differs. */
+    private fun tidy() = copy(instances = instances.map { inst ->
+        val used = liveSets.flatMap { it.parts[inst.id]?.params?.keys.orEmpty() }.toSet()
+        val keep = inst.slot.songValues.filterKeys { it in used && it !in inst.slot.params }
+        if (keep == inst.slot.songValues) inst else inst.copy(slot = inst.slot.copy(songValues = keep))
+    })
+
+    /**
+     * Live set [liveSet]'s own value of [param] on instance [id] made the
+     * song's: the patch takes it, and this live set no longer differs. Other
+     * live sets keep values of their own.
+     */
+    fun useInSong(liveSet: Int, id: String, param: String): RackSong {
+        val inst = instance(id) ?: return this
+        val part = liveSets.getOrNull(liveSet)?.parts?.get(id) ?: return this
+        val v = part.params[param] ?: return this
+        // Other live sets with values of their own now differ from the patch's value.
+        return withSlot(id, inst.slot.copy(params = inst.slot.params + (param to v)))
+            .withPart(liveSet, id, part.copy(params = part.params - param))
+    }
+
+    /**
+     * A new instance for live set [liveSet] alone, starting as instance [id]
+     * sounds there -- its patch with the live set's own values, its part --
+     * while [id] stops playing in it. The way to a different preset in one
+     * live set, still switched instantly: both are loaded with the song.
+     * Returns the song and the new instance's id.
+     */
+    fun layerFor(liveSet: Int, id: String): Pair<RackSong, String> {
+        val inst = instance(id) ?: return this to id
+        val ls = liveSets.getOrNull(liveSet) ?: return this to id
+        val part = ls.parts[id] ?: RackPart(plays = false)
+        val newId = newInstanceId(inst.engine)
+        // The same sound keeps its library link; changed here, it is a sound of its own.
+        val slot = if (part.params.isEmpty()) inst.slot
+        else inst.slot.copy(params = inst.slot.params + part.params, libraryPatch = null)
+        val song = copy(instances = instances + RackInstance(newId, inst.engine, slot),
+            liveSets = liveSets.mapIndexed { k, l ->
+                if (k == liveSet) l.copy(parts = l.parts + (id to part.copy(plays = false)) +
+                    (newId to part.copy(plays = true, params = emptyMap())))
+                else l.copy(parts = l.parts + (newId to RackPart(plays = false)))
+            })
+        return song.tidy() to newId
+    }
+
     /** What the player sees it called: its own name, or the engine's label, numbered if the song has several. */
     fun displayName(inst: RackInstance): String {
         inst.label?.let { return it }
@@ -228,8 +314,12 @@ data class RackSong(
             val id = inst.id
             val slot = inst.slot
             val patch = store.putTyped(slot.patch(inst.engine))
+            // Next to the level, the song's values its live sets go back to (none in most songs).
+            val songValues = liveSets.flatMap { it.parts[id]?.params?.keys.orEmpty() }.toSortedSet()
+                .filter { isEngineParam(it) }.mapNotNull { k -> songValue(id, k)?.let { k to it } }.toMap()
             nodes[id] = Node(kind = inst.engine.nodeType, patch = RefJ.of(patch, Patch.TYPE),
-                patchEntry = slot.libraryPatch?.toString(), params = mapOf("Level" to slot.level), label = inst.label)
+                patchEntry = slot.libraryPatch?.toString(), params = mapOf("Level" to slot.level) + songValues,
+                label = inst.label)
             nodes["$id.zone"] = Node(kind = "midi.zone")
             wires["$id.in"] = Wire("in:midi", "$id.zone:midi")
             wires[inst.midiWire] = Wire("$id.zone:midi", "$id:midi")
@@ -257,6 +347,7 @@ data class RackSong(
                 overrides[inst.zoneKey("channelIn")] = part.channelIn.toDouble()
                 // Written in every live set while the instance has an effect, like the zones.
                 if (inst.slot.fx?.takeIf { it.type != "off" } != null) overrides[inst.fxAmountKey] = part.fxAmount
+                for ((name, v) in part.params) if (isEngineParam(name)) overrides["${inst.id}.$name"] = v
             }
             val cp = when (ls.cp88.mode) {
                 "select" -> Cp88Action("select", page = ls.cp88.page, set = ls.cp88.set)
@@ -284,7 +375,8 @@ data class RackSong(
                 val patch = node.patch?.let { store.getTyped<Patch>(it.toRef().digest) }
                 val fx = song.nodes["$name.fx"]?.let { RackFx(it.kind.removePrefix("fx."), it.params) }
                 instances += RackInstance(name, e, RackSlot(patch?.preset, patch?.program, node.params["Level"] ?: 0.8,
-                    patch?.params ?: emptyMap(), fx, node.patchEntry?.let { Digest.parse(it) }), node.label)
+                    patch?.params ?: emptyMap(), fx, node.patchEntry?.let { Digest.parse(it) },
+                    node.params.filterKeys { isEngineParam(it) && it !in patch?.params.orEmpty() }), node.label)
             }
             // Engine order, then the order they were added ("sfizz", "sfizz-2", "sfizz-10").
             instances.sortWith(compareBy({ it.engine.ordinal }, { it.id.substringAfter('-', "1").toIntOrNull() ?: 0 }))
@@ -300,6 +392,9 @@ data class RackSong(
                         transpose = ls.overrides[inst.zoneKey("transpose")]?.toInt() ?: 0,
                         channelIn = ls.overrides[inst.zoneKey("channelIn")]?.toInt() ?: 0,
                         fxAmount = ls.overrides[inst.fxAmountKey] ?: 1.0,
+                        params = ls.overrides.mapNotNull { (k, v) ->
+                            k.removePrefix("${inst.id}.").takeIf { it != k && isEngineParam(it) }?.let { it to v }
+                        }.toMap(),
                     )
                 }
                 val cp = ls.cp88?.let { a ->
@@ -312,6 +407,9 @@ data class RackSong(
                 song.nodes["mix"]?.params ?: emptyMap(),
                 song.nodes["mix.fx"]?.let { RackFx(it.kind.removePrefix("fx."), it.params) })
         }
+
+        /** A key's part after "<instance>.": the engine's own parameter, not its level, zone or effect. */
+        private fun isEngineParam(rest: String) = rest != "Level" && !rest.startsWith("zone.") && !rest.startsWith("fx.")
 
         /** The song graph's own nodes, which are not instances. */
         private val PORTS = setOf("in", "mix", "out")
