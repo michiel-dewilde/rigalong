@@ -260,6 +260,7 @@ class MainActivity : androidx.activity.ComponentActivity() {
         filter.addAction("be.mdw.bagosynths.USBSTALL")
         filter.addAction("be.mdw.bagosynths.STAGE")
         filter.addAction("be.mdw.bagosynths.INSTANCE")
+        filter.addAction("be.mdw.bagosynths.CC")
         filter.addAction("be.mdw.bagosynths.CP88SELFTEST")
         if (Build.VERSION.SDK_INT >= 33) {
             registerReceiver(debugReceiver, filter, Context.RECEIVER_EXPORTED)
@@ -1958,6 +1959,11 @@ class MainActivity : androidx.activity.ComponentActivity() {
                 "be.mdw.bagosynths.NOTE" -> NativeBridge.nativeTestNote(
                     intent.getIntExtra("note", 48),
                     intent.getIntExtra("vel", 90))
+                // A controller as if from the keys: controller maps and MIDI learn.
+                //   adb shell am broadcast -a be.mdw.bagosynths.CC --ei cc 21 --ei value 127
+                "be.mdw.bagosynths.CC" -> NativeBridge.nativeTestControl(
+                    intent.getIntExtra("cc", 1),
+                    intent.getIntExtra("value", 0))
                 // Driven by name rather than by tapping a coordinate: fixed
                 // screen positions went stale silently three times.
                 "be.mdw.bagosynths.PANIC" -> NativeBridge.nativePanic()

@@ -138,6 +138,7 @@ class SongPlayer(private val lib: Library, private val host: EngineHost, private
         // The last song's live set values off its engines first, so none stays
         // on into a song that leaves that parameter to its preset.
         restoreSongValues()
+        touched.clear()
         // The same song again (a reload after saving): a tapped tempo holds for
         // the session (I12.3) and a running click goes on. Another song stops it.
         val sameSong = index == songIndex && bpmTapped
@@ -165,7 +166,6 @@ class SongPlayer(private val lib: Library, private val host: EngineHost, private
         // A preset loading in the background resets its engine when it lands:
         // then the song's values go on again ([settle]).
         settling = onEngine.values.any { busy(it) }
-        if (rack?.instances?.any { it.engine == RackEngine.HAMMOND } == true) refreshOrgan()
         sheetPage = 0
         sheetPages = 0
         sheetFile = s.leadSheet?.toRef()?.digest?.let { java.io.File(lib.store.root, "blobs/sha256/${it.hex}") }
@@ -191,8 +191,12 @@ class SongPlayer(private val lib: Library, private val host: EngineHost, private
                     else -> c.toString()
                 } })
         prefs.edit().putInt("stage.liveSet", index).apply()
-        // A live set may set the organ's drawbars: the stage shows them as they are.
-        if (rack?.instances?.any { it.engine == RackEngine.HAMMOND } == true) refreshOrgan()
+        touched.clear()
+        // The stage's organ is the one playing here, its drawbars as this live set has them.
+        organId = rack?.instances.orEmpty().filter { it.engine == RackEngine.HAMMOND }
+            .let { organs -> organs.firstOrNull { playing[it.id] == true } ?: organs.firstOrNull() }?.id
+        refreshOrgan()
+        applyControls()
     }
 
     private var pendingLiveSet = -1
@@ -233,6 +237,7 @@ class SongPlayer(private val lib: Library, private val host: EngineHost, private
         val sw = switcher ?: return
         val ls = liveSetIndex.takeIf { it in liveSetNames.indices } ?: return
         for (k in liveSetKeys()) sw.storedValue(ls, k)?.let { applyParam(k, it.toFloat()); sw.noteValue(k, it) }
+        refreshOrgan()
         note("presets landed: the song's values and live set ${ls + 1}'s own on again")
     }
 
@@ -406,12 +411,15 @@ class SongPlayer(private val lib: Library, private val host: EngineHost, private
     }
 
     /**
-     * The levels as they sound now become the current live set's own levels
-     * (I6.9), saved as a new version of the song.
+     * What sounds now becomes the current live set's own (I6.9): its levels,
+     * and every sound parameter moved on the stage or by a mapped control
+     * since the live set was selected -- the organ's drawbars, a filter on a
+     * knob. A value moved back to the song's stops being the live set's own.
+     * Saved as a new version of the song.
      */
-    fun storeLevels() {
+    fun storeInLiveSet() {
         val id = songEntries.getOrNull(songIndex) ?: return
-        val r = rack ?: return
+        var r = rack ?: return
         val i = liveSetIndex.takeIf { it in r.liveSets.indices } ?: return
         val ls = r.liveSets[i]
         val parts = ls.parts.toMutableMap()
@@ -419,10 +427,124 @@ class SongPlayer(private val lib: Library, private val host: EngineHost, private
             val v = levels[inst.id] ?: continue
             parts[inst.id] = (parts[inst.id] ?: be.mdw.bagosynths.model.RackPart(plays = false)).copy(level = v.toDouble())
         }
+        r = r.copy(liveSets = r.liveSets.toMutableList().also { it[i] = ls.copy(parts = parts) })
+        val stored = ArrayList<String>()
+        for ((key, before) in touched) {
+            val dot = key.indexOf('.')
+            val inst = key.substring(0, dot)
+            val param = key.substring(dot + 1)
+            val now = switcher?.currentValue(key) ?: continue
+            val part = r.liveSets[i].parts[inst] ?: continue
+            val songValue = r.songValue(inst, param) ?: before
+            r = when {
+                now != songValue -> r.withLiveSetValue(i, inst, param, now, songValue)
+                param in part.params -> r.withPart(i, inst, part.copy(params = part.params - param))
+                else -> r
+            }
+            stored += key
+        }
         val name = songNames.getOrNull(songIndex) ?: return
-        lib.saveSong(id, name, r.copy(liveSets = r.liveSets.toMutableList().also { it[i] = ls.copy(parts = parts) }))
+        lib.saveSong(id, name, r)
         reload()
-        Log.i(TAG, "stored the levels into live set ${i + 1}")
+        note("stored into live set ${i + 1}: the levels" + if (stored.isEmpty()) "" else " and $stored")
+    }
+
+    /** Sound parameters moved on the stage since the live set was selected: "<instance>.<parameter>" -> the value before. */
+    private val touched = LinkedHashMap<String, Double>()
+
+    private fun touch(key: String, before: Double?) {
+        if (key !in touched && before != null) touched[key] = before
+    }
+
+    /** The engine's value of "<instance>.<parameter>" now. */
+    private fun engineValue(key: String): Double? {
+        val dot = key.indexOf('.')
+        val node = onEngine[key.substring(0, dot)]?.let { nodeOf(it) } ?: return null
+        val p = paramIndex(node, key.substring(dot + 1)) ?: return null
+        return NativeBridge.nativeGetNodeParam(node, p).toDouble()
+    }
+
+    // --------------------------------------------------------- mapped controls
+
+    /** The keys of the controller maps in force, in the order the engine has them (bit k of the moved mask). */
+    private var controlKeys: List<String> = emptyList()
+    /** Their values when the maps were set: what a first move started from. */
+    private val controlStart = HashMap<String, Double>()
+
+    /**
+     * The controls of the sounds playing in this live set onto the engine
+     * (AudioEngine::setControlMaps): a knob moves its parameter on the render
+     * thread, picking up first. A sound not playing here leaves its knob free
+     * for another's.
+     */
+    private fun applyControls() {
+        val r = rack
+        val ls = r?.liveSets?.getOrNull(liveSetIndex)
+        val keys = ArrayList<String>()
+        val ccs = ArrayList<Int>(); val nodes = ArrayList<Int>(); val params = ArrayList<Int>()
+        val mins = ArrayList<Float>(); val maxs = ArrayList<Float>(); val ints = ArrayList<Boolean>()
+        controlStart.clear()
+        if (r != null && ls != null) for (inst in r.instances) {
+            if (ls.parts[inst.id]?.plays != true) continue
+            val node = onEngine[inst.id]?.let { nodeOf(it) } ?: continue
+            for ((param, cc) in inst.controls) {
+                val p = paramIndex(node, param) ?: continue
+                val range = NativeBridge.nativeNodeParamRange(node, p)
+                val key = "${inst.id}.$param"
+                keys += key; ccs += cc; nodes += node; params += p
+                mins += range[0]; maxs += range[1]; ints += range[2] > 0.5f
+                controlStart[key] = NativeBridge.nativeGetNodeParam(node, p).toDouble()
+            }
+        }
+        controlKeys = keys
+        runCatching {
+            NativeBridge.nativeSetControlMaps(ccs.toIntArray(), nodes.toIntArray(), params.toIntArray(),
+                mins.toFloatArray(), maxs.toFloatArray(), ints.toBooleanArray())
+        }
+    }
+
+    /** What the mapped controls moved since the last poll: the switcher and the stage learn the new values. */
+    private fun pollControls() {
+        val moved = runCatching { NativeBridge.nativeTakeMovedControls() }.getOrDefault(0L)
+        if (moved == 0L) return
+        var organMoved = false
+        for ((k, key) in controlKeys.withIndex()) {
+            if (moved and (1L shl k) == 0L) continue
+            val v = engineValue(key) ?: continue
+            touch(key, switcher?.currentValue(key) ?: controlStart[key])
+            switcher?.noteValue(key, v)
+            if (key.startsWith("$organId.")) organMoved = true
+            Log.i(TAG, "control $key -> ${"%.2f".format(v)}")
+        }
+        if (organMoved) refreshOrgan()
+    }
+
+    /** The "<instance>.<parameter>" waiting for a controller to be moved (MIDI learn), or null. */
+    var learningControl by mutableStateOf<String?>(null); private set
+    private var onLearned: ((Int) -> Unit)? = null
+
+    /** The next controller moved goes to [key]: [done] gets its number. */
+    fun learnControl(key: String, done: (Int) -> Unit) {
+        learningControl = key
+        onLearned = done
+        runCatching { NativeBridge.nativeControlLearn(true) }
+    }
+
+    fun cancelLearn() {
+        if (learningControl == null) return
+        learningControl = null
+        onLearned = null
+        runCatching { NativeBridge.nativeControlLearn(false) }
+    }
+
+    private fun pollLearn() {
+        if (learningControl == null) return
+        val cc = runCatching { NativeBridge.nativeTakeLearnedControl() }.getOrDefault(-1)
+        if (cc < 0) return
+        val done = onLearned
+        note("control learned: CC $cc -> $learningControl")
+        cancelLearn()
+        done?.invoke(cc)
     }
 
     /** Writes a tapped tempo into the song (I12.3): a new version of its entry. */
@@ -663,6 +785,8 @@ class SongPlayer(private val lib: Library, private val host: EngineHost, private
     fun pollSelections() {
         watchMidiOut()
         settle()
+        pollControls()
+        pollLearn()
         // A count-in ends on its own; the visual beat stops with the last click heard.
         if (clickRunning && !NativeBridge.nativeClickRunning()) {
             val b = bpm
@@ -697,13 +821,23 @@ class SongPlayer(private val lib: Library, private val host: EngineHost, private
 
     /** The organ's stage controls (HammondNode.h `Param`): drawbars 0-8, Leslie 37, percussion 27. */
     val organ = androidx.compose.runtime.mutableStateMapOf<Int, Float>()
+    /** Which of the song's organs the stage shows: the first playing in the live set, else the first. */
+    var organId by mutableStateOf<String?>(null); private set
+
+    private fun organNode(): Int? = organId?.let { onEngine[it] }?.let { nodeOf(it) }
 
     fun refreshOrgan() {
-        for (i in ORGAN_STAGE_PARAMS) organ[i] = runCatching { NativeBridge.nativeGetOrganParam(i) }.getOrDefault(0f)
+        val node = organNode() ?: return
+        for (i in ORGAN_STAGE_PARAMS) organ[i] = runCatching { NativeBridge.nativeGetNodeParam(node, i) }.getOrDefault(0f)
     }
 
+    /** A stage organ control moved: heard at once, and kept in mind for "Store in live set". */
     fun setOrgan(index: Int, v: Float) {
-        NativeBridge.nativeSetOrganParam(index, v)
+        val node = organNode() ?: return
+        val key = "$organId.${NativeBridge.nativeNodeParamName(node, index)}"
+        touch(key, switcher?.currentValue(key) ?: NativeBridge.nativeGetNodeParam(node, index).toDouble())
+        NativeBridge.nativeSetNodeParam(node, index, v)
+        switcher?.noteValue(key, v.toDouble())
         organ[index] = v
     }
 

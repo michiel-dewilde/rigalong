@@ -379,6 +379,73 @@ def flow_sound_for_live_set(f):
             raise AssertionError("live set 1 does not play the new sound")
         if re.search(r"hammond\.midi=on", adb("logcat", "-d", "-s", "bos-stage:I")):
             raise AssertionError("live set 1 still plays the old organ too")
+        # The stage's organ panel is the organ playing: "Organ 2" on its fader and the panel here,
+        # "Organ 1" where neither plays.
+        time.sleep(0.8)
+        if len(find_all("Organ 2")) != 2:
+            raise AssertionError("the organ panel does not show the organ playing (Organ 2)")
+        stage_switch(2, r"live set 2")
+        time.sleep(0.8)
+        if len(find_all("Organ 1")) != 2:
+            raise AssertionError("with no organ playing the panel should show the first")
+    finally:
+        undo_last()
+
+
+def cc(number, value):
+    broadcast("CC", f"--ei cc {number} --ei value {value}")
+    time.sleep(0.4)
+
+
+# A drawbar pulled on the stage, then held into the live set (I6.9).
+def flow_store_in_live_set(f):
+    label = find_all("16'")
+    if not label:
+        raise AssertionError("no organ panel")
+    n = label[0]
+    shell(f"input swipe {n.x} {n.y + 120} {n.x} {n.y + 700} 400")   # drag down: fewer feet of 16'
+    f.taps += 1
+    time.sleep(0.6)
+    logcat_clear()
+    f.tap("Store in this live set (hold)", long=True)
+    try:
+        if not logcat_has(r"stored into live set 1: the levels and \[hammond\.Upper 16\]"):
+            raise AssertionError("the drawbar was not stored into the live set")
+        to_stage()
+        if not stage_switch(2, r"live set 2 'Piano'.*hammond\.Upper 16=8[.,]00"):
+            raise AssertionError("live set 2 does not have the song's drawbar")
+        if not stage_switch(1, r"live set 1 'Organ'.*hammond\.Upper 16=[0-7][.,]00"):
+            raise AssertionError("live set 1 does not have its stored drawbar")
+    finally:
+        undo_last()
+
+
+# A knob for a sound's parameter: learned in the sound dialog, then it moves
+# the drawbar on the stage -- only after it has picked up the drawbar's value.
+def flow_knob_controls_sound(f):
+    f.tap("Organ", long=True, pick="lowest-left")
+    row = find_all("Upper 16")[0]
+    learn = [n for n in find_all("MIDI") if abs(n.y - row.y) < 20]
+    if not learn:
+        raise AssertionError("no MIDI learn on the 16' row")
+    shell(f"input tap {learn[0].x} {learn[0].y}")
+    f.taps += 1
+    f.see("Move a control…")
+    cc(21, 64)
+    f.see("CC 21 ✕")
+    f.tap("Done")
+    f.tap("Save •")
+    to_stage()
+    try:
+        logcat_clear()
+        cc(21, 0)            # the drawbar is at 8: a knob at 0 or 2 has not reached it
+        cc(21, 40)
+        if logcat_has(r"control hammond\.Upper 16", timeout=1.5):
+            raise AssertionError("the knob moved the drawbar before picking it up")
+        cc(21, 127)          # reaches 8: picked up
+        cc(21, 0)
+        if not logcat_has(r"control hammond\.Upper 16 -> 0[.,]00"):
+            raise AssertionError("the knob does not move the drawbar")
     finally:
         undo_last()
 
@@ -398,6 +465,8 @@ FLOWS = [
     ("tweak-in-live-set", 4, flow_tweak_in_live_set),
     ("use-in-whole-song", 5, flow_use_in_whole_song),
     ("sound-for-live-set", 4, flow_sound_for_live_set),
+    ("store-in-live-set", 2, flow_store_in_live_set),
+    ("knob-controls-sound", 4, flow_knob_controls_sound),
 ]
 
 

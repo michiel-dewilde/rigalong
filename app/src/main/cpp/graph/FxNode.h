@@ -71,6 +71,11 @@ public:
 
     int numParams() const override { return kAmount + 1; }
     void setParam(int index, float value) override;
+    // From the render thread: the amount only (an atomic); the rest is queued
+    // by the UI thread alone, so it is ignored here.
+    void setParamRealtime(int index, float value) override {
+        if (index == kAmount) setParam(index, value);
+    }
     float getParam(int index) const override;
     const char* paramName(int index) const override;
     ParamRange paramRange(int index) const override;

@@ -1060,6 +1060,8 @@ void AudioEngine::renderBlockIntoRing(int frames) {
         }
         mInjectRead.store(read, std::memory_order_release);
 
+        applyControlMaps(*schedule->midiInputSink);
+
         if (mProbeState.load(std::memory_order_acquire) == ProbeState::ArmedForNote) {
             const bagosynths::MidiBuffer& in = *schedule->midiInputSink;
             for (int i = 0; i < in.size(); ++i) {
@@ -2098,6 +2100,85 @@ void AudioEngine::injectNote(int note, int velocity) {
     const uint32_t write = mInjectWrite.load(std::memory_order_relaxed);
     mInjected[write % kInjectCapacity] = e;
     mInjectWrite.store(write + 1, std::memory_order_release);
+}
+
+void AudioEngine::injectMidi(uint8_t status, uint8_t data1, uint8_t data2) {
+    bagosynths::MidiEvent e;
+    e.frame = 0;
+    e.status = status;
+    e.data1 = data1;
+    e.data2 = data2;
+    const uint32_t write = mInjectWrite.load(std::memory_order_relaxed);
+    mInjected[write % kInjectCapacity] = e;
+    mInjectWrite.store(write + 1, std::memory_order_release);
+}
+
+void AudioEngine::setControlMaps(const ControlMap* maps, int count) {
+    const uint32_t gen = mControlGen.load(std::memory_order_acquire);
+    // The other table may still be in use until the render thread has seen
+    // this generation: a block or two. Bounded, for when audio is not running.
+    for (int i = 0; i < 40 && mControlAck.load(std::memory_order_acquire) != gen; ++i) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    ControlTable& t = mControlTables[(gen + 1) & 1u];
+    t.count = 0;
+    for (int i = 0; i < count && t.count < kMaxControlMaps; ++i) {
+        bagosynths::Node* n = mGraph.nodeAt(maps[i].node);
+        if (n == nullptr) continue;
+        t.maps[t.count] = maps[i];
+        t.nodes[t.count] = n;
+        ++t.count;
+    }
+    mControlMoved.store(0, std::memory_order_relaxed);
+    mControlGen.store(gen + 1, std::memory_order_release);
+}
+
+void AudioEngine::setControlLearn(bool on) {
+    mLearnedControl.store(-1, std::memory_order_relaxed);
+    mControlLearn.store(on, std::memory_order_release);
+}
+
+void AudioEngine::applyControlMaps(const bagosynths::MidiBuffer& in) {
+    const uint32_t gen = mControlGen.load(std::memory_order_acquire);
+    if (gen != mControlSeen) {
+        // New maps (a song or a live set selected): every one picks up again.
+        mControlSeen = gen;
+        for (int k = 0; k < kMaxControlMaps; ++k) {
+            mControlPicked[k] = false;
+            mControlHasLast[k] = false;
+        }
+    }
+    mControlAck.store(gen, std::memory_order_release);
+    const ControlTable& t = mControlTables[gen & 1u];
+    const bool learn = mControlLearn.load(std::memory_order_relaxed);
+    if (t.count == 0 && !learn) return;
+    for (int i = 0; i < in.size(); ++i) {
+        const bagosynths::MidiEvent& e = in[i];
+        if ((e.status & 0xF0u) != 0xB0u) continue;
+        const int cc = e.data1;
+        // Bank selects and channel mode messages are not controls.
+        if (learn && cc != 0 && cc != 32 && cc < 120) mLearnedControl.store(cc, std::memory_order_release);
+        for (int k = 0; k < t.count; ++k) {
+            const ControlMap& m = t.maps[k];
+            if (m.cc != cc) continue;
+            float v = m.min + (m.max - m.min) * static_cast<float>(e.data2) / 127.0f;
+            if (m.integer) v = std::round(v);
+            if (!mControlPicked[k]) {
+                // Picked up when it reaches the value, or crosses it since its last move.
+                const float cur = t.nodes[k]->getParam(m.param);
+                const float tol = std::max(std::fabs(m.max - m.min) * 0.03f, m.integer ? 0.5f : 0.0f);
+                if (std::fabs(v - cur) <= tol ||
+                    (mControlHasLast[k] && (mControlLast[k] - cur) * (v - cur) <= 0.0f)) {
+                    mControlPicked[k] = true;
+                }
+                mControlLast[k] = v;
+                mControlHasLast[k] = true;
+                if (!mControlPicked[k]) continue;
+            }
+            t.nodes[k]->setParamRealtime(m.param, v);
+            mControlMoved.fetch_or(1ull << k, std::memory_order_relaxed);
+        }
+    }
 }
 
 void AudioEngine::allNotesOff() {

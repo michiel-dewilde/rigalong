@@ -273,4 +273,16 @@ class RackTest {
             .layerFor(1, "hammond")
         assertEquals(null, t.instance(id2)!!.slot.libraryPatch, "changed here: a sound of its own")
     }
+
+    @Test
+    fun controlsRoundTripAndLeaveOtherSongsAlone() {
+        val c = draft.withControl("hammond", "Upper 16", 21).withControl("sfizz", "Level", 7)
+        assertEquals(mapOf("Upper 16" to 21), c.instance("hammond")!!.controls)
+        val song = c.toObjects(store)
+        assertEquals(listOf("sfizz.Level", "hammond.Upper 16"), song.controls.map { it.target })
+        assertEquals(c, RackSong.fromObjects(store, song))
+        val off = c.withControl("hammond", "Upper 16", null).withControl("sfizz", "Level", null)
+        assertEquals(draft, off)
+        assertEquals(store.putTyped(draft.toObjects(store)), store.putTyped(off.toObjects(store)))
+    }
 }

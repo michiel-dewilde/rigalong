@@ -249,6 +249,14 @@ void SurgeNode::setParam(int index, float value) {
     pushParam(index, value);
 }
 
+void SurgeNode::setParamRealtime(int index, float value) {
+    if (index < 0 || index >= kNumParams) return;
+    mParams[index] = value;
+    if (index == kLevel) return;   // read directly in process(); nothing to queue
+    if (!ready()) return;          // init() will apply it
+    mRtQueue.push(index, value);
+}
+
 float SurgeNode::getParam(int index) const {
     if (index < 0 || index >= kNumParams) return 0.0f;
     return mParams[index];
@@ -310,6 +318,9 @@ void SurgeNode::process(const ProcessArgs& args) {
     // Parameter changes land on a block boundary, never halfway through one.
     {
         mQueue.drain([this](int index, float value) {
+            applyParam(index, value);
+        });
+        mRtQueue.drain([this](int index, float value) {
             applyParam(index, value);
         });
     }

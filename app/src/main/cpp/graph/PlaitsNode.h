@@ -94,6 +94,7 @@ public:
 
     int numParams() const override { return kNumParams; }
     void setParam(int index, float value) override;
+    void setParamRealtime(int index, float value) override;
     float getParam(int index) const override;
     const char* paramName(int index) const override;
     ParamRange paramRange(int i) const override {
@@ -154,6 +155,8 @@ private:
     uint32_t mVoiceTick = 0;
 
     ParamQueue<256> mQueue;
+    // Filled and drained by the render thread alone (setParamRealtime).
+    ParamQueue<64> mRtQueue;
 
     float mMaxRenderMs = 0.0f;
 

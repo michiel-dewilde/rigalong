@@ -24,7 +24,7 @@
     <string name="from_keys">"   ·   last from the keys: %1$s"</string>
     <string name="levels">Levels</string>
     <string name="master">Master</string>
-    <string name="store_levels">Store levels in this live set (hold)</string>
+    <string name="store_levels">Store in this live set (hold)</string>
     <string name="engine_playing">playing</string>
     <string name="engine_silent">silent</string>
     <string name="organ">Organ</string>
@@ -123,6 +123,9 @@
     <string name="own_in_a_live_set">● a live set has a value of its own</string>
     <string name="new_sound_for_live_set">New sound for this live set</string>
     <string name="use_in_song">Use in song</string>
+    <string name="learn_control">MIDI</string>
+    <string name="move_a_control">Move a control…</string>
+    <string name="control_cc">CC %1$d ✕</string>
     <string name="live_set_sound">Sound…</string>
     <string name="live_set_sound_n">Sound (%1$d)</string>
     <string name="done">Done</string>

@@ -395,6 +395,14 @@ void DexedNode::setParam(int index, float value) {
     pushParam(index, value);
 }
 
+void DexedNode::setParamRealtime(int index, float value) {
+    if (index < 0 || index >= kNumParams) return;
+    mParams[index] = value;
+    if (index == kLevel) return;   // read directly in process()
+    if (!mInitialised) return;     // prepare() will apply it
+    mRtQueue.push(index, value);
+}
+
 float DexedNode::getParam(int index) const {
     if (index < 0 || index >= kNumParams) return 0.0f;
     return mParams[index];
@@ -578,6 +586,9 @@ void DexedNode::process(const ProcessArgs& args) {
 
     {
         mQueue.drain([this](int index, float value) {
+            applyParam(index, value);
+        });
+        mRtQueue.drain([this](int index, float value) {
             applyParam(index, value);
         });
     }

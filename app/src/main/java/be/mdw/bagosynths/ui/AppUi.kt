@@ -263,7 +263,7 @@ private fun StageControls(player: SongPlayer, host: EngineHost, modifier: Modifi
         Spacer(Modifier.height(16.dp))
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text(stringResource(R.string.levels), color = Dim, fontSize = 14.sp, modifier = Modifier.weight(1f))
-            Tab(stringResource(R.string.store_levels), false, longPressOnly = true) { player.storeLevels() }
+            Tab(stringResource(R.string.store_levels), false, longPressOnly = true) { player.storeInLiveSet() }
         }
         val rackNow = player.rack
         val sounds = rackNow?.instances.orEmpty()
@@ -331,7 +331,11 @@ private val DRAWBAR_COLOURS = listOf(Color(0xFF8B4A2B), Color(0xFF8B4A2B), Color
 private fun OrganPanel(player: SongPlayer) {
     Column(Modifier.fillMaxHeight().background(Panel, RoundedCornerShape(10.dp)).padding(10.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text(stringResource(R.string.organ), fontWeight = FontWeight.SemiBold)
+            // Which organ, where the song has several: the one playing in this live set.
+            val r = player.rack
+            val shown = player.organId?.let { r?.instance(it) }
+            Text(if (r != null && shown != null && r.instances.count { it.engine == RackEngine.HAMMOND } > 1)
+                r.displayName(shown) else stringResource(R.string.organ), fontWeight = FontWeight.SemiBold)
             val leslie = player.organ[SongPlayer.ORGAN_LESLIE] ?: 1f
             for ((v, label) in listOf(0f to stringResource(R.string.leslie_stop), 1f to stringResource(R.string.leslie_slow),
                     2f to stringResource(R.string.leslie_fast))) {
@@ -877,6 +881,8 @@ private fun SoundEditor(song: RackSong, inst: be.mdw.bagosynths.model.RackInstan
             player.auditionParam(song, id, p.name, part.params[p.name]?.toFloat() ?: songValue(p))
         }
     }
+    // A control still waiting to be learned is not learned after the dialog is gone.
+    androidx.compose.runtime.DisposableEffect(id) { onDispose { player.cancelLearn() } }
     AlertDialog(onDismissRequest = onDismiss, modifier = WideDialog, properties = WideDialogProperties,
         confirmButton = { TextButton(onClick = { player.reload(); onDismiss() }) { Text(stringResource(R.string.done)) } },
         dismissButton = {
@@ -933,16 +939,36 @@ private fun SoundEditor(song: RackSong, inst: be.mdw.bagosynths.model.RackInstan
                                 sc == null && p.name in ownSomewhere -> Warn.copy(alpha = 0.6f)
                                 else -> null
                             },
-                            trailing = if (!own || sc == null) null else { {
-                                // Back to the song's value, or make this the song's.
+                            trailing = {
+                                // A knob, wheel or pedal for it (MIDI learn): tap, then move the control.
+                                val cc = inst.controls[p.name]
+                                val learning = player.learningControl == "$id.${p.name}"
                                 TextButton(onClick = {
-                                    player.auditionParam(song, id, p.name, songValue(p))
-                                    onChange(song.withPart(sc, id, part.copy(params = part.params - p.name)))
-                                }) { Text("↺") }
-                                TextButton(onClick = { onChange(song.useInSong(sc, id, p.name)) }) {
-                                    Text(stringResource(R.string.use_in_song))
+                                    when {
+                                        learning -> player.cancelLearn()
+                                        cc != null -> onChange(song.withControl(id, p.name, null))
+                                        else -> player.learnControl("$id.${p.name}") { got ->
+                                            onChange(song.withControl(id, p.name, got))
+                                        }
+                                    }
+                                }) {
+                                    Text(when {
+                                        learning -> stringResource(R.string.move_a_control)
+                                        cc != null -> stringResource(R.string.control_cc, cc)
+                                        else -> stringResource(R.string.learn_control)
+                                    }, color = if (cc != null || learning) Accent else Dim, fontSize = 13.sp)
                                 }
-                            } }) { x ->
+                                if (own && sc != null) {
+                                    // Back to the song's value, or make this the song's.
+                                    TextButton(onClick = {
+                                        player.auditionParam(song, id, p.name, songValue(p))
+                                        onChange(song.withPart(sc, id, part.copy(params = part.params - p.name)))
+                                    }) { Text("↺") }
+                                    TextButton(onClick = { onChange(song.useInSong(sc, id, p.name)) }) {
+                                        Text(stringResource(R.string.use_in_song))
+                                    }
+                                }
+                            }) { x ->
                             player.auditionParam(song, id, p.name, x)
                             if (sc == null) onChange(song.withSlot(id, slot.copy(params = slot.params + (p.name to x.toDouble()))))
                             else onChange(song.withLiveSetValue(sc, id, p.name, x.toDouble(), songValue(p).toDouble()))

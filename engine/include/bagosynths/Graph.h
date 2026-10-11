@@ -147,6 +147,12 @@ public:
     // node's own.
     virtual int numParams() const { return 0; }
     virtual void setParam(int index, float value) {}
+    // The same from the RENDER thread, between blocks (a controller mapped to
+    // a parameter, applied in the block it arrives in). setParam's queue has
+    // one producer, the UI thread, so a node that queues overrides this with
+    // a queue of its own that the render thread both fills and drains. The
+    // default suits nodes whose setParam is a plain or atomic store.
+    virtual void setParamRealtime(int index, float value) { setParam(index, value); }
     virtual float getParam(int index) const { return 0.0f; }
     virtual const char* paramName(int index) const { return ""; }
     // Defaults to 0..1, continuous: override where a parameter is not.

@@ -54,6 +54,14 @@ data class RackInstance(
     val slot: RackSlot = RackSlot(),
     /** What the player calls it ("Pad", "Bass"), or null for the engine's own label. */
     val label: String? = null,
+    /**
+     * Controllers that move its parameters (I6.1, I6.6): parameter -> MIDI CC,
+     * any channel, over the parameter's whole range, picking up. A knob, wheel
+     * or pedal; it acts while this sound plays in the live set, so one knob
+     * can move the organ in one live set and the synth in another. Stored as
+     * the song's `controls`.
+     */
+    val controls: Map<String, Int> = emptyMap(),
 ) {
     val levelKey: String get() = "$id.Level"
     fun zoneKey(param: String) = "$id.zone.$param"
@@ -220,6 +228,11 @@ data class RackSong(
     fun minus(id: String) = copy(instances = instances.filter { it.id != id },
         liveSets = liveSets.map { it.copy(parts = it.parts - id) })
 
+    /** Controller [cc] moving [param] of instance [id]; null takes the control off. */
+    fun withControl(id: String, param: String, cc: Int?) = copy(instances = instances.map {
+        if (it.id != id) it else it.copy(controls = if (cc == null) it.controls - param else it.controls + (param to cc))
+    })
+
     /** Live set [liveSet]'s part for instance [id] replaced by [part]. */
     fun withPart(liveSet: Int, id: String, part: RackPart) = copy(liveSets = liveSets.mapIndexed { k, ls ->
         if (k == liveSet) ls.copy(parts = ls.parts + (id to part)) else ls
@@ -358,7 +371,14 @@ data class RackSong(
             RefJ.of(store.putTyped(LiveSet(name = ls.name, overrides = overrides, wires = wireStates, cp88 = cp,
                 onSelect = sends)), LiveSet.TYPE)
         }
-        return Song(nodes = nodes, wires = wires, liveSets = refs, tempo = tempo,
+        // Controls (I6.1): min and max as fractions of the parameter's range; channel 0 is any.
+        val controls = instances.flatMap { inst ->
+            inst.controls.entries.sortedBy { it.key }.map { (param, cc) ->
+                Control(id = "${inst.id}.$param", label = param, target = "${inst.id}.$param", widget = "knob",
+                    midi = MidiBinding(port = "Keys", channel = 0, cc = cc))
+            }
+        }
+        return Song(nodes = nodes, wires = wires, liveSets = refs, tempo = tempo, controls = controls,
             leadSheet = leadSheet?.let { RefJ.of(it, LEAD_SHEET_TYPE) })
     }
 
@@ -377,6 +397,13 @@ data class RackSong(
                 instances += RackInstance(name, e, RackSlot(patch?.preset, patch?.program, node.params["Level"] ?: 0.8,
                     patch?.params ?: emptyMap(), fx, node.patchEntry?.let { Digest.parse(it) },
                     node.params.filterKeys { isEngineParam(it) && it !in patch?.params.orEmpty() }), node.label)
+            }
+            // Their controls: "<instance>.<parameter>" moved by a controller.
+            for (c in song.controls) {
+                val cc = c.midi?.cc ?: continue
+                val k = instances.indexOfFirst { c.target.startsWith("${it.id}.") }.takeIf { it >= 0 } ?: continue
+                val inst = instances[k]
+                instances[k] = inst.copy(controls = inst.controls + (c.target.removePrefix("${inst.id}.") to cc))
             }
             // Engine order, then the order they were added ("sfizz", "sfizz-2", "sfizz-10").
             instances.sortWith(compareBy({ it.engine.ordinal }, { it.id.substringAfter('-', "1").toIntOrNull() ?: 0 }))

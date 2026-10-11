@@ -42,12 +42,20 @@ What you play from.
   holding keeps sounding until you release it, even if the new live set no
   longer uses that sound, and tails ring out naturally.
 * **Levels**: one fader per sound the song uses (two pianos, two faders). Faders move only when you
-  drag them, from where they are; touching one does nothing. "Store levels in
-  this live set" (hold it) makes the current levels the live set's own.
+  drag them, from where they are; touching one does nothing. "Store in this
+  live set" (hold it) makes what you hear the live set's own: the levels, and
+  whatever you moved on the stage or with a knob since you selected it (the
+  drawbars, a filter). A value moved back to the song's stops being its own.
 * **Master**: the overall volume, at the right. It belongs to the room, not
   to the song, so no live set changes it. Hold its label to return to 0 dB.
 * **Organ**: when the song uses the organ, its nine drawbars, Leslie (stop /
-  slow / fast) and percussion are here.
+  slow / fast) and percussion are here. With several organs, the panel is
+  the organ playing in this live set, and says which.
+* **Knobs, wheels and pedals**: a control you have taught to a sound's
+  setting (see Songs) moves it while that sound plays in the live set, so one
+  knob can be the organ's drawbar in one live set and the synth's filter in
+  the next. After a switch it **picks up**: it does nothing until you turn it
+  past the setting's value, so nothing jumps.
 * **Tempo**: the song's tempo with a blinking beat. TAP sets a tempo by
   tapping, four times or more; "save" keeps it in the song.
 * **Click**: COUNT plays a count-in of the song's count-in bars (one if it
@@ -132,6 +140,10 @@ song being edited:
     back to the song's value, and **Use in song** makes it the song's, so
     every live set has it. A library patch is not changed by a live set's own
     values.
+
+  **MIDI** beside a setting teaches it a knob, wheel or pedal: tap it, then
+  move the control ("CC 21 ✕" afterwards; tap that to forget it). It works
+  in every live set where the sound plays.
 
   To give one live set a different preset, use **New sound for this live
   set**. It adds a sound that starts as this one sounds here, plays only in

@@ -182,6 +182,28 @@ public:
 
     // Injects a note from the on-screen keys, as if it had arrived over MIDI.
     void injectNote(int note, int velocity);
+    // Any three-byte message, the same way (a controller, for tests).
+    void injectMidi(uint8_t status, uint8_t data1, uint8_t data2);
+
+    // CONTROLLER MAPS (I6.6): a controller (CC, any channel) moving a node's
+    // parameter over [min, max]. Applied on the render thread before the graph
+    // runs, so a knob is heard in the block it arrives in, at block rate --
+    // not at the UI's 50 ms poll. PICKUP: after the maps are set (a song or a
+    // live set selected) a map acts only once the controller reaches the
+    // parameter's value or crosses it, so nothing jumps. UI thread.
+    struct ControlMap {
+        int cc = 0;
+        int node = 0;      // graph index
+        int param = 0;
+        float min = 0.0f, max = 1.0f;
+        bool integer = false;
+    };
+    void setControlMaps(const ControlMap* maps, int count);
+    // Learning: the next controller that arrives is reported by takeLearnedControl.
+    void setControlLearn(bool on);
+    int takeLearnedControl() { return mLearnedControl.exchange(-1, std::memory_order_acq_rel); }
+    // Which maps (by their index in the last setControlMaps) moved a parameter since the last call.
+    uint64_t takeMovedControls() { return mControlMoved.exchange(0, std::memory_order_acq_rel); }
     // Fires a dense cluster in one block: the reproducible stress case.
     void stressChord(int count);
     void logProfile();
@@ -503,6 +525,28 @@ private:
     bagosynths::MidiEvent mInjected[kInjectCapacity];
     std::atomic<uint32_t> mInjectWrite{0};
     std::atomic<uint32_t> mInjectRead{0};
+
+    // Controller maps: two tables, the UI writing the one the render thread
+    // is not reading. The render thread acknowledges each generation it has
+    // seen; the UI writes the other table only after that, so a table is
+    // never written while it is read. Pickup state is the render thread's.
+    static constexpr int kMaxControlMaps = 64;
+    struct ControlTable {
+        int count = 0;
+        ControlMap maps[kMaxControlMaps];
+        bagosynths::Node* nodes[kMaxControlMaps] = {};
+    };
+    ControlTable mControlTables[2];
+    std::atomic<uint32_t> mControlGen{0};
+    std::atomic<uint32_t> mControlAck{0};
+    uint32_t mControlSeen = 0;
+    bool mControlPicked[kMaxControlMaps] = {};
+    bool mControlHasLast[kMaxControlMaps] = {};
+    float mControlLast[kMaxControlMaps] = {};
+    std::atomic<uint64_t> mControlMoved{0};
+    std::atomic<bool> mControlLearn{false};
+    std::atomic<int> mLearnedControl{-1};
+    void applyControlMaps(const bagosynths::MidiBuffer& in);
 
     // Background loader. Ordinary priority and deliberately NOT pinned to the
     // big cores: it must never compete with the audio thread. See GRAPH.md.

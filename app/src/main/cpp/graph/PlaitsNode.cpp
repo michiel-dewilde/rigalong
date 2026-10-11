@@ -228,6 +228,12 @@ void PlaitsNode::setParam(int index, float value) {
     pushParam(index, value);
 }
 
+void PlaitsNode::setParamRealtime(int index, float value) {
+    if (index < 0 || index >= kNumParams) return;
+    mParams[index] = value;      // so the UI reads back what it just wrote
+    mRtQueue.push(index, value);
+}
+
 float PlaitsNode::getParam(int index) const {
     if (index < 0 || index >= kNumParams) return 0.0f;
     return mParams[index];
@@ -425,6 +431,9 @@ void PlaitsNode::process(const ProcessArgs& args) {
 
     {
         mQueue.drain([this](int index, float value) {
+            applyParam(index, value);
+        });
+        mRtQueue.drain([this](int index, float value) {
             applyParam(index, value);
         });
     }

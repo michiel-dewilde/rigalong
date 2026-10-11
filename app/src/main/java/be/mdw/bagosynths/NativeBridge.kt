@@ -36,6 +36,20 @@ object NativeBridge {
 
     external fun nativeResetPeaks()
     external fun nativeTestNote(note: Int, velocity: Int)
+    /** A controller as if it had arrived over MIDI (tests). */
+    external fun nativeTestControl(cc: Int, value: Int)
+    /**
+     * Controller maps (AudioEngine::setControlMaps), as parallel arrays: a
+     * controller moves a node's parameter over [min, max], on the render
+     * thread, picking up first. Replaces the maps in force.
+     */
+    external fun nativeSetControlMaps(ccs: IntArray, nodes: IntArray, params: IntArray, mins: FloatArray,
+                                      maxs: FloatArray, integers: BooleanArray)
+    external fun nativeControlLearn(on: Boolean)
+    /** The controller that arrived while learning, or -1. */
+    external fun nativeTakeLearnedControl(): Int
+    /** Bit k: map k moved its parameter since the last call. */
+    external fun nativeTakeMovedControls(): Long
     external fun nativeGetStats(): FloatArray
 
     /**

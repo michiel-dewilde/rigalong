@@ -169,6 +169,47 @@ Java_be_mdw_bagosynths_NativeBridge_nativeTestNote(JNIEnv*, jobject, jint note, 
     engine().injectNote(note, velocity);
 }
 
+// A controller as if it had arrived over MIDI (tests of controller maps).
+JNIEXPORT void JNICALL
+Java_be_mdw_bagosynths_NativeBridge_nativeTestControl(JNIEnv*, jobject, jint cc, jint value) {
+    engine().injectMidi(0xB0, static_cast<uint8_t>(cc & 0x7F), static_cast<uint8_t>(value & 0x7F));
+}
+
+// Controller maps, as parallel arrays: cc, graph node index, parameter, range, integer.
+JNIEXPORT void JNICALL
+Java_be_mdw_bagosynths_NativeBridge_nativeSetControlMaps(JNIEnv* env, jobject, jintArray ccs, jintArray nodes,
+                                                       jintArray params, jfloatArray mins, jfloatArray maxs,
+                                                       jbooleanArray integers) {
+    const jsize n = env->GetArrayLength(ccs);
+    std::vector<jint> c(n), nd(n), p(n);
+    std::vector<jfloat> lo(n), hi(n);
+    std::vector<jboolean> in(n);
+    env->GetIntArrayRegion(ccs, 0, n, c.data());
+    env->GetIntArrayRegion(nodes, 0, n, nd.data());
+    env->GetIntArrayRegion(params, 0, n, p.data());
+    env->GetFloatArrayRegion(mins, 0, n, lo.data());
+    env->GetFloatArrayRegion(maxs, 0, n, hi.data());
+    env->GetBooleanArrayRegion(integers, 0, n, in.data());
+    std::vector<AudioEngine::ControlMap> maps(n);
+    for (jsize i = 0; i < n; ++i) maps[i] = {c[i], nd[i], p[i], lo[i], hi[i], in[i] == JNI_TRUE};
+    engine().setControlMaps(maps.data(), static_cast<int>(n));
+}
+
+JNIEXPORT void JNICALL
+Java_be_mdw_bagosynths_NativeBridge_nativeControlLearn(JNIEnv*, jobject, jboolean on) {
+    engine().setControlLearn(on == JNI_TRUE);
+}
+
+JNIEXPORT jint JNICALL
+Java_be_mdw_bagosynths_NativeBridge_nativeTakeLearnedControl(JNIEnv*, jobject) {
+    return engine().takeLearnedControl();
+}
+
+JNIEXPORT jlong JNICALL
+Java_be_mdw_bagosynths_NativeBridge_nativeTakeMovedControls(JNIEnv*, jobject) {
+    return static_cast<jlong>(engine().takeMovedControls());
+}
+
 // Loads an SFZ instrument on the loader thread. Returns immediately.
 JNIEXPORT void JNICALL
 Java_be_mdw_bagosynths_NativeBridge_nativeLoadInstrument(JNIEnv* env, jobject, jstring id,
