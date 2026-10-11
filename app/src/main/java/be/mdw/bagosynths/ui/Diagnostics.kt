@@ -66,6 +66,17 @@ class Diagnostics(context: Context) {
 
     /** Writes the bundle and opens the share sheet. */
     fun share(context: Context, extra: List<String>) {
+        // Off the UI thread: reading logcat takes a moment the stage should not freeze for.
+        Thread {
+            val send = runCatching { bundle(extra) }
+                .onFailure { android.util.Log.e("bos-diag", "diagnostics not written: $it") }.getOrNull() ?: return@Thread
+            android.os.Handler(android.os.Looper.getMainLooper()).post {
+                context.startActivity(Intent.createChooser(send, null).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION))
+            }
+        }.start()
+    }
+
+    private fun bundle(extra: List<String>): Intent {
         val out = File(app.cacheDir, "diagnostics").apply { mkdirs() }
         out.listFiles()?.forEach { it.delete() }
         val f = File(out, "bagosynths-diagnostics-${stamp().replace(Regex("[^0-9]"), "")}.txt")
@@ -99,7 +110,7 @@ class Diagnostics(context: Context) {
             clipData = android.content.ClipData.newRawUri(null, uri)
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
         }
-        context.startActivity(Intent.createChooser(send, null).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION))
+        return send
     }
 
     companion object {
