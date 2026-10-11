@@ -135,6 +135,7 @@ fun AppUi(player: SongPlayer, lib: Library, host: EngineHost) {
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun TopBar(player: SongPlayer, health: String, screen: Int, onScreen: (Int) -> Unit, onPrototype: () -> Unit) {
     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -148,7 +149,9 @@ private fun TopBar(player: SongPlayer, health: String, screen: Int, onScreen: (I
         Tab(stringResource(R.string.tab_setup), screen == 3, locked) { onScreen(3) }
         if (locked) Text(stringResource(R.string.hold_to_edit), color = Dim, fontSize = 11.sp)
         Spacer(Modifier.width(8.dp))
-        Column(Modifier.weight(1f)) {
+        // The health line opens the figures (S19.3): Setup, where they are -- on
+        // a long press from the stage, like the tabs.
+        Column(Modifier.weight(1f).combinedClickable(onClick = { if (!locked) onScreen(3) }, onLongClick = { onScreen(3) })) {
             Text(player.setlistName.ifEmpty { stringResource(R.string.no_setlist) }, color = Dim, fontSize = 14.sp, maxLines = 1)
             Text(health, color = if (health.startsWith("!")) Warn else Dim, fontSize = 12.sp, maxLines = 1,
                 overflow = TextOverflow.Ellipsis)
