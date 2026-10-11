@@ -203,7 +203,8 @@ Every setlist and song, with its history.
   * a device's own files, recognised by its driver. For a CP88/CP73, as its
     File menu saves them on a USB stick: **.X9S** (one sound), **.X9P** (a
     page), **.X9L** (all live sets) and **.X9A** (a backup), and
-    cp-liveset's YAML documents of them (.yaml). Their sounds go into
+    cp-liveset's YAML (.yaml) and JSON (.json) documents of them. Their
+    sounds go into
     **Device sounds**; a sound the library already has is not added twice;
   * an SFZ sample library as a **.zip**. It then appears in every sfizz
     patch list.
@@ -223,8 +224,9 @@ Every setlist and song, with its history.
   device, imported from their files or read from a device ("Import current
   sound"). For the CP88/CP73's Live Set Sounds: **Play on CP-88** puts one
   on the keyboard as its current sound, without touching a stored set, so
-  you can hear it. **.X9S** and **.yaml** save it as a file the keyboard or
-  cp-liveset loads. **YAML…** opens it as text, in cp-liveset's YAML
+  you can hear it. **.X9S**, **.yaml** and **.json** save it as a file the
+  keyboard or cp-liveset loads (the JSON holds every byte, the YAML only
+  what differs from the standard sound). **YAML…** opens it as text, in cp-liveset's YAML
   form: only what differs from the standard sound is listed, by name
   (`category: Organ`, `instrument: Click Organ`, `on: true`); add a line to
   change anything else, with a name or a number. The line under the text says

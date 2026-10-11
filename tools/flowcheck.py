@@ -455,13 +455,13 @@ def flow_knob_controls_sound(f):
 X9P = "sample-page-7.X9P"
 
 
-def flow_import_cp88_file(f):
+def import_device_file(f, fname, count, seen):
     here = os.path.dirname(os.path.abspath(__file__))
-    adb("push", os.path.join(here, "..", "model", "src", "test", "resources", "cp88", X9P), "/sdcard/Download/" + X9P)
+    adb("push", os.path.join(here, "..", "model", "src", "test", "resources", "cp88", fname), "/sdcard/Download/" + fname)
     to_library()
     f.tap("Import…")
     time.sleep(2.0)
-    if not wait_for(X9P, timeout=2):
+    if not wait_for(fname, timeout=2):
         # The picker opens where it was last; the first time, Downloads is in its roots drawer.
         for n in screen():
             if n.desc in ("Show roots", "Roots tonen") or n.text in ("Show roots", "Roots tonen"):
@@ -471,14 +471,23 @@ def flow_import_cp88_file(f):
                 break
         f.tap("Downloads")
         time.sleep(1.5)
-    f.tap(X9P)
+    f.tap(fname)
     try:
-        f.see("8 Yamaha CP88/CP73 sounds in the file", exact=False, timeout=8)
-        f.see("Test 7-6")
+        f.see(f"{count} Yamaha CP88/CP73 sounds in the file", exact=False, timeout=8)
+        f.see(seen)
     finally:
         if "be.mdw.bagosynths" in focused_app():
             undo_last()
-        shell(f"rm -f /sdcard/Download/{X9P}")
+        shell(f"rm -f /sdcard/Download/{fname}")
+
+
+def flow_import_cp88_file(f):
+    import_device_file(f, X9P, 8, "Test 7-6")
+
+
+# cp-liveset's full JSON, a document over several pages.
+def flow_import_cp88_json(f):
+    import_device_file(f, "json-doc.json", 8, "Test 3-4")
 
 
 # A live set given a CP-88 sound from the library: written into the
@@ -566,6 +575,7 @@ FLOWS = [
     ("store-in-live-set", 2, flow_store_in_live_set),
     ("knob-controls-sound", 4, flow_knob_controls_sound),
     ("import-cp88-file", 4, flow_import_cp88_file),
+    ("import-cp88-json", 4, flow_import_cp88_json),
     ("cp88-sound-from-library", 5, flow_cp88_sound_from_library),
     ("cp88-yaml-edit", 3, flow_cp88_yaml_edit),
 ]

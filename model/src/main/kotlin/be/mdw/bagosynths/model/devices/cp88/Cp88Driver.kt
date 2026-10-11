@@ -14,7 +14,7 @@ import be.mdw.bagosynths.model.devices.SoundFormat
  * 1-8 and selected by Bank Select MSB 63 / LSB page-1 / Program Change set-1;
  * its own buttons reporting the same; its Live Set Sounds read over SysEx,
  * written into a reserved page and kept in the library ([Cp88]); its .X9*
- * files ([Cp88X9]) and cp-liveset's YAML ([Cp88Yaml]).
+ * files ([Cp88X9]) and cp-liveset's YAML ([Cp88Yaml]) and JSON ([Cp88Json]).
  */
 object Cp88Driver : DeviceDriver {
     override val kind = "yamaha.cp88"
@@ -59,7 +59,7 @@ object Cp88Driver : DeviceDriver {
             val dumps = messages.filter { Cp88.parse(it) != null }
             return if (dumps.size >= 19) Cp88.normalize(dumps.take(19)) else null
         }
-        override val formats = listOf(X9Format, YamlFormat)
+        override val formats = listOf(X9Format, YamlFormat, JsonFormat)
     }
 
     /** The keyboard's own files: .X9S/.X9P/.X9L/.X9A read, .X9S and .X9P written. */
@@ -87,5 +87,17 @@ object Cp88Driver : DeviceDriver {
             "Add a line to change anything else; names or numbers both work."
         override fun toText(sound: ByteArray) = Cp88Yaml.write(sound)
         override fun fromText(text: String) = Cp88Yaml.read(text)
+    }
+
+    /** cp-liveset's full JSON: every byte, read and written. */
+    object JsonFormat : SoundFormat {
+        override val label = "JSON"
+        override fun recognises(fileName: String, bytes: ByteArray) =
+            bytes.size < 16_000_000 && Cp88Json.isDocument(bytes.toString(Charsets.UTF_8))
+        override fun read(bytes: ByteArray) = Cp88Json.readDocument(bytes.toString(Charsets.UTF_8))
+            .map { FoundSound(it.name, it.sound, "${it.page}:${it.set}") }
+        override fun writeOne(sound: ByteArray) = "json" to Cp88Json.document(mapOf((1 to 1) to sound)).toByteArray()
+        override fun writeArea(area: Int, sounds: Map<Int, ByteArray>) =
+            "json" to Cp88Json.document(sounds.mapKeys { (set, _) -> area to set }).toByteArray()
     }
 }

@@ -10,7 +10,8 @@ cp-liveset's whole parameter model, and fixtures built by cp-liveset itself
 from its synthetic sample sounds, which the Kotlin tests must match byte for
 byte. Also the tables of its concise YAML form (Cp88YamlTables.kt) and YAML
 fixtures: what cp-liveset writes for its samples, names needing every kind of
-quoting and random sounds, and what it reads from hand-written YAML.
+quoting and random sounds, and what it reads from hand-written YAML; and the
+same for its full JSON form.
 
     python tools/gen_cp88x9.py [path/to/cp-liveset]     (default: ../cp-liveset)
 
@@ -306,6 +307,103 @@ def yaml_fixtures(fx):
     group[(1, 1)] = codec.init_sound()
     with open(os.path.join(fx, "yaml-doc.yaml"), "w", encoding="utf-8", newline="\n") as f:
         f.write(yaml_text(group.to_yaml()))
+    return sounds
+
+
+def json_fixtures(fx, sounds):
+    """json-write.txt.gz: stored sound, then cp-liveset's JSON document of it alone, at a page:set that varies.
+    json-doc.json: a whole document over several pages, as `cp-liveset convert -o x.json` writes it.
+    json-read.txt: hand-written documents, then what cp-liveset reads from them ("p:s=stored ..." or ERROR)."""
+    import copy
+    import json
+    from cp_liveset import LiveSetCollection
+
+    def text(group):
+        return json.dumps(group.to_json(), indent=2) + "\n"
+
+    with gzip.GzipFile(os.path.join(fx, "json-write.txt.gz"), "wb", mtime=0) as gz, \
+            io.TextIOWrapper(gz, encoding="utf-8", newline="\n") as f:
+        for i, sound in enumerate(sounds):
+            page, set_no = 1 + i % 40, 1 + i % 8
+            f.write(f"=== {page} {set_no} {stored(sound).hex()}\n{text(LiveSetCollection({(page, set_no): sound}))}")
+    group = LiveSetCollection({(p, s): make_sound(p, s) for p in (3, 7) for s in (1, 4, 8)})
+    group[(10, 2)] = codec.init_sound()
+    group[(1, 1)] = sounds[-1]
+    with open(os.path.join(fx, "json-doc.json"), "w", encoding="utf-8", newline="\n") as f:
+        f.write(text(group))
+
+    base = LiveSetCollection({(2, 3): make_sound(3, 5)}).to_json()
+
+    def case(change):
+        d = copy.deepcopy(base)
+        change(d, d["pages"]["2"]["3"])
+        return json.dumps(d, indent=1)
+
+    def setv(path, value):
+        def change(_d, s):
+            node = s
+            for k in path[:-1]:
+                node = node[k]
+            node[path[-1]] = value
+        return change
+
+    def drop(path):
+        def change(_d, s):
+            node = s
+            for k in path[:-1]:
+                node = node[k]
+            del node[path[-1]]
+        return change
+
+    def other(change_doc):
+        return lambda d, _s: change_doc(d)
+
+    cases = [
+        case(lambda d, s: None),
+        case(setv(["common", "name"], "Padded\u0000\u0000")),
+        case(setv(["common", "name"], "Spaces    ")),
+        case(setv(["common", "name"], "x\u007fy")),
+        case(setv(["common", "name"], "Q\"s\\q")),
+        case(setv(["common", "name"], "")),
+        case(setv(["common", "name"], "Sixteen chars!!!")),
+        case(setv(["common", "name"], "Café")),
+        case(setv(["common", "name"], "Tab\tx")),
+        case(setv(["common", "name"], 42)),
+        case(setv(["master_eq", "eq_gain1"], 5.0)),
+        case(setv(["master_eq", "eq_gain1"], 5.5)),
+        case(setv(["master_eq", "eq_gain1"], "5")),
+        case(setv(["master_eq", "eq_gain1"], True)),
+        case(setv(["master_eq", "eq_gain1"], None)),
+        case(setv(["master_eq", "eq_gain1"], 128)),
+        case(setv(["master_eq", "eq_gain1"], -1)),
+        case(setv(["zones", 2, "zone_switch"], 1)),
+        case(setv(["sections", "sub", "specific", "reserved_0x00"], 9)
+             if "reserved_0x00" in base["pages"]["2"]["3"]["sections"]["sub"]["specific"] else lambda d, s: None),
+        case(setv(["additional", "tempo_raw"], [3, 4])),
+        case(setv(["additional", "tempo_raw"], [3, 4, 5])),
+        case(setv(["additional", "tempo_raw"], 7)),
+        case(drop(["master_eq", "eq_gain1"])),
+        case(setv(["master_eq", "extra"], 1)),
+        case(setv(["extra"], {})),
+        case(drop(["sections", "epiano"])),
+        case(lambda d, s: s.__setitem__("zones", s["zones"][:3])),
+        case(other(lambda d: d.__setitem__("format", "cp88-cp73-liveset-yaml-v1"))),
+        case(other(lambda d: d.__setitem__("pages", {}))),
+        case(other(lambda d: d.pop("pages"))),
+        case(other(lambda d: d["pages"].__setitem__("41", {"1": d["pages"]["2"]["3"]}))),
+        case(other(lambda d: d["pages"].__setitem__("1", {"9": d["pages"]["2"]["3"]}))),
+        case(other(lambda d: d["pages"].__setitem__("01", {"1": d["pages"]["2"]["3"]}))),
+        case(other(lambda d: d["pages"]["2"].__setitem__("8", copy.deepcopy(d["pages"]["2"]["3"])))),
+        case(other(lambda d: d.__setitem__("note", "kept?"))),
+    ]
+    with open(os.path.join(fx, "json-read.txt"), "w", encoding="utf-8", newline="\n") as f:
+        for doc in cases:
+            try:
+                got = LiveSetCollection.from_json(json.loads(doc))
+                out = " ".join(f"{p}:{s}={stored(got[(p, s)]).hex()}" for p, s in got)
+            except Exception as e:  # noqa: BLE001 -- any refusal counts
+                out = "ERROR " + type(e).__name__
+            f.write(f"--- {out}\n{doc}\n")
 
 
 def main():
@@ -315,7 +413,7 @@ def main():
     with open(os.path.join(os.path.dirname(out), "Cp88YamlTables.kt"), "w", encoding="utf-8", newline="\n") as f:
         f.write(yaml_kotlin())
     fx = os.path.join(APP, "model/src/test/resources/cp88")
-    yaml_fixtures(fx)
+    json_fixtures(fx, yaml_fixtures(fx))
     os.makedirs(fx, exist_ok=True)
     samples = {(p, s): make_sound(p, s) for p in (3, 7) for s in range(1, 9)}
     # The stored form of each sample, as Cp88.normalize keeps it.
