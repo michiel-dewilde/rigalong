@@ -450,6 +450,69 @@ def flow_knob_controls_sound(f):
         undo_last()
 
 
+# A CP88/CP73 file into the library through the file picker (I8.8, I4.17):
+# a page of cp-liveset's sample sounds, pushed to Downloads first.
+X9P = "sample-page-7.X9P"
+
+
+def flow_import_cp88_file(f):
+    here = os.path.dirname(os.path.abspath(__file__))
+    adb("push", os.path.join(here, "..", "model", "src", "test", "resources", "cp88", X9P), "/sdcard/Download/" + X9P)
+    to_library()
+    f.tap("Import…")
+    time.sleep(2.0)
+    if not wait_for(X9P, timeout=2):
+        # The picker opens where it was last; the first time, Downloads is in its roots drawer.
+        for n in screen():
+            if n.desc in ("Show roots", "Roots tonen") or n.text in ("Show roots", "Roots tonen"):
+                shell(f"input tap {n.x} {n.y}")
+                f.taps += 1
+                time.sleep(1.0)
+                break
+        f.tap("Downloads")
+        time.sleep(1.5)
+    f.tap(X9P)
+    try:
+        f.see("8 CP-88 sounds in the file", exact=False, timeout=8)
+        f.see("Test 7-6")
+    finally:
+        if "be.mdw.bagosynths" in focused_app():
+            undo_last()
+        shell(f"rm -f /sdcard/Download/{X9P}")
+
+
+# A live set given a CP-88 sound from the library: written into the
+# keyboard's reserved page when the song opens.
+def flow_cp88_sound_from_library(f):
+    here = os.path.dirname(os.path.abspath(__file__))
+    adb("push", os.path.join(here, "..", "model", "src", "test", "resources", "cp88", X9P), "/sdcard/Download/" + X9P)
+    to_library()
+    for n in find_all("Import…"):
+        shell(f"input tap {n.x} {n.y}")
+    time.sleep(2.0)
+    for n in find_all(X9P):
+        shell(f"input tap {n.x} {n.y}")
+    if not wait_for("Test 7-6", timeout=8):
+        raise AssertionError("setup: the page did not import")
+    saves = 0
+    try:
+        to_stage()
+        f.tap("Organ", long=True, pick="highest")          # live set 1 in the editor
+        f.see("Live set 1", exact=False)
+        f.tap("Own sound", pick="first")
+        f.tap("From library…", pick="first")
+        f.tap("Test 7-6")
+        logcat_clear()
+        f.tap("Save •")
+        saves += 1
+        if not logcat_has(r"CP-88: page \d+, [1-9]\d* slot\(s\) written", timeout=5):
+            raise AssertionError("the sound was not written into the reserved page")
+    finally:
+        for _ in range(saves + 1):
+            undo_last()
+        shell(f"rm -f /sdcard/Download/{X9P}")
+
+
 FLOWS = [
     # name, budget (taps), function
     ("select-live-set", 1, flow_select_live_set),
@@ -467,6 +530,8 @@ FLOWS = [
     ("sound-for-live-set", 4, flow_sound_for_live_set),
     ("store-in-live-set", 2, flow_store_in_live_set),
     ("knob-controls-sound", 4, flow_knob_controls_sound),
+    ("import-cp88-file", 4, flow_import_cp88_file),
+    ("cp88-sound-from-library", 5, flow_cp88_sound_from_library),
 ]
 
 

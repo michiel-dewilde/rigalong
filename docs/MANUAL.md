@@ -158,10 +158,15 @@ song being edited:
   * **Select**: switching to this live set selects one of its stored sounds
     (page and set);
   * **Own sound**: the song carries a keyboard sound of its own. Set the
-    sound up on the CP88/CP73, then press "Import current sound". Unsaved
-    edits and the panel's knobs are included. When the song is opened, its
+    sound up on the CP88/CP73, then press "Import current sound" (unsaved
+    edits and the panel's knobs are included; it is kept in the library's
+    CP-88 sounds too), or take one from **From library…**. When the song is opened, its
     sounds are written into the keyboard's reserved page (see Setup): live set
     1 in set 1 of that page, and so on.
+
+  **CP-88 page .X9P** (at the top, when a live set owns a sound) saves the
+  page the app writes into the keyboard for this song as a file, to load on
+  a CP88/CP73 from a USB stick.
 
   When the keyboard's own live set buttons select the app's live sets (the
   default), every set of the reserved page that a live set doesn't give a
@@ -182,9 +187,17 @@ Every setlist and song, with its history.
   setlist on stage.
 * **Export this setlist…** writes the setlist and all of its songs, CP-88
   sounds and lead sheets included, into one file.
-* **Import…** reads such a file back, on this tablet or another one.
-  Importing never overwrites: a song changed on both sides is kept in both
-  versions.
+* **Import…** takes any file the app knows, recognised by what it is,
+  not by its name:
+  * an exported library file, on this tablet or another one. Importing never
+    overwrites: a song changed on both sides is kept in both versions;
+  * the CP88/CP73's own files, as its File menu saves them on a USB stick:
+    **.X9S** (one sound), **.X9P** (a page), **.X9L** (all live sets) and
+    **.X9A** (a backup). Their Live Set Sounds go into **CP-88 sounds**; a
+    sound the library already has is not added twice;
+  * an SFZ sample library as a **.zip**. It then appears in every Piano
+    patch list.
+  One Import is one Undo.
 * **Details** (beside a setlist) and the **versions** count (beside a song)
   open an entry:
   * rename it, or delete it (hold). Setlists that hold a deleted song keep
@@ -196,14 +209,17 @@ Every setlist and song, with its history.
     version keeps it until you press **Update to the latest version**;
   * versions **changed elsewhere too**, after an import: use one of them, or
     keep this tablet's.
+* **CP-88 sounds**: the keyboard's Live Set Sounds the library holds,
+  imported from its files or read from the keyboard ("Import current
+  sound"). **Play on CP-88** puts one on the keyboard as its current sound,
+  without touching a stored set, so you can hear it. **.X9S** saves it as a
+  file the keyboard loads.
 * **Patches**: the library patches, with Details: the songs using each one
   (and "Update to the latest version" for a song left behind), where it was
   forked from, its history.
 * **Forget history (hold)** in an entry's Details keeps what it is now and
   stops carrying its earlier versions along in exports. It cannot be undone.
 * **Undo** at the top takes back the last action.
-* **Install instrument (zip)…** adds an SFZ sample library from a zip file.
-  It then appears in every Piano patch list.
 
 ### Setup
 

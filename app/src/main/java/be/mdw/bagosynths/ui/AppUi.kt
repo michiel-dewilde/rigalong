@@ -562,6 +562,11 @@ private fun SongEditor(song: RackSong, name: String, host: EngineHost, player: S
                 Text(song.masterFx?.let { stringResource(R.string.master_fx_is, stringResource(fxLabel(it.type))) }
                     ?: stringResource(R.string.master_fx_button), color = if (song.masterFx == null) Color.White else Accent)
             }
+            // The song's CP-88 sounds as a page file (.X9P), for the keyboard's USB stick.
+            if (song.liveSets.any { it.cp88.mode == "own" }) {
+                Spacer(Modifier.width(12.dp))
+                Cp88PageButton(song, name, player)
+            }
             Spacer(Modifier.width(12.dp))
             // "Save •" while there is something to save: a library patch picked or
             // saved in a dialog belongs to the song only once the song is saved.
@@ -629,7 +634,7 @@ private fun SongEditor(song: RackSong, name: String, host: EngineHost, player: S
             }) { Text(stringResource(R.string.add_live_set)) }
         }
         song.liveSets.forEachIndexed { i, ls ->
-            LiveSetCard(song, i, ls, player, focused = focus?.liveSet == i, onChange,
+            LiveSetCard(song, i, ls, player, lib, focused = focus?.liveSet == i, onChange,
                 onSound = { id -> soundEditor = id to i })
         }
     }
@@ -686,10 +691,11 @@ private fun SongEditor(song: RackSong, name: String, host: EngineHost, player: S
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun LiveSetCard(song: RackSong, i: Int, ls: RackLiveSet, player: SongPlayer, focused: Boolean,
+private fun LiveSetCard(song: RackSong, i: Int, ls: RackLiveSet, player: SongPlayer, lib: Library, focused: Boolean,
                         onChange: (RackSong) -> Unit, onSound: (String) -> Unit) {
     fun put(n: RackLiveSet) = onChange(song.copy(liveSets = song.liveSets.toMutableList().also { it[i] = n }))
     var importing by remember { mutableStateOf("") }
+    var pickingCp88 by remember { mutableStateOf(false) }
     val copyName = stringResource(R.string.copy_of, ls.name)
     val reading = stringResource(R.string.reading_cp88)
     // Opened from the stage on this live set: scrolled into view and outlined.
@@ -791,15 +797,37 @@ private fun LiveSetCard(song: RackSong, i: Int, ls: RackLiveSet, player: SongPla
                             val r = runCatching { player.importCurrentCp88Sound() }
                             android.os.Handler(android.os.Looper.getMainLooper()).post {
                                 r.onSuccess { (d, n) ->
+                                    // Kept in the library too, to use again in another song.
+                                    lib.store.get(d)?.let { lib.saveCp88Sound(null, n.ifBlank { "CP-88 sound" }, it) }
                                     put(ls.copy(cp88 = cp.copy(mode = "own", sound = d, soundName = n))); importing = ""
                                 }.onFailure { importing = it.message ?: "failed" }
                             }
                         }.start()
                     }) { Text(stringResource(R.string.import_current_sound)) }
+                    // One the library has: imported from the keyboard's files, or used in another song.
+                    TextButton(onClick = { pickingCp88 = true }) { Text(stringResource(R.string.from_library)) }
                     Text(importing, color = Warn, fontSize = 12.sp, modifier = Modifier.padding(start = 8.dp))
                 }
             }
         }
+    }
+    if (pickingCp88) {
+        val sounds = remember { lib.cp88Sounds() }
+        AlertDialog(onDismissRequest = { pickingCp88 = false },
+            confirmButton = { TextButton(onClick = { pickingCp88 = false }) { Text(stringResource(R.string.cancel)) } },
+            title = { Text(stringResource(R.string.cp88_sounds)) },
+            text = {
+                if (sounds.isEmpty()) Text(stringResource(R.string.no_cp88_sounds), color = Dim)
+                else LazyColumn(Modifier.heightIn(max = 420.dp)) {
+                    itemsIndexed(sounds) { _, e ->
+                        Text(e.version.name, modifier = Modifier.fillMaxWidth().clickable {
+                            val d = e.version.target!!.digest
+                            put(ls.copy(cp88 = ls.cp88.copy(mode = "own", sound = d, soundName = e.version.name)))
+                            pickingCp88 = false
+                        }.padding(vertical = 10.dp))
+                    }
+                }
+            })
     }
 }
 
@@ -1244,6 +1272,22 @@ private fun fxLabel(type: String) = when (type) {
     "rotary" -> R.string.fx_rotary
     "reverb" -> R.string.fx_reverb
     else -> R.string.fx_off
+}
+
+/** Saves the song's CP-88 page (SongPlayer.cp88PageFile) as an .X9P through the file picker. */
+@Composable
+private fun Cp88PageButton(song: RackSong, name: String, player: SongPlayer) {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    var note by remember { mutableStateOf("") }
+    val saver = androidx.activity.compose.rememberLauncherForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.CreateDocument("application/octet-stream")) { uri ->
+        if (uri != null) note = runCatching {
+            context.contentResolver.openOutputStream(uri)!!.use { it.write(player.cp88PageFile(song)) }
+        }.fold({ "" }, { it.message ?: "failed" })
+    }
+    OutlinedButton(onClick = { saver.launch("${name.ifBlank { "song" }}.X9P") }) {
+        Text(stringResource(R.string.export_cp88_page) + if (note.isEmpty()) "" else " ($note)")
+    }
 }
 
 /** Attach or remove the song's lead sheet: a PDF from the file picker, into the library (S9.3). */

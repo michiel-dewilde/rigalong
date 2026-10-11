@@ -125,6 +125,38 @@ class Library(dir: File, private val author: String) {
         else update(entryId, author, now(), target = target, name = name)
     }
 
+    /** CP-88 Live Set Sounds kept in the library (I8.1): read from the keyboard, or from its files. */
+    fun cp88Sounds(): List<Entry> = store.entries()
+        .filter { it.version.target?.type == Cp88.MEDIA_TYPE }
+        .sortedBy { it.version.name.lowercase() }
+
+    /** The sound (stored form, Cp88) entry [id] holds now. */
+    fun cp88Sound(id: Digest): ByteArray? = store.entry(id)?.version?.target?.let { store.get(it.digest) }
+
+    fun saveCp88Sound(entryId: Digest?, name: String, sound: ByteArray): Digest = change("CP-88 sound", name) {
+        val target = Ref(store.put(sound), Cp88.MEDIA_TYPE)
+        if (entryId == null) create(name, target, author, now())
+        else update(entryId, author, now(), target = target, name = name)
+    }
+
+    /**
+     * The Live Set Sounds of a CP88/CP73 file (Cp88X9), as one change -- one
+     * Undo. A sound the library already has, under any name, is not added
+     * again (a backup holds the same Init Sound many times). Returns how many
+     * were added.
+     */
+    fun importCp88Sounds(fileName: String, slots: List<Cp88X9.Slot>): Int = change("import", fileName) {
+        val have = cp88Sounds().mapNotNull { it.version.target?.digest }.toMutableSet()
+        var added = 0
+        for (s in slots) {
+            val d = store.put(s.sound)
+            if (!have.add(d)) continue
+            create(s.name.ifBlank { "${s.page}:${s.set}" }, Ref(d, Cp88.MEDIA_TYPE), author, now())
+            added++
+        }
+        added
+    }
+
     fun setlist(id: Digest): Setlist? =
         store.entry(id)?.version?.target?.let { store.getTyped<Setlist>(it.digest) }
 

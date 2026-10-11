@@ -320,6 +320,26 @@ class SongPlayer(private val lib: Library, private val host: EngineHost, private
         return lib.store.put(sound) to Cp88.name(sound)
     }
 
+    /** [sound] (stored form) into the CP-88's current sound, to hear it; no stored slot is touched. */
+    fun auditionCp88(sound: ByteArray): Boolean =
+        Cp88.split(sound).all { runCatching { NativeBridge.nativeUsbMidiSend(it) }.getOrDefault(-1) > 0 }
+
+    /**
+     * The song's CP-88 page as the app writes it into the reserved page (see
+     * [writeSongPage]), as an .X9P file the keyboard loads from a USB stick:
+     * set n holds live set n's own sound, the silent sound where the CP-88
+     * follows the app and the live set selects none of its own, the Init
+     * Sound otherwise.
+     */
+    fun cp88PageFile(song: RackSong): ByteArray {
+        val sets = HashMap<Int, ByteArray>()
+        for ((i, ls) in song.liveSets.take(8).withIndex()) {
+            val own = if (ls.cp88.mode == "own") ls.cp88.sound?.let { lib.store.get(it) } else null
+            (own ?: if (cp88Follows && ls.cp88.mode != "select") Cp88.SILENT else null)?.let { sets[i + 1] = it }
+        }
+        return be.mdw.bagosynths.model.Cp88X9.x9p(reservedPage, sets)
+    }
+
     // ------------------------------------------------------------------ tempo
 
     /** The song's tempo (S12.1); a tapped one holds for the session (I12.3). */

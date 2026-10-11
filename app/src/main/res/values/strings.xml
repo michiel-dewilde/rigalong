@@ -123,6 +123,17 @@
     <string name="own_in_a_live_set">● a live set has a value of its own</string>
     <string name="new_sound_for_live_set">New sound for this live set</string>
     <string name="use_in_song">Use in song</string>
+    <string name="import_any">Import…</string>
+    <string name="imported_cp88">%1$d CP-88 sounds in the file, %2$d new in the library</string>
+    <string name="unknown_file">“%1$s”: not a file the app can import yet</string>
+    <string name="cp88_sounds">CP-88 sounds</string>
+    <string name="no_cp88_sounds">None yet: import a .X9S, .X9P, .X9L or .X9A file in the Library, or import the current sound.</string>
+    <string name="from_library">From library…</string>
+    <string name="play_on_cp88">Play on CP-88</string>
+    <string name="cp88_playing">On the CP-88 now, as its current sound</string>
+    <string name="cp88_unreachable">CP-88 not reachable (MIDI out needs a direct USB mode)</string>
+    <string name="export_x9s">.X9S</string>
+    <string name="export_cp88_page">CP-88 page .X9P</string>
     <string name="learn_control">MIDI</string>
     <string name="move_a_control">Move a control…</string>
     <string name="control_cc">CC %1$d ✕</string>

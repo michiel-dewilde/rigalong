@@ -65,6 +65,8 @@ fun LibraryScreen(player: SongPlayer, lib: Library, host: EngineHost, onOpened: 
     val setlists = remember(revision) { lib.setlists() }
     val songs = remember(revision) { lib.songs() }
     val patches = remember(revision) { lib.patches() }
+    val cp88Sounds = remember(revision) { lib.cp88Sounds() }
+    var exportSound by remember { mutableStateOf<Digest?>(null) }
     val last = remember(revision) { lib.lastChange() }
     var exportIds by remember { mutableStateOf<List<Digest>>(emptyList()) }
     var detail by remember { mutableStateOf<Digest?>(null) }
@@ -74,40 +76,34 @@ fun LibraryScreen(player: SongPlayer, lib: Library, host: EngineHost, onOpened: 
             .fold({ context.getString(R.string.exported, exportIds.size) },
                 { context.getString(R.string.export_failed, it.message ?: "") })
     }
+    // One Import for everything, told apart by what the file IS (its first bytes), not its name.
     val importer = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) {
-            message = runCatching {
-                context.contentResolver.openInputStream(uri)!!.use { Exchange.import(lib.store, it) }
-            }.fold({ r ->
-                val counts = r.results.values.groupingBy { it::class.simpleName }.eachCount()
-                context.getString(R.string.imported, r.objects, counts.toString())
-            }, { context.getString(R.string.import_failed, it.message ?: "") })
-            revision++
-        }
-    }
-
-    val instrumentImporter = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
-        if (uri != null) {
             message = context.getString(R.string.installing)
-            val name = uri.lastPathSegment?.substringAfterLast('/') ?: "instrument.zip"
+            val name = displayName(context, uri)
             Thread {
                 val r = runCatching {
-                    context.contentResolver.openInputStream(uri)!!.use { host.importInstrumentZip(it, name) }
+                    val bytes = context.contentResolver.openInputStream(uri)!!.use { it.readBytes() }
+                    importFile(context, lib, host, name, bytes)
                 }
                 android.os.Handler(android.os.Looper.getMainLooper()).post {
-                    message = r.fold({ context.getString(R.string.installed_instrument, it) },
-                        { context.getString(R.string.install_failed, it.message ?: "") })
+                    message = r.fold({ it }, { context.getString(R.string.import_failed, it.message ?: "") })
+                    revision++
                 }
             }.start()
         }
     }
+    val soundSaver = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/octet-stream")) { uri ->
+        val id = exportSound
+        if (uri != null && id != null) message = runCatching {
+            val sound = lib.cp88Sound(id) ?: error("no sound")
+            context.contentResolver.openOutputStream(uri)!!.use { it.write(be.mdw.bagosynths.model.Cp88X9.x9s(1, 1, sound)) }
+        }.fold({ context.getString(R.string.exported, 1) }, { context.getString(R.string.export_failed, it.message ?: "") })
+    }
 
     Column(Modifier.fillMaxSize()) {
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
-            OutlinedButton(onClick = { instrumentImporter.launch(arrayOf("application/zip", "application/x-zip-compressed")) }) {
-                Text(stringResource(R.string.import_instrument))
-            }
-            OutlinedButton(onClick = { importer.launch(arrayOf("*/*")) }) { Text(stringResource(R.string.import_archive)) }
+            OutlinedButton(onClick = { importer.launch(arrayOf("*/*")) }) { Text(stringResource(R.string.import_any)) }
             OutlinedButton(enabled = player.setlistId != null, onClick = {
                 val sl = player.setlistId ?: return@OutlinedButton
                 exportIds = listOf(sl) + lib.songsOf(sl).mapNotNull { it.first?.id }
@@ -160,6 +156,25 @@ fun LibraryScreen(player: SongPlayer, lib: Library, host: EngineHost, onOpened: 
                                 lib.saveSetlist(sl, player.setlistName, ids)
                                 player.reload(); revision++
                             }) { Text(stringResource(R.string.add_to_setlist)) }
+                        }
+                    }
+                }
+                // CP-88 Live Set Sounds: from the keyboard or its files; heard on it, saved as .X9S.
+                if (cp88Sounds.isNotEmpty()) {
+                    Text(stringResource(R.string.cp88_sounds), fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(top = 8.dp))
+                    LazyColumn(Modifier.heightIn(max = 220.dp)) {
+                        items(cp88Sounds) { e ->
+                            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                                Text(e.version.name, modifier = Modifier.weight(1f))
+                                TextButton(onClick = {
+                                    val ok = lib.cp88Sound(e.id)?.let { player.auditionCp88(it) } ?: false
+                                    message = context.getString(if (ok) R.string.cp88_playing else R.string.cp88_unreachable)
+                                }) { Text(stringResource(R.string.play_on_cp88)) }
+                                TextButton(onClick = { exportSound = e.id; soundSaver.launch("${e.version.name.trim()}.X9S") }) {
+                                    Text(stringResource(R.string.export_x9s))
+                                }
+                                TextButton(onClick = { detail = e.id }) { Text(stringResource(R.string.details)) }
+                            }
                         }
                     }
                 }
@@ -306,4 +321,37 @@ private fun VersionRow(v: be.mdw.bagosynths.model.EntryVersion, action: String?,
 
 private fun exportTo(context: Context, store: Store, ids: List<Digest>, uri: Uri) {
     context.contentResolver.openOutputStream(uri)!!.use { Exchange.export(store, ids, it) }
+}
+
+/** The file's own name as the picker shows it. */
+private fun displayName(context: android.content.Context, uri: android.net.Uri): String =
+    runCatching {
+        context.contentResolver.query(uri, arrayOf(android.provider.OpenableColumns.DISPLAY_NAME), null, null, null)?.use { c ->
+            if (c.moveToFirst()) c.getString(0) else null
+        }
+    }.getOrNull() ?: uri.lastPathSegment?.substringAfterLast('/') ?: "file"
+
+/**
+ * Imports one file, whatever it is (I8.8): told apart by its first bytes.
+ * A library archive (.tar), a CP88/CP73 file (.X9S/.X9P/.X9L/.X9A), an SFZ
+ * instrument pack (.zip). Returns what it did, for the screen. Blocking.
+ */
+private fun importFile(context: android.content.Context, lib: Library, host: EngineHost, name: String, bytes: ByteArray): String {
+    fun starts(s: String, at: Int = 0) = bytes.size >= at + s.length &&
+        String(bytes, at, s.length, Charsets.ISO_8859_1) == s
+    return when {
+        starts("YAMAHA-YSFC") -> {
+            val slots = be.mdw.bagosynths.model.Cp88X9.read(bytes)
+            val added = lib.importCp88Sounds(name, slots)
+            context.getString(R.string.imported_cp88, slots.size, added)
+        }
+        starts("ustar", 257) -> {
+            val r = java.io.ByteArrayInputStream(bytes).use { Exchange.import(lib.store, it) }
+            val counts = r.results.values.groupingBy { it::class.simpleName }.eachCount()
+            context.getString(R.string.imported, r.objects, counts.toString())
+        }
+        starts("PK\u0003\u0004") ->
+            context.getString(R.string.installed_instrument, java.io.ByteArrayInputStream(bytes).use { host.importInstrumentZip(it, name) })
+        else -> error(context.getString(R.string.unknown_file, name))
+    }
 }
