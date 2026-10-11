@@ -59,9 +59,14 @@
         <activity
             android:name=".MainActivity"
             android:exported="true"
-            android:screenOrientation="landscape"
+            android:screenOrientation="fullUser"
             android:launchMode="singleTask"
-            android:configChanges="orientation|screenSize|keyboardHidden|uiMode">
+            android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboardHidden|uiMode">
+            <!--
+              Both orientations (REQUIREMENTS S20.2), as the user's own rotation
+              lock allows; the new UI adapts. Rotating never recreates the
+              activity: the engine and the USB session live in it.
+            -->
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
