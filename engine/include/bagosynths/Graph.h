@@ -151,6 +151,9 @@ public:
     virtual const char* paramName(int index) const { return ""; }
     // Defaults to 0..1, continuous: override where a parameter is not.
     virtual ParamRange paramRange(int index) const { return {}; }
+    // A value as the player reads it ("250 ms", "1/8 dotted"), written into
+    // `out`; false where the node has nothing better than the number itself.
+    virtual bool paramDisplay(int index, float value, char* out, int capacity) const { return false; }
 
     // --- running or not ----------------------------------------------------
     //

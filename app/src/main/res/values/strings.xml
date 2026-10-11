@@ -38,6 +38,14 @@
     <string name="tap">TAP</string>
     <string name="save_tempo">save</string>
     <string name="reverb">Reverb</string>
+    <string name="fx_button">FX…</string>
+    <string name="fx_of">Effect on %1$s</string>
+    <string name="fx_off">Off</string>
+    <string name="fx_delay">Delay</string>
+    <string name="fx_phaser">Phaser</string>
+    <string name="fx_flanger">Flanger</string>
+    <string name="fx_rotary">Rotary</string>
+    <string name="fx_reverb">Hall</string>
     <string name="reverb_button">Reverb…</string>
     <string name="count_in">COUNT</string>
     <string name="click_on">CLICK</string>

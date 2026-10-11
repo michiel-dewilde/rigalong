@@ -25,6 +25,7 @@
 #include "graph/PlaitsNode.h"
 #include "graph/FluidNode.h"
 #include "graph/Nodes.h"
+#include "graph/FxNode.h"
 
 // Stream settings measured as working on this rig (Galaxy Tab S9 Ultra -> CP-88
 // over USB, 2026-09-19): AAudio, MMAP + EXCLUSIVE granted, 44100 Hz, 89-frame
@@ -435,6 +436,7 @@ private:
     // engine, so a song's live sets can split, layer, transpose and route the
     // fixed set of engines without a recompile. Index: kRack* below.
     bagosynths::MidiZoneNode* mZone[6] = {};
+    bagosynths::FxNode* mFx[6] = {};
     std::shared_ptr<bagosynths::WireControl> mRackMidi[6];
     std::shared_ptr<bagosynths::WireControl> mRackAudio[6];
 public:

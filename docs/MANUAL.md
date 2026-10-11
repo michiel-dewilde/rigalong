@@ -78,6 +78,9 @@ song being edited:
     heard at once and kept in the song.
   * "Take current" keeps what the engine has now; "Clear" goes back to the
     plain patch.
+  * **FX…** puts an effect after that sound: Delay, Phaser, Flanger, Rotary
+    or Hall, from Surge XT. Times and rates can **sync** to the song's tempo,
+    in note values (1/4, 1/8 dotted…).
 * **Tempo**, if the song has one, with its beats per bar and count-in bars,
   and a **Lead sheet…** (a PDF).
 * **Reverb…**: the room all of the song's sounds meet in (size, damping,

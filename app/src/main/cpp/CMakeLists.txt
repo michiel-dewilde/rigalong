@@ -249,7 +249,8 @@ add_library(bagosynths SHARED
         graph/SurgeNode.cpp
         graph/DexedNode.cpp
         graph/PlaitsNode.cpp
-        graph/FluidNode.cpp)
+        graph/FluidNode.cpp
+        graph/FxNode.cpp)
 
 # Plaits is compiled into `surge::eurorack` already -- Surge's Twist oscillator
 # IS a plaits::Voice -- and that target is PUBLIC on surge-common, so its

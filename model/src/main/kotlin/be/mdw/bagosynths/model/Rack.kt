@@ -12,7 +12,9 @@ package be.mdw.bagosynths.model
  *   node  `e.zone`   its zone; `keyLow`, `keyHigh`, `transpose`, `channelIn`, ...
  *   wire  `e.midi`   zone -> engine: off means the engine takes no new notes,
  *                    while held ones still end and tails still ring (Wire.h)
- *   wire  `e.audio`  engine -> mix
+ *   wire  `e.audio`  engine -> mix, or its insert effect -> mix
+ *   node  `e.fx`     the engine's insert effect, kind `fx.<type>`, when it has one;
+ *                    then wire `e.fx.in` runs engine -> effect
  * so a parameter key is `e.Level` or `e.zone.keyLow`. The engines meet in
  * node `mix`, the reverb, whose parameters ("Room size", "Damping", "Width",
  * "Mix") the song may set; those it leaves out keep the reverb's defaults.
@@ -43,7 +45,20 @@ data class RackSlot(
     val level: Double = 0.8,
     /** The engine's own parameters, by their stable names, over the preset (M8). */
     val params: Map<String, Double> = emptyMap(),
+    /** Its insert effect, or null. */
+    val fx: RackFx? = null,
 )
+
+/**
+ * An engine's insert effect (M6): one of [TYPES], and its parameters by the
+ * effect's own names; a tempo-synced one has "<name> sync" = 1.
+ */
+data class RackFx(val type: String, val params: Map<String, Double> = emptyMap()) {
+    companion object {
+        /** In the engine's order (FxNode::Type); "off" is no effect. */
+        val TYPES = listOf("off", "delay", "phaser", "flanger", "rotary", "reverb")
+    }
+}
 
 /** One engine in one live set. */
 data class RackPart(
@@ -100,7 +115,15 @@ data class RackSong(
             nodes["${e.key}.zone"] = Node(kind = "midi.zone")
             wires["${e.key}.in"] = Wire("in:midi", "${e.key}.zone:midi")
             wires[e.midiWire] = Wire("${e.key}.zone:midi", "${e.key}:midi")
-            wires[e.audioWire] = Wire("${e.key}:out", "mix:in")
+            val fx = slot.fx?.takeIf { it.type != "off" }
+            if (fx == null) {
+                wires[e.audioWire] = Wire("${e.key}:out", "mix:in")
+            } else {
+                // Only a song with an effect has the node, so no other song changes hash.
+                nodes["${e.key}.fx"] = Node(kind = "fx.${fx.type}", params = fx.params)
+                wires["${e.key}.fx.in"] = Wire("${e.key}:out", "${e.key}.fx:in")
+                wires[e.audioWire] = Wire("${e.key}.fx:out", "mix:in")
+            }
         }
         val refs = liveSets.map { ls ->
             val overrides = LinkedHashMap<String, Double>()
@@ -137,8 +160,9 @@ data class RackSong(
                 val e = RackEngine.ofKey(name) ?: continue
                 if (node.kind != e.nodeType) return null
                 val patch = node.patch?.let { store.getTyped<Patch>(it.toRef().digest) }
+                val fx = song.nodes["${e.key}.fx"]?.let { RackFx(it.kind.removePrefix("fx."), it.params) }
                 slots[e] = RackSlot(patch?.preset, patch?.program, node.params["Level"] ?: 0.8,
-                    patch?.params ?: emptyMap())
+                    patch?.params ?: emptyMap(), fx)
             }
             val liveSets = song.liveSets.map { r ->
                 val ls = store.getTyped<LiveSet>(r.toRef().digest)

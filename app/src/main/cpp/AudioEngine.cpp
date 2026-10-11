@@ -1805,7 +1805,17 @@ bool AudioEngine::rebuildGraph(std::string* error) {
             const bagosynths::NodeId idZone = mGraph.addNode(std::move(z));
             mGraph.connect(idMidi, 0, idZone, 0);
             mRackMidi[i] = mGraph.connectSwitchable(idZone, 0, engines[i], 0);
-            mRackAudio[i] = mGraph.connectSwitchable(engines[i], 0, idReverb, 0);
+        }
+        // An insert effect after every engine (M6), "Off" until a song asks for
+        // one; added after the zones, for the same reason as they were. The
+        // switchable wire follows it, so an engine's delay tail goes where the
+        // engine's sound goes.
+        for (int i = 0; i < kRackSize; ++i) {
+            auto fx = std::make_unique<bagosynths::FxNode>();
+            mFx[i] = fx.get();
+            const bagosynths::NodeId idFx = mGraph.addNode(std::move(fx));
+            mGraph.connect(engines[i], 0, idFx, 0);
+            mRackAudio[i] = mGraph.connectSwitchable(idFx, 0, idReverb, 0);
         }
         mGraph.connect(idReverb, 0, idOut, 0);
 

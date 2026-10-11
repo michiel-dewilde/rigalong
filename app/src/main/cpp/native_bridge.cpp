@@ -622,6 +622,17 @@ Java_be_mdw_bagosynths_NativeBridge_nativeNodeParamName(JNIEnv* env, jobject, ji
     return env->NewStringUTF(n ? n->paramName(param) : "");
 }
 
+// A value as the player reads it ("250 ms", "1/8"), or null where the node has
+// nothing better than the number.
+JNIEXPORT jstring JNICALL
+Java_be_mdw_bagosynths_NativeBridge_nativeNodeParamDisplay(JNIEnv* env, jobject, jint index,
+                                                         jint param, jfloat value) {
+    bagosynths::Node* n = engine().graph().nodeAt(index);
+    char buf[64];
+    if (n == nullptr || !n->paramDisplay(param, value, buf, sizeof buf)) return nullptr;
+    return env->NewStringUTF(buf);
+}
+
 JNIEXPORT jfloat JNICALL
 Java_be_mdw_bagosynths_NativeBridge_nativeGetNodeParam(JNIEnv*, jobject, jint index,
                                                      jint param) {

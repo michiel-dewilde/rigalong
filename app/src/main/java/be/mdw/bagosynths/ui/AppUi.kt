@@ -18,6 +18,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawingPadding
@@ -466,6 +467,7 @@ private fun SongEditor(song: RackSong, name: String, host: EngineHost, player: S
     var picker by remember { mutableStateOf<RackEngine?>(null) }
     var patchEditor by remember { mutableStateOf<RackEngine?>(null) }
     var reverbEditor by remember { mutableStateOf(false) }
+    var fxEditor by remember { mutableStateOf<RackEngine?>(null) }
     Column(Modifier.fillMaxSize().background(Panel, RoundedCornerShape(10.dp)).padding(12.dp)
         .verticalScroll(rememberScrollState())) {
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -519,6 +521,9 @@ private fun SongEditor(song: RackSong, name: String, host: EngineHost, player: S
                     TextButton(onClick = { patchEditor = e }) {
                         Text(stringResource(R.string.edit_patch) + if (slot.params.isNotEmpty()) " ●" else "")
                     }
+                    TextButton(onClick = { fxEditor = e }) {
+                        Text(slot.fx?.let { stringResource(fxLabel(it.type)) } ?: stringResource(R.string.fx_button))
+                    }
                     Spacer(Modifier.width(8.dp))
                     Text(stringResource(R.string.level), color = Dim)
                     Slider(value = slot.level.toFloat(), onValueChange = { v ->
@@ -538,6 +543,13 @@ private fun SongEditor(song: RackSong, name: String, host: EngineHost, player: S
         }
         song.liveSets.forEachIndexed { i, ls ->
             LiveSetCard(song, i, ls, player, onChange)
+        }
+    }
+    fxEditor?.let { e ->
+        song.slots[e]?.let { slot ->
+            FxEditor(e, slot, player, onChange = { f ->
+                onChange(song.copy(slots = song.slots + (e to (song.slots[e] ?: slot).copy(fx = f))))
+            }, onDismiss = { fxEditor = null })
         }
     }
     if (reverbEditor) {
@@ -707,7 +719,7 @@ private fun ParamEditor(title: String, key: Any, current: Map<String, Double>, p
     val params = remember(key) { load() }
     var values by remember(key) { mutableStateOf(current) }
     fun put(v: Map<String, Double>) { values = v; onChange(v) }
-    AlertDialog(onDismissRequest = onDismiss,
+    AlertDialog(onDismissRequest = onDismiss, modifier = WideDialog, properties = WideDialogProperties,
         confirmButton = { TextButton(onClick = { player.reload(); onDismiss() }) { Text(stringResource(R.string.done)) } },
         dismissButton = {
             Row {
@@ -721,23 +733,89 @@ private fun ParamEditor(title: String, key: Any, current: Map<String, Double>, p
         text = {
             LazyColumn(Modifier.height(480.dp)) {
                 itemsIndexed(params) { _, p ->
-                    val v = values[p.name]?.toFloat() ?: p.value
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text(p.name, modifier = Modifier.width(150.dp), fontSize = 14.sp,
-                            color = if (values.containsKey(p.name)) Accent else Color.White)
-                        Slider(value = v.coerceIn(p.min, p.max), valueRange = p.min..p.max,
-                            steps = if (p.integer) ((p.max - p.min).toInt() - 1).coerceAtLeast(0) else 0,
-                            onValueChange = { nv ->
-                                val x = if (p.integer) Math.round(nv).toFloat() else nv
-                                audition(p.name, x)
-                                put(values + (p.name to x.toDouble()))
-                            }, modifier = Modifier.weight(1f))
-                        Text(if (p.integer) v.toInt().toString() else "%.2f".format(v), modifier = Modifier.width(48.dp),
-                            textAlign = TextAlign.End, fontSize = 13.sp)
+                    ParamRow(p, values[p.name]?.toFloat() ?: p.value, values.containsKey(p.name), display = { null }) { x ->
+                        audition(p.name, x)
+                        put(values + (p.name to x.toDouble()))
                     }
                 }
             }
         })
+}
+
+// Parameter dialogs are wider than Android's default, which clipped values
+// such as "25087.71 Hz" and "1/4 note".
+private val WideDialog = Modifier.widthIn(max = 760.dp).fillMaxWidth(0.9f)
+private val WideDialogProperties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false)
+
+/**
+ * One parameter: a switch where it is on or off, otherwise a slider over its
+ * real range, with its value as the player reads it where the node can say
+ * ("250 ms", "1/8") and the number where it cannot.
+ */
+@Composable
+private fun ParamRow(p: SongPlayer.ParamDesc, v: Float, set: Boolean, display: (Float) -> String?, onValue: (Float) -> Unit) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Text(p.name, modifier = Modifier.width(150.dp), fontSize = 14.sp, color = if (set) Accent else Color.White)
+        if (p.integer && p.min == 0f && p.max == 1f) {
+            androidx.compose.material3.Switch(checked = v > 0.5f, onCheckedChange = { onValue(if (it) 1f else 0f) })
+            Spacer(Modifier.weight(1f))
+        } else {
+            Slider(value = v.coerceIn(p.min, p.max), valueRange = p.min..p.max,
+                steps = if (p.integer) ((p.max - p.min).toInt() - 1).coerceAtLeast(0) else 0,
+                onValueChange = { nv -> onValue(if (p.integer) Math.round(nv).toFloat() else nv) },
+                modifier = Modifier.weight(1f))
+        }
+        Text(display(v) ?: if (p.integer) v.toInt().toString() else "%.2f".format(v), modifier = Modifier.width(96.dp),
+            textAlign = TextAlign.End, fontSize = 13.sp, maxLines = 1)
+    }
+}
+
+/** An engine's insert effect (M6): which one, and its parameters, heard as they move. */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun FxEditor(e: RackEngine, slot: RackSlot, player: SongPlayer,
+                     onChange: (be.mdw.bagosynths.model.RackFx?) -> Unit, onDismiss: () -> Unit) {
+    var fx by remember(e) { mutableStateOf(slot.fx ?: be.mdw.bagosynths.model.RackFx("off")) }
+    val params = remember(e, fx.type) { player.applyFx(e, fx); player.fxParams(e) }
+    fun put(f: be.mdw.bagosynths.model.RackFx) { fx = f; onChange(f.takeIf { it.type != "off" }) }
+    AlertDialog(onDismissRequest = onDismiss, modifier = WideDialog, properties = WideDialogProperties,
+        confirmButton = { TextButton(onClick = { player.reload(); onDismiss() }) { Text(stringResource(R.string.done)) } },
+        dismissButton = {
+            TextButton(onClick = { put(fx.copy(params = emptyMap())); player.applyFx(e, fx) }) {
+                Text(stringResource(R.string.clear))
+            }
+        },
+        title = { Text(stringResource(R.string.fx_of, engineLabel(e))) },
+        text = {
+            Column {
+                androidx.compose.foundation.layout.FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    for (t in be.mdw.bagosynths.model.RackFx.TYPES) {
+                        val label = stringResource(fxLabel(t))
+                        if (t == fx.type) Button(onClick = {}) { Text(label) }
+                        else OutlinedButton(onClick = { put(be.mdw.bagosynths.model.RackFx(t)) }) { Text(label) }
+                    }
+                }
+                Spacer(Modifier.height(8.dp))
+                LazyColumn(Modifier.height(420.dp)) {
+                    itemsIndexed(params, key = { _, p -> fx.type + p.name }) { _, p ->
+                        ParamRow(p, fx.params[p.name]?.toFloat() ?: p.value, fx.params.containsKey(p.name),
+                            display = { player.fxDisplay(e, p.name, it) }) { x ->
+                            player.auditionFx(e, p.name, x)
+                            put(fx.copy(params = fx.params + (p.name to x.toDouble())))
+                        }
+                    }
+                }
+            }
+        })
+}
+
+private fun fxLabel(type: String) = when (type) {
+    "delay" -> R.string.fx_delay
+    "phaser" -> R.string.fx_phaser
+    "flanger" -> R.string.fx_flanger
+    "rotary" -> R.string.fx_rotary
+    "reverb" -> R.string.fx_reverb
+    else -> R.string.fx_off
 }
 
 /** Attach or remove the song's lead sheet: a PDF from the file picker, into the library (S9.3). */

@@ -86,6 +86,20 @@ class RackTest {
     }
 
     @Test
+    fun anInsertEffectTravelsWithItsEngine() {
+        val fx = RackFx("delay", mapOf("Left" to -1.0, "Left sync" to 1.0, "Mix" to 0.3))
+        val wet = draft.copy(slots = draft.slots + (RackEngine.SFIZZ to draft.slots[RackEngine.SFIZZ]!!.copy(fx = fx)))
+        val song = wet.toObjects(store)
+        assertEquals("fx.delay", song.nodes["sfizz.fx"]?.kind)
+        assertEquals("sfizz.fx:out", song.wires[RackEngine.SFIZZ.audioWire]?.from)
+        val back = assertNotNull(RackSong.fromObjects(store, song))
+        assertEquals(fx, back.slots[RackEngine.SFIZZ]?.fx)
+        assertEquals(null, back.slots[RackEngine.HAMMOND]?.fx)
+        // Without one, the engine is wired as it always was.
+        assertEquals(null, draft.toObjects(store).nodes["sfizz.fx"])
+    }
+
+    @Test
     fun theSameDraftIsTheSameSong() {
         assertEquals(store.putTyped(draft.toObjects(store)), store.putTyped(draft.toObjects(store)))
     }

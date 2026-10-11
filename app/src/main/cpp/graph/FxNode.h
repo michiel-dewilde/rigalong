@@ -1,0 +1,96 @@
+#pragma once
+
+#include <atomic>
+#include <memory>
+#include <string>
+
+#include <bagosynths/Graph.h>
+#include <bagosynths/ParamQueue.h>
+
+namespace bagosynths {
+
+// An insert effect (PLAN.md M6): one of Surge XT's effects, from sst-effects,
+// on one engine's output -- a delay, a phaser, a flanger, the rotary speaker or
+// Surge's own reverb. The rack puts one after every engine; "Off" passes the
+// signal through.
+//
+// PARAMETERS. 0 is the type. 1..kMaxParams are the effect's own, named and
+// ranged from its metadata, so the generic editor shows them as they are;
+// kSyncBase + i is the tempo sync of parameter i, for those that have one: a
+// synced time or rate follows the song's tempo (I12.1) in note values.
+//
+// THE TYPE is changed on the calling thread, never the render thread: the new
+// effect is allocated and initialised there, published with one atomic store,
+// and the old one freed only once the render thread is provably not inside it
+// (a sequence count it bumps around every block). Parameter changes go through
+// a queue tagged with the type they were meant for, so a value sent to the old
+// effect never lands on the new one.
+//
+// LATENCY. sst-effects process 16 frames at a time; the node runs them
+// through a 16-frame delay line so any block size works, and keeps that delay
+// when off as well, so switching an effect in never jumps the signal in time.
+class FxNode : public Node {
+public:
+    enum Type { kOff, kDelay, kPhaser, kFlanger, kRotary, kReverb, kNumTypes };
+    static constexpr int kMaxParams = 20;
+    static constexpr int kSyncBase = 1 + kMaxParams;
+    static constexpr int kBlock = 16;
+
+    FxNode();
+    ~FxNode() override;
+
+    const char* typeName() const override { return "Fx"; }
+    int numInputs() const override { return 1; }
+    PinSpec inputPin(int) const override { return {DataType::Audio, 2, "in"}; }
+    int numOutputs() const override { return 1; }
+    PinSpec outputPin(int) const override { return {DataType::Audio, 2, "out"}; }
+    int latencyFrames() const override { return kBlock; }
+
+    void prepare(double sampleRate, int maxFrames) override;
+    void process(const ProcessArgs& args) override;
+
+    int numParams() const override { return kSyncBase + kMaxParams; }
+    void setParam(int index, float value) override;
+    float getParam(int index) const override;
+    const char* paramName(int index) const override;
+    ParamRange paramRange(int index) const override;
+    bool paramDisplay(int index, float value, char* out, int capacity) const override;
+
+    // The effect behind it: the type-erased face of sst-effects' templates.
+    struct Effect {
+        int type = kOff;   // what it is, so a tagged change is checked against the effect itself
+        virtual ~Effect() = default;
+        virtual void processBlock(float* l, float* r) = 0;
+        virtual void setValue(int i, float v) = 0;
+        virtual float value(int i) const = 0;
+        virtual void setSync(int i, bool on) = 0;
+        virtual bool sync(int i) const = 0;
+        virtual void setTempo(double bpm) = 0;
+        virtual int count() const = 0;
+        virtual const std::string& name(int i) const = 0;
+        virtual ParamRange range(int i) const = 0;
+        virtual bool canSync(int i) const = 0;
+        virtual bool display(int i, float v, char* out, int capacity) const = 0;
+    };
+
+private:
+    void setType(int type);
+    Effect* make(int type) const;
+
+    double mRate = 44100.0;
+    std::atomic<Effect*> mEffect{nullptr};
+    std::atomic<int> mType{kOff};
+    // Odd while the render thread is inside process(): see setType.
+    std::atomic<uint32_t> mRenderSeq{0};
+    ParamQueue<256> mQueue;
+
+    float mInL[kBlock] = {}, mInR[kBlock] = {};
+    alignas(16) float mOutL[kBlock] = {};
+    alignas(16) float mOutR[kBlock] = {};
+    int mPos = 0;
+    std::atomic<double> mTempo{120.0};
+
+    std::string mSyncNames[kMaxParams];
+};
+
+}  // namespace bagosynths
