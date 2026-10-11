@@ -2,6 +2,7 @@ package be.mdw.bagosynths.ui
 
 import be.mdw.bagosynths.model.Digest
 import be.mdw.bagosynths.model.Entry
+import be.mdw.bagosynths.model.EntryVersion
 import be.mdw.bagosynths.model.RackEngine
 import be.mdw.bagosynths.model.RackLiveSet
 import be.mdw.bagosynths.model.RackPart
@@ -96,6 +97,57 @@ class AppLibrary(dir: File, private val author: String) {
 
     fun deleteEntry(id: Digest) {
         store.update(id, author, now(), delete = true)
+    }
+
+    fun rename(id: Digest, name: String) {
+        store.update(id, author, now(), name = name)
+    }
+
+    /** An entry's versions, newest first (I8.3). */
+    fun history(id: Digest): List<Pair<Digest, EntryVersion>> =
+        store.entry(id)?.let { store.history(it.latest) } ?: emptyList()
+
+    /**
+     * Makes an earlier version the latest again -- as a NEW version, so the
+     * history keeps what was undone. A song restored moves the setlists that
+     * held its latest version along with it, as an edit does (I8.13).
+     */
+    fun restore(id: Digest, version: Digest) {
+        val v = EntryVersion.fromJson(store.getJson(version))
+        val before = store.entry(id)?.version?.target?.digest
+        store.update(id, author, now(), target = v.target, name = v.name, delete = v.target == null)
+        val after = v.target?.digest
+        if (v.target?.type == Song.TYPE && before != null && after != null && before != after) rippleSetlists(before, after)
+    }
+
+    /** A setlist holding some version of a song, and whether it is the latest (I8.5). */
+    data class Use(val setlist: Entry, val latest: Boolean)
+
+    /** The setlists that hold any version of song entry [songId]. */
+    fun usedBy(songId: Digest): List<Use> {
+        val versions = history(songId).mapNotNull { it.second.target?.digest }.toSet()
+        val latest = store.entry(songId)?.version?.target?.digest
+        return setlists().mapNotNull { e ->
+            val held = store.getTyped<Setlist>(e.version.target!!.digest).songs.map { it.toRef().digest }
+            if (held.none { it in versions }) null else Use(e, latest in held)
+        }
+    }
+
+    /** Moves [setlistId] from older versions of song [songId] to its latest (I8.5): a choice, never automatic. */
+    fun updateReference(setlistId: Digest, songId: Digest) {
+        val latest = store.entry(songId)?.version?.target?.digest ?: return
+        val older = history(songId).mapNotNull { it.second.target?.digest }.toSet() - latest
+        val e = store.entry(setlistId) ?: return
+        val sl = store.getTyped<Setlist>(e.version.target!!.digest)
+        val moved = sl.copy(songs = sl.songs.map { if (it.toRef().digest in older) RefJ.of(latest, Song.TYPE) else it })
+        if (moved != sl) store.update(setlistId, author, now(), target = Ref(store.putTyped(moved), Setlist.TYPE))
+    }
+
+    /** Versions of [id] that came in by import and diverged from this tablet's (I8.31). */
+    fun divergences(id: Digest): List<Digest> = store.divergences()[id].orEmpty()
+
+    fun resolve(id: Digest, chosen: Digest) {
+        store.resolve(id, chosen, author, now())
     }
 
     fun rackSong(song: Song): RackSong? = RackSong.fromObjects(store, song)

@@ -98,6 +98,20 @@
     <string name="search">Search</string>
     <string name="edit_patch">Patch…</string>
     <string name="done">Done</string>
+    <string name="details">Details</string>
+    <string name="delete_hold">Delete (hold)</string>
+    <string name="name">Name</string>
+    <string name="rename">Rename</string>
+    <string name="entry_id">Entry %1$s</string>
+    <string name="diverged">Changed elsewhere too</string>
+    <string name="use_this">Use this one</string>
+    <string name="keep_mine">Keep this tablet\'s version</string>
+    <string name="used_by">Used by</string>
+    <string name="used_by_none">No setlist uses this song.</string>
+    <string name="latest_version">latest version</string>
+    <string name="update_reference">Update to the latest version</string>
+    <string name="history">History</string>
+    <string name="restore">Restore</string>
     <string name="take_current">Take current</string>
     <string name="clear">Clear</string>
 

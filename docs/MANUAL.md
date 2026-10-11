@@ -120,6 +120,17 @@ Every setlist and song, with its history.
 * **Import…** reads such a file back, on this tablet or another one.
   Importing never overwrites: a song changed on both sides is kept in both
   versions.
+* **Details** (beside a setlist) and the **versions** count (beside a song)
+  open an entry:
+  * rename it, or delete it (hold). Setlists that hold a deleted song keep
+    playing it;
+  * its **history**, newest first. **Restore** makes an earlier version the
+    latest again, as a new version, so nothing is lost; a song's setlists
+    move with it;
+  * for a song, the setlists that **use** it. A setlist holding an older
+    version keeps it until you press **Update to the latest version**;
+  * versions **changed elsewhere too**, after an import: use one of them, or
+    keep this tablet's.
 * **Install instrument (zip)…** adds an SFZ sample library from a zip file.
   It then appears in every Piano patch list.
 
