@@ -1107,6 +1107,9 @@ void AudioEngine::renderBlockIntoRing(int frames) {
             mScratch[i * 2] = l[i];
             mScratch[i * 2 + 1] = r[i];
         }
+        // The click goes in before the master: on the CP-88 alone it reaches
+        // the audience (R12.1), and the room's volume is the one that governs.
+        mClick.render(mScratch.data(), chunk, currentRate());
         mMasterRamp.applyInterleavedStereo(mScratch.data(), chunk, master);
         float peak = 0.0f;
         for (int i = 0; i < chunk * 2; ++i) {

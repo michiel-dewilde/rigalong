@@ -41,6 +41,10 @@ object Environments {
             twoUp = player.sheetTwoUp,
             halfTurn = player.sheetHalfTurn,
             keysTurnPages = player.keysTurnPages,
+            clickPort = MAIN_OUT.takeIf { player.clickAudio },
+            clickContinuous = player.clickContinuous,
+            clickLevel = player.clickLevel.toDouble(),
+            midiClockPort = KEYS.takeIf { player.midiClock },
             doNotDisturb = host.stageDnd(),
             masterDb = host.masterDb().toDouble(),
         )
@@ -65,6 +69,11 @@ object Environments {
         player.sheetHalfTurn = env.halfTurn
         player.keysTurnPages = env.keysTurnPages
         player.saveSheetSettings()
+        player.clickAudio = env.clickPort != null
+        player.clickContinuous = env.clickContinuous
+        player.clickLevel = env.clickLevel.toFloat()
+        player.midiClock = env.midiClockPort != null
+        player.saveClickSettings()
         host.setStageDnd(env.doNotDisturb)
         env.masterDb?.let { host.setMasterDb(it.toFloat()) }
         // After the reroute has settled -- it runs on its own thread and takes

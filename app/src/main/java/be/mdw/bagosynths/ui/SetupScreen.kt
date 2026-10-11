@@ -137,6 +137,24 @@ fun SetupScreen(player: SongPlayer, host: EngineHost, lib: AppLibrary) {
             var dnd by remember { mutableStateOf(host.stageDnd()) }
             SetupToggle(stringResource(R.string.stage_dnd), dnd, accent, dim) { host.setStageDnd(it); dnd = host.stageDnd() }
             Spacer(Modifier.height(6.dp))
+            Text(stringResource(R.string.click), fontWeight = FontWeight.SemiBold)
+            SetupToggle(stringResource(R.string.click_continuous), player.clickContinuous, accent, dim) {
+                player.clickContinuous = it; player.saveClickSettings()
+            }
+            SetupToggle(stringResource(R.string.click_audio), player.clickAudio, accent, dim) {
+                player.clickAudio = it; player.saveClickSettings()
+            }
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(stringResource(R.string.click_level), color = dim, modifier = Modifier.width(140.dp))
+                androidx.compose.material3.Slider(value = player.clickLevel, valueRange = 0.05f..1f,
+                    onValueChange = { player.clickLevel = it }, onValueChangeFinished = player::saveClickSettings,
+                    modifier = Modifier.weight(1f))
+            }
+            SetupToggle(stringResource(R.string.midi_clock), player.midiClock, accent, dim) {
+                player.midiClock = it; player.saveClickSettings()
+            }
+            Text(stringResource(R.string.click_note), color = dim, fontSize = 12.sp)
+            Spacer(Modifier.height(6.dp))
             Text(stringResource(R.string.lead_sheets), fontWeight = FontWeight.SemiBold)
             SetupToggle(stringResource(R.string.two_up), player.sheetTwoUp, accent, dim) {
                 player.sheetTwoUp = it; player.saveSheetSettings()

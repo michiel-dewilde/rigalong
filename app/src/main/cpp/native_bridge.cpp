@@ -12,6 +12,7 @@
 #include "RealtimePriority.h"
 #include "usb/UsbControl.h"
 #include "usb/MidiMonitor.h"
+#include "usb/MidiClock.h"
 
 #include <linux/usbdevice_fs.h>
 #include <sys/ioctl.h>
@@ -24,6 +25,20 @@ namespace {
 AudioEngine& engine() {
     static AudioEngine instance;
     return instance;
+}
+
+MidiClock& midiClock() {
+    static MidiClock instance(engine().midi().usbOut());
+    return instance;
+}
+
+// How long after now a click rendered now is heard: on the direct path the
+// queued packets and the ring, which latencyMs already sums; through Android,
+// the stream's latency plus the ring's reserve ahead of it.
+int64_t clickDelayNs() {
+    const AudioEngine::Stats s = engine().stats();
+    const float ms = s.usbActive ? s.latencyMs : s.latencyMs + s.ringFillMs;
+    return static_cast<int64_t>(std::max(0.0f, ms) * 1e6f);
 }
 }  // namespace
 
@@ -1030,6 +1045,49 @@ Java_be_mdw_bagosynths_NativeBridge_nativeStartUsbMidi(JNIEnv* env, jobject, jin
 JNIEXPORT jboolean JNICALL
 Java_be_mdw_bagosynths_NativeBridge_nativeUsbMidiOutReady(JNIEnv*, jobject) {
     return engine().midi().usbOut().running() ? JNI_TRUE : JNI_FALSE;
+}
+
+// The click (I12.2). `beats` <= 0 runs until stopped; `audio` mixes it into
+// the main out, `midi` sends a MIDI Start aligned with it. Returns the delay
+// until the first click is heard, in ns, so the visual beat can fall with it.
+JNIEXPORT jlong JNICALL
+Java_be_mdw_bagosynths_NativeBridge_nativeClickStart(JNIEnv*, jobject, jdouble bpm, jint beatsPerBar,
+                                                      jint beats, jfloat gain, jboolean audio,
+                                                      jboolean midi) {
+    const int64_t delay = clickDelayNs();
+    bagosynths::Click& c = engine().click();
+    c.setGain(audio ? gain : 0.0f);
+    c.start(bpm, beatsPerBar, beats);
+    if (midi) midiClock().start(delay);
+    return static_cast<jlong>(delay);
+}
+
+JNIEXPORT void JNICALL
+Java_be_mdw_bagosynths_NativeBridge_nativeClickStop(JNIEnv*, jobject, jboolean midi) {
+    engine().click().stop();
+    if (midi) midiClock().stop();
+}
+
+JNIEXPORT jboolean JNICALL
+Java_be_mdw_bagosynths_NativeBridge_nativeClickRunning(JNIEnv*, jobject) {
+    return engine().click().running() ? JNI_TRUE : JNI_FALSE;
+}
+
+// A tempo change while the click (and the MIDI clock) run.
+JNIEXPORT void JNICALL
+Java_be_mdw_bagosynths_NativeBridge_nativeClickTempo(JNIEnv*, jobject, jdouble bpm) {
+    engine().click().setBpm(bpm);
+}
+
+// MIDI clock out: 24 ticks a beat at `bpm`; 0 stops it.
+JNIEXPORT void JNICALL
+Java_be_mdw_bagosynths_NativeBridge_nativeMidiClock(JNIEnv*, jobject, jdouble bpm) {
+    midiClock().setTempo(bpm);
+}
+
+JNIEXPORT jlong JNICALL
+Java_be_mdw_bagosynths_NativeBridge_nativeMidiClockTicks(JNIEnv*, jobject) {
+    return static_cast<jlong>(midiClock().ticksSent());
 }
 
 // Sends MIDI bytes (complete messages, SysEx included) to the device's MIDI

@@ -241,6 +241,7 @@ add_library(bagosynths SHARED
         usb/UsbAudioOut.cpp
         usb/UsbMidiIn.cpp
         usb/UsbMidiOut.cpp
+        usb/MidiClock.cpp
         usb/UsbControl.cpp
         Synth.cpp
         graph/Nodes.cpp

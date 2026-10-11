@@ -217,6 +217,15 @@ object NativeBridge {
     /** MIDI bytes to the device's MIDI OUT endpoint (direct USB). Bytes accepted, or -errno. */
     external fun nativeUsbMidiSend(data: ByteArray): Int
 
+    /** The click (I12.2): beats <= 0 runs until stopped. Returns ns until the first click is heard. */
+    external fun nativeClickStart(bpm: Double, beatsPerBar: Int, beats: Int, gain: Float, audio: Boolean, midi: Boolean): Long
+    external fun nativeClickStop(midi: Boolean)
+    external fun nativeClickRunning(): Boolean
+    external fun nativeClickTempo(bpm: Double)
+    /** MIDI clock out at [bpm], 24 ticks a beat, to the direct-USB MIDI out; 0 stops it. */
+    external fun nativeMidiClock(bpm: Double)
+    external fun nativeMidiClockTicks(): Long
+
     /**
      * The rack (AudioEngine.h): engine [i]'s MIDI and audio wires, switched and
      * ramped without a recompile. Order: sfizz, hammond, surge, dexed, plaits, fluid.

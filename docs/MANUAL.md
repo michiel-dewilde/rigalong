@@ -44,6 +44,10 @@ What you play from.
   slow / fast) and percussion are here.
 * **Tempo**: the song's tempo with a blinking beat. TAP sets a tempo by
   tapping, four times or more; "save" keeps it in the song.
+* **Click**: COUNT plays a count-in of the song's count-in bars (one if it
+  names none); with a continuous click (Setup) the button is CLICK and runs
+  until STOP. While it runs, the beat shows its number in the bar, in step
+  with what you hear. Another song stops it.
 * **Lead sheet**: when the song has one, it takes the left part of the screen
   (the top in portrait), one or two pages at a time.
 
@@ -74,7 +78,8 @@ song being edited:
     heard at once and kept in the song.
   * "Take current" keeps what the engine has now; "Clear" goes back to the
     plain patch.
-* **Tempo**, if the song has one, and a **Lead sheet…** (a PDF).
+* **Tempo**, if the song has one, with its beats per bar and count-in bars,
+  and a **Lead sheet…** (a PDF).
 * **Live sets**: for each live set and each engine:
   * whether it **plays**;
   * a **key range**, from low to high, which makes a split;
@@ -119,7 +124,7 @@ Every setlist and song, with its history.
 
 * **Environment**: your rigs, such as "Stage" and "Home". Each one remembers
   the devices and their modes, the CP-88 settings, the footswitches, the
-  lead-sheet options, Do Not Disturb and the master volume.
+  lead-sheet options, the click, Do Not Disturb and the master volume.
   * Tap one to switch to it.
   * "Suggest" marks the ones whose devices are all plugged in.
 * **Audio out** and **MIDI in and out**: the device and how it is used.
@@ -139,6 +144,14 @@ Every setlist and song, with its history.
 * **Stage**: Do Not Disturb while the app is in front. Notifications and
   calls are silenced; alarms and media are not. Android asks you once to
   allow it.
+* **Click**:
+  * a count-in only, or a continuous click;
+  * whether it is heard in the main out, and how loud. With the CP88/CP73 as
+    the only output, the audience hears it too; otherwise the beat is on the
+    screen only;
+  * **MIDI clock** out to the keyboard: 24 ticks a beat at the song's tempo,
+    with a Start at the click's first beat, for gear that follows MIDI clock.
+    Direct USB modes.
 * **Lead sheets**:
   * two pages side by side, in landscape;
   * whether a turn moves one page or two;

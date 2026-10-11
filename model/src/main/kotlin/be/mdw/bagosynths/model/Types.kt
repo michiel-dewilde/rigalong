@@ -250,8 +250,14 @@ data class Environment(
     val pageTurner: Map<String, String> = emptyMap(),
     val twoUp: Boolean = false,
     val halfTurn: Boolean = true,
+    /** The port the audio click goes to; null = the visual beat only (S12.4, I12.2). */
     val clickPort: String? = null,
+    /** Count-in only, or continuous (S12.2). */
     val clickContinuous: Boolean = false,
+    /** The click's level, 0-1. */
+    val clickLevel: Double = 0.5,
+    /** The MIDI port that MIDI clock goes out to, or null (I12.2). */
+    val midiClockPort: String? = null,
     /** Share of the stage screen given to the lead sheet, 0-1. */
     val sheetShare: Double = 0.6,
     /** The page-turner keys turn lead-sheet pages (else live sets). */

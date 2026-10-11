@@ -37,7 +37,8 @@ OUT="${TMPDIR:-/tmp}/bagosynths-engine-tests"
     "$HERE/test_usbmidi.cpp" \
     "$HERE/test_gain.cpp" \
     "$HERE/test_wire.cpp" \
-    "$HERE/test_midizone.cpp"
+    "$HERE/test_midizone.cpp" \
+    "$HERE/test_click.cpp"
 
 echo "engine tests ($("$CXX" --dumpversion 2>/dev/null || echo "$CXX"))"
 exec "$OUT" "$@"

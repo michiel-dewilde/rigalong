@@ -131,6 +131,10 @@ class SongPlayer(private val lib: AppLibrary, private val host: EngineHost, priv
 
     fun selectSong(index: Int, liveSet: Int = 0) {
         val s = songs.getOrNull(index) ?: return
+        // The same song again (a reload after saving): a tapped tempo holds for
+        // the session (I12.3) and a running click goes on. Another song stops it.
+        val sameSong = index == songIndex && bpmTapped
+        if (index != songIndex && clickRunning) stopClick()
         songIndex = index
         song = s
         rack = lib.rackSong(s)
@@ -145,10 +149,13 @@ class SongPlayer(private val lib: AppLibrary, private val host: EngineHost, priv
         if (rack?.slots?.containsKey(RackEngine.HAMMOND) == true) refreshOrgan()
         sheetPage = 0
         sheetPages = 0
-        bpm = s.tempo?.bpm
-        bpmTapped = false
-        beatOrigin = System.nanoTime()
-        taps.clear()
+        if (!sameSong) {
+            if (clickRunning) retempo(s.tempo?.bpm) else bpm = s.tempo?.bpm
+            bpmTapped = false
+            if (!clickRunning) beatOrigin = System.nanoTime()
+            taps.clear()
+        }
+        applyMidiClock()
         sheetFile = s.leadSheet?.toRef()?.digest?.let { java.io.File(lib.store.root, "blobs/sha256/${it.hex}") }
             ?.takeIf { it.exists() }
         writeSongPage(liveSets)
@@ -273,10 +280,74 @@ class SongPlayer(private val lib: AppLibrary, private val host: EngineHost, priv
         while (taps.size > 6) taps.removeFirst()
         if (taps.size >= 4) {
             val span = (taps.last() - taps.first()) / (taps.size - 1).toDouble()
-            bpm = Math.round(60e9 / span * 10) / 10.0
+            retempo(Math.round(60e9 / span * 10) / 10.0)
             bpmTapped = true
+            applyMidiClock()
         }
-        beatOrigin = now
+        // The visual beat falls on the tap, unless the click is counting: then
+        // it stays with what is heard.
+        if (!clickRunning) beatOrigin = now
+    }
+
+    /** A new tempo; while the click runs, the visual beat bends with it instead of jumping. */
+    private fun retempo(newBpm: Double?) {
+        val old = bpm
+        if (clickRunning && old != null && newBpm != null) {
+            val now = System.nanoTime()
+            val beats = (now - beatOrigin) / (60e9 / old)
+            beatOrigin = now - (beats * 60e9 / newBpm).toLong()
+            NativeBridge.nativeClickTempo(newBpm)
+        }
+        bpm = newBpm
+    }
+
+    // ------------------------------------------------------------------ click
+
+    /** Count-in only, or continuous (S12.2): an environment setting. */
+    var clickContinuous by mutableStateOf(prefs.getBoolean("click.continuous", false))
+    /** The click is heard in the main out (R12.1: on the CP-88 alone, by the audience too); else visual only. */
+    var clickAudio by mutableStateOf(prefs.getBoolean("click.audio", true))
+    var clickLevel by mutableStateOf(prefs.getFloat("click.level", 0.5f))
+    /** MIDI clock out to the keyboard (I12.2), for its tempo-synced effects. */
+    var midiClock by mutableStateOf(prefs.getBoolean("click.midiClock", false))
+    var clickRunning by mutableStateOf(false); private set
+
+    fun saveClickSettings() {
+        prefs.edit().putBoolean("click.continuous", clickContinuous).putBoolean("click.audio", clickAudio)
+            .putFloat("click.level", clickLevel).putBoolean("click.midiClock", midiClock).apply()
+        applyMidiClock()
+    }
+
+    fun toggleClick() = if (clickRunning) stopClick() else startClick()
+
+    /** A count-in of the song's bars (one if it names none), or the click until stopped. */
+    fun startClick() {
+        val b = bpm ?: return
+        val t = song?.tempo
+        val bar = (t?.beatsPerBar ?: 4).coerceAtLeast(1)
+        val beats = if (clickContinuous) 0 else bar * (t?.countInBars ?: 1).coerceAtLeast(1)
+        val delay = NativeBridge.nativeClickStart(b, bar, beats, clickLevel, clickAudio, midiClock)
+        beatOrigin = System.nanoTime() + delay
+        clickRunning = true
+        Log.i(TAG, "click: ${if (beats > 0) "$beats beats" else "continuous"} at $b BPM, heard in ${delay / 1_000_000} ms")
+    }
+
+    fun stopClick() {
+        NativeBridge.nativeClickStop(midiClock)
+        clickRunning = false
+        Log.i(TAG, "click stopped; MIDI clock ${NativeBridge.nativeMidiClockTicks()} ticks sent")
+    }
+
+    /** The beat being heard, 1-based within the bar, while the click runs; 0 otherwise. */
+    fun clickBeat(now: Long): Int {
+        val b = bpm ?: return 0
+        if (!clickRunning || now < beatOrigin) return 0
+        val bar = (song?.tempo?.beatsPerBar ?: 4).coerceAtLeast(1)
+        return ((now - beatOrigin) / (60e9 / b)).toLong().mod(bar) + 1
+    }
+
+    private fun applyMidiClock() {
+        runCatching { NativeBridge.nativeMidiClock(if (midiClock) bpm ?: 0.0 else 0.0) }
     }
 
     /**
@@ -486,6 +557,13 @@ class SongPlayer(private val lib: AppLibrary, private val host: EngineHost, priv
 
     fun pollSelections() {
         watchMidiOut()
+        // A count-in ends on its own; the visual beat stops with the last click heard.
+        if (clickRunning && !NativeBridge.nativeClickRunning()) {
+            val b = bpm
+            val end = beatOrigin + if (b != null) ((song?.tempo?.let { (it.beatsPerBar.coerceAtLeast(1)) *
+                (it.countInBars ?: 1).coerceAtLeast(1) } ?: 4) * 60e9 / b).toLong() else 0L
+            if (clickContinuous || System.nanoTime() >= end) clickRunning = false
+        }
         val pcs = runCatching { NativeBridge.nativeDrainPrograms() }.getOrNull() ?: return
         for (v in pcs) {
             if (v ushr 31 == 1) {

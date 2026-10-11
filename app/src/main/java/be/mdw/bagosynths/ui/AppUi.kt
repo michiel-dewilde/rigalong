@@ -203,6 +203,11 @@ private fun StageScreen(player: SongPlayer, host: EngineHost) {
 @Composable
 private fun StageControls(player: SongPlayer, host: EngineHost, modifier: Modifier) {
     Column(modifier) {
+        // Beside a lead sheet the stage column is narrow: the tempo then gets a
+        // row of its own, so the song's name is not squeezed to a few letters.
+        androidx.compose.foundation.layout.BoxWithConstraints(Modifier.fillMaxWidth()) {
+        val narrow = maxWidth < 760.dp
+        Column {
         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
             BigButton("◀", enabled = player.songIndex > 0, width = 88) { player.previousSong() }
             Column(Modifier.weight(1f).padding(horizontal = 12.dp)) {
@@ -214,9 +219,17 @@ private fun StageControls(player: SongPlayer, host: EngineHost, modifier: Modifi
                 Text((if (next != null) stringResource(R.string.next_song, next) else stringResource(R.string.last_song)) + sel,
                     color = Dim, fontSize = 15.sp, maxLines = 1)
             }
-            TempoBox(player)
-            Spacer(Modifier.width(10.dp))
+            if (!narrow) {
+                TempoBox(player)
+                Spacer(Modifier.width(10.dp))
+            }
             BigButton("▶", enabled = player.songIndex + 1 < player.songNames.size, width = 88) { player.nextSong() }
+        }
+        if (narrow) {
+            Spacer(Modifier.height(8.dp))
+            Row(horizontalArrangement = Arrangement.End, modifier = Modifier.fillMaxWidth()) { TempoBox(player) }
+        }
+        }
         }
         Spacer(Modifier.height(12.dp))
         FlowRow(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalArrangement = Arrangement.spacedBy(10.dp),
@@ -330,12 +343,13 @@ private fun OrganPanel(player: SongPlayer) {
 }
 
 @Composable
-private fun BigButton(label: String, enabled: Boolean, width: Int, onClick: () -> Unit) {
+private fun BigButton(label: String, enabled: Boolean, width: Int, selected: Boolean = false,
+                      fontSize: Int = 30, onClick: () -> Unit) {
     Box(Modifier.size(width = width.dp, height = 72.dp)
         .background(if (enabled) Panel else Bg, RoundedCornerShape(12.dp))
-        .border(2.dp, Color(0xFF2A2E36), RoundedCornerShape(12.dp))
+        .border(2.dp, if (selected) Accent else Color(0xFF2A2E36), RoundedCornerShape(12.dp))
         .clickable(enabled = enabled, onClick = onClick), contentAlignment = Alignment.Center) {
-        Text(label, fontSize = 30.sp, color = if (enabled) Color.White else Color(0xFF3A3F48))
+        Text(label, fontSize = fontSize.sp, color = if (enabled) Color.White else Color(0xFF3A3F48))
     }
 }
 
@@ -467,6 +481,12 @@ private fun SongEditor(song: RackSong, name: String, host: EngineHost, player: S
             song.tempo?.let { t ->
                 NumberField(stringResource(R.string.bpm_short), t.bpm.toInt(), 20..300) {
                     onChange(song.copy(tempo = t.copy(bpm = it.toDouble())))
+                }
+                NumberField(stringResource(R.string.beats_per_bar), t.beatsPerBar, 1..16) {
+                    onChange(song.copy(tempo = t.copy(beatsPerBar = it)))
+                }
+                NumberField(stringResource(R.string.count_in_bars), t.countInBars ?: 1, 1..8) {
+                    onChange(song.copy(tempo = t.copy(countInBars = it)))
                 }
             }
         }
@@ -606,7 +626,11 @@ private fun LiveSetCard(song: RackSong, i: Int, ls: RackLiveSet, player: SongPla
     }
 }
 
-/** The song's tempo, a visual beat (I12.2), tap tempo and saving a tapped one (S12.3, I12.3). */
+/**
+ * The song's tempo, a visual beat (I12.2), tap tempo and saving a tapped one
+ * (S12.3, I12.3), and the click: a count-in, or on and off (S12.2). While the
+ * click runs the beat shows its number in the bar, in step with what is heard.
+ */
 @Composable
 private fun TempoBox(player: SongPlayer) {
     var now by remember { mutableStateOf(System.nanoTime()) }
@@ -615,8 +639,17 @@ private fun TempoBox(player: SongPlayer) {
     val beatNs = bpm?.let { (60e9 / it).toLong() }
     val phase = if (beatNs != null && beatNs > 0) ((now - player.beatOrigin).mod(beatNs)).toDouble() / beatNs else 1.0
     val lit = phase < 0.15
+    val count = player.clickBeat(now)
     Row(verticalAlignment = Alignment.CenterVertically) {
-        Box(Modifier.size(22.dp).background(if (lit) Accent else Panel, RoundedCornerShape(11.dp)))
+        if (count > 0) {
+            Box(Modifier.size(44.dp).background(if (lit) Accent else Panel, RoundedCornerShape(22.dp)),
+                contentAlignment = Alignment.Center) {
+                Text(count.toString(), fontSize = 24.sp, fontWeight = FontWeight.Bold,
+                    color = if (lit) Color.Black else Color.White)
+            }
+        } else {
+            Box(Modifier.size(22.dp).background(if (lit) Accent else Panel, RoundedCornerShape(11.dp)))
+        }
         Spacer(Modifier.width(8.dp))
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
             Text(bpm?.let { stringResource(R.string.bpm, it) } ?: stringResource(R.string.no_tempo), fontSize = 18.sp)
@@ -624,6 +657,13 @@ private fun TempoBox(player: SongPlayer) {
         }
         Spacer(Modifier.width(8.dp))
         BigButton(stringResource(R.string.tap), enabled = true, width = 88) { player.tap() }
+        Spacer(Modifier.width(8.dp))
+        BigButton(stringResource(when {
+            player.clickRunning -> R.string.click_stop
+            player.clickContinuous -> R.string.click_on
+            else -> R.string.count_in
+        }), enabled = bpm != null, width = 104, selected = player.clickRunning,
+            fontSize = 22) { player.toggleClick() }
     }
 }
 

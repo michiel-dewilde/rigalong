@@ -11,6 +11,7 @@
 #include <thread>
 
 #include <bagosynths/Dither.h>
+#include <bagosynths/Click.h>
 #include <bagosynths/Gain.h>
 #include "MidiInput.h"
 #include "RealtimePriority.h"
@@ -88,6 +89,8 @@ public:
     void prepareGraph();
 
     MidiInput& midi() { return mMidi; }
+    // The metronome (I12.2), mixed into the main out before the master volume.
+    bagosynths::Click& click() { return mClick; }
 
     // --- graph -------------------------------------------------------------
     // The signal path is a node graph (see GRAPH.md). M3 builds a fixed default
@@ -509,6 +512,7 @@ private:
 
     // The master gain, ramped. Render thread only. See SmoothedGain.
     bagosynths::SmoothedGain mMasterRamp;
+    bagosynths::Click mClick;
 
     std::atomic<int32_t> mPreferredRate{0};
     std::atomic<int32_t> mPreferredFormat{0};

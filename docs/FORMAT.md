@@ -106,7 +106,7 @@ schema version without changing what existing objects mean.
 | `bagosynths.song/1` | `instances` (name -> {patch ref, island preference by port}), `graph` (nodes, typed pins, wires), `values` (song value per parameter), `recall` (mode per parameter), `liveSets` (ordered refs), `cp88` (optional), `tempo` (optional), `leadSheet` (optional ref), `stageLayout`, `switching` (incoming selection -> live set) |
 | `bagosynths.liveset/1` | `name`, `enabled` (node -> bool), `wires` (wire -> on/gain), `overrides` (parameter -> value), `recall` (per-parameter override of the song's mode), `transitions`, `onSelect` (MIDI to send), `cp88` (leave / select page:set / own ref), `visibleControls`, `leadSheetPage` |
 | `bagosynths.setlist/1` | `songs` (ordered refs) |
-| `bagosynths.environment/1` | `ports` (name, kind, width), `bindings` (port -> device match and settings), `externalSynths`, `switchingSources`, `pageTurner`, `click`, `stageScreen`, `retimers` (per device pair) |
+| `bagosynths.environment/1` | `ports` (name, kind, width), `bindings` (port -> device match and settings), `externalSynths`, `switchingSources`, `pageTurner`, `clickPort` (null: the visual beat only), `clickContinuous`, `clickLevel`, `midiClockPort`, `stageScreen`, `retimers` (per device pair) |
 | `bagosynths.usbprofile/1` | `match` (vendor, product, optional bcdDevice), `fbx` (the members of `struct fbx_profile`), `measuredOn`, `notes` |
 | `bagosynths.pack/1` | `files` (relative path -> ref), `entry` (the instrument's main file), `licence`, `source` (where to fetch it again) |
 | `bagosynths.catalog/1` | `packs` (refs, with name, size and licence summary) |

@@ -2625,7 +2625,8 @@ class MainActivity : androidx.activity.ComponentActivity() {
             val bad = hot || lines.any { it.contains("WRONG") || it.contains("failed") || it.contains("STALLED") }
             return (if (bad) "! " else "") + heat + "   " + pick
         }
-        override fun statusLines() = statusView.text.toString().lines() + listOf("", thermal().first)
+        override fun statusLines() = statusView.text.toString().lines() + listOf("", thermal().first,
+            "midi clock  ${NativeBridge.nativeMidiClockTicks()} ticks sent")
         override fun routing(): be.mdw.bagosynths.ui.Routing {
             val (a, m) = effectiveModes(resolveAudio(), resolveMidi())
             return be.mdw.bagosynths.ui.Routing(
