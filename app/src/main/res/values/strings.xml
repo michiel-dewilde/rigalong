@@ -125,6 +125,10 @@
     <string name="cp88_follows">"The CP-88's live set buttons select the song's live sets. Its reserved page then gets a silent sound wherever a live set does not give it one, so it never mixes in its own instruments."</string>
     <string name="rewrite_cp88_page">"Rewrite the CP-88's reserved page"</string>
     <string name="status">Status</string>
+    <string name="measure">Measure latency</string>
+    <string name="midi_monitor">MIDI monitor</string>
+    <string name="midi_monitor_note">Newest first. ← from the device, → to it (direct USB modes).</string>
+    <string name="measure_note">"A click goes out through the device and is heard on the tablet's microphone: the acoustic round trip, on any stage. The result shows under \"probe\"."</string>
     <string name="mode">Mode</string>
     <string name="stage">Stage</string>
     <string name="stage_dnd">Do Not Disturb while the app is in front (alarms and media still sound)</string>

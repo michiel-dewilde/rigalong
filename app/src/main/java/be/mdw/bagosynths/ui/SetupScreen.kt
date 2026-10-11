@@ -55,6 +55,13 @@ fun SetupScreen(player: SongPlayer, host: EngineHost) {
     var tick by remember { mutableIntStateOf(0) }
     var routing by remember { mutableStateOf(host.routing()) }
     var status by remember { mutableStateOf(host.statusLines()) }
+    var midi by remember { mutableStateOf(emptyList<String>()) }
+    LaunchedEffect(Unit) {
+        while (true) {
+            midi = runCatching { decodeMidi(be.mdw.bagosynths.NativeBridge.nativeMidiRecent()) }.getOrDefault(emptyList())
+            delay(300)
+        }
+    }
     LaunchedEffect(Unit) {
         while (true) {
             routing = host.routing()
@@ -134,9 +141,19 @@ fun SetupScreen(player: SongPlayer, host: EngineHost) {
     }, second = { m ->
         Column(m.background(panel, RoundedCornerShape(10.dp)).padding(12.dp)
             .verticalScroll(rememberScrollState())) {
-            Text(stringResource(R.string.status), fontWeight = FontWeight.SemiBold)
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(stringResource(R.string.status), fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
+                OutlinedButton(onClick = host::measureLatency) { Text(stringResource(R.string.measure)) }
+            }
+            Text(stringResource(R.string.measure_note), color = dim, fontSize = 12.sp)
             Spacer(Modifier.height(6.dp))
+            Spacer(Modifier.height(6.dp))
+            Text(stringResource(R.string.midi_monitor), fontWeight = FontWeight.SemiBold)
+            Text(stringResource(R.string.midi_monitor_note), color = dim, fontSize = 12.sp)
+            for (line in midi.takeLast(8).reversed()) Text(line, fontFamily = FontFamily.Monospace, fontSize = 13.sp)
+            Spacer(Modifier.height(10.dp))
             for (line in status) Text(line, fontFamily = FontFamily.Monospace, fontSize = 13.sp)
+
         }
     })
     }
@@ -145,6 +162,32 @@ fun SetupScreen(player: SongPlayer, host: EngineHost) {
     }
     // Read so that the +/- buttons above, which change plain preferences, recompose.
     if (tick < 0) Text("")
+}
+
+private val NOTE = listOf("C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B")
+
+/** The monitor's entries (usb/MidiMonitor.h) as lines, oldest first: "← ch 1  Note on  C4  100". */
+private fun decodeMidi(raw: IntArray): List<String> {
+    if (raw.isEmpty()) return emptyList()
+    return raw.dropLast(1).map { v ->
+        val dir = if (v ushr 31 == 1) "→" else "←"
+        val b0 = (v shr 16) and 0xFF
+        val b1 = (v shr 8) and 0xFF
+        val b2 = v and 0xFF
+        val ch = (b0 and 0x0F) + 1
+        fun note(n: Int) = NOTE[n % 12] + (n / 12 - 1)
+        val what = when (b0 and 0xF0) {
+            0x90 -> if (b2 > 0) "ch $ch  Note on   ${note(b1)}  $b2" else "ch $ch  Note off  ${note(b1)}"
+            0x80 -> "ch $ch  Note off  ${note(b1)}"
+            0xA0 -> "ch $ch  Aftertouch ${note(b1)}  $b2"
+            0xB0 -> "ch $ch  CC $b1 = $b2"
+            0xC0 -> "ch $ch  Program ${b1 + 1}"
+            0xD0 -> "ch $ch  Pressure $b1"
+            0xE0 -> "ch $ch  Bend ${((b2 shl 7) or b1) - 8192}"
+            else -> if (b0 == 0xF0) "SysEx" else if (b0 == 0xF7) "SysEx end" else "%02X %02X %02X".format(b0, b1, b2)
+        }
+        "$dir $what"
+    }
 }
 
 @Composable

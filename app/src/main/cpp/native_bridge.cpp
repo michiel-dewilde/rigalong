@@ -11,6 +11,7 @@
 #include "AudioEngine.h"
 #include "RealtimePriority.h"
 #include "usb/UsbControl.h"
+#include "usb/MidiMonitor.h"
 
 #include <linux/usbdevice_fs.h>
 #include <sys/ioctl.h>
@@ -1059,6 +1060,19 @@ Java_be_mdw_bagosynths_NativeBridge_nativeGetZoneParam(JNIEnv*, jobject, jint i,
 JNIEXPORT void JNICALL
 Java_be_mdw_bagosynths_NativeBridge_nativeUsbTestStall(JNIEnv*, jobject, jint ms) {
     engine().usbOut().testStall(ms);
+}
+
+// The MIDI monitor (usb/MidiMonitor.h): the newest messages in and out, oldest
+// first, with the running total as the last element.
+JNIEXPORT jintArray JNICALL
+Java_be_mdw_bagosynths_NativeBridge_nativeMidiRecent(JNIEnv* env, jobject) {
+    uint32_t buf[midimon::kSize + 1];
+    uint32_t total = 0;
+    const int n = midimon::recent(buf, midimon::kSize, &total);
+    buf[n] = total;
+    jintArray out = env->NewIntArray(n + 1);
+    env->SetIntArrayRegion(out, 0, n + 1, reinterpret_cast<const jint*>(buf));
+    return out;
 }
 
 // Program Changes received on the direct-USB MIDI input, each packed as

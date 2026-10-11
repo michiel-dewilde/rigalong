@@ -227,6 +227,9 @@ object NativeBridge {
     /** TEST: stall the USB reap loop once for [ms], to reproduce a starved IN queue. */
     external fun nativeUsbTestStall(ms: Int)
 
+    /** The MIDI monitor: newest messages in and out, oldest first, then the running total. */
+    external fun nativeMidiRecent(): IntArray
+
     /** Program Changes received over direct USB: (channel << 24 | msb << 16 | lsb << 8 | program). */
     external fun nativeDrainPrograms(): IntArray
 

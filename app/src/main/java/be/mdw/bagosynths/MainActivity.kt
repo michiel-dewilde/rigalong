@@ -2604,6 +2604,11 @@ class MainActivity : androidx.activity.ComponentActivity() {
                 midiDevice = shortName(chosenMidiName), midiMode = m.name,
                 usbBufferMs = usbBufferMs, usbBufferChoices = UsbBuffers.choicesMs.toList())
         }
+        override fun measureLatency() {
+            // As the MEASURE broadcast: the input first, armed once it has settled.
+            enableInputIfPermitted()
+            handler.postDelayed({ NativeBridge.nativeStartLatencyProbe() }, 1200)
+        }
         override fun masterDb() = masterDb
         override fun setMasterDb(db: Float) = this@MainActivity.setMasterDb(db)
         override fun stageDnd() = prefs().getBoolean("stage.dnd", false) &&

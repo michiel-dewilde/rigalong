@@ -1,4 +1,5 @@
 #include "UsbMidiIn.h"
+#include "MidiMonitor.h"
 
 #include "UsbAudioOut.h"
 
@@ -137,6 +138,7 @@ void UsbMidiIn::push(const bagosynths::usbmidi::Message& m) {
         return;
     }
     for (int i = 0; i < m.length && i < 3; ++i) sysexByte(m.bytes[i]);
+    if (m.length >= 1 && m.bytes[0] >= 0x80) midimon::note(false, m.length, m.bytes[0], m.bytes[1], m.bytes[2]);
     if (m.length >= 2) {
         const uint8_t type = m.bytes[0] & 0xF0u, ch = m.bytes[0] & 0x0Fu;
         if (type == 0xB0 && m.length >= 3 && m.bytes[1] == 0) mBankMsb[ch] = m.bytes[2];

@@ -1,4 +1,5 @@
 #include "UsbMidiOut.h"
+#include "MidiMonitor.h"
 
 #include <android/log.h>
 #include <cerrno>
@@ -85,6 +86,7 @@ int UsbMidiOut::send(const uint8_t* bytes, int count) {
     while (i < count) {
         const uint8_t s = bytes[i];
         if (s == 0xF0) {
+            midimon::note(true, 1, 0xF0, 0, 0);
             // SysEx: CIN 4 for each run of three bytes that does not end it,
             // CIN 5/6/7 for the run that holds the F7.
             int j = i;
@@ -115,6 +117,7 @@ int UsbMidiOut::send(const uint8_t* bytes, int count) {
         if (s < 0xF0) cin = static_cast<uint8_t>(s >> 4);
         else cin = static_cast<uint8_t>(n == 1 ? 0xF : n == 2 ? 0x2 : 0x3);
         packet(cin, s, n > 1 ? bytes[i + 1] : 0, n > 2 ? bytes[i + 2] : 0);
+        midimon::note(true, n, s, n > 1 ? bytes[i + 1] : 0, n > 2 ? bytes[i + 2] : 0);
         i += n;
     }
 

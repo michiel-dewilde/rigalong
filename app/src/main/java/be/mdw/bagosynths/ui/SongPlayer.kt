@@ -36,6 +36,8 @@ interface EngineHost {
     fun setAudioMode(mode: String)
     fun setMidiMode(mode: String)
     fun setUsbBufferMs(ms: Int)
+    /** MEASURE (S20.3): a click through the device, heard on the tablet's mic; the result is in [statusLines]. */
+    fun measureLatency()
     /** The master volume in dB, a global control: never recalled by a live set (I6.8). */
     fun masterDb(): Float
     fun setMasterDb(db: Float)
