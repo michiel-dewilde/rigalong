@@ -100,6 +100,11 @@ object Cp88X9 {
         val x = T.FIXED
         for (i in x.indices step 3) blocks[x[i]][x[i + 1]] = x[i + 2].toByte()
         System.arraycopy(blob, 4, blocks[T.NAME_BLOCK], T.NAME_OFFSET, 15)
+        return storedOf(blocks)
+    }
+
+    /** The stored form (Cp88) of 17 data blocks in table order: header, blocks, footer, at the current buffer. */
+    internal fun storedOf(blocks: Array<ByteArray>): ByteArray {
         val out = java.io.ByteArrayOutputStream()
         out.write(Cp88.build(intArrayOf(0x0E, 0x7F, 0x00), ByteArray(0)))
         for (k in blocks.indices) {
@@ -128,7 +133,7 @@ object Cp88X9 {
     }
 
     /** The 17 data blocks of a stored sound, in table order. */
-    private fun blocksOf(sound: ByteArray): Array<ByteArray> {
+    internal fun blocksOf(sound: ByteArray): Array<ByteArray> {
         val byAddress = HashMap<Int, ByteArray>()
         for (m in Cp88.split(sound)) {
             val d = Cp88.parse(m) ?: throw IllegalArgumentException("corrupt CP-88 sound")

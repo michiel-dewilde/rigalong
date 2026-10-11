@@ -22,6 +22,10 @@ dependencies {
     // Field mapping for the object types only. Canonical form and hashing stay
     // in Json.kt, so no library's number printing can ever change a hash.
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.3")
+    // Reading CP-88 sounds as cp-liveset's YAML (Cp88Yaml): a YAML 1.2 parser, so
+    // its many "on:" keys stay keys. Writing is Cp88Yaml's own, to match ruamel byte
+    // for byte. 2.x for its Java 8 baseline.
+    implementation("org.snakeyaml:snakeyaml-engine:2.10")
     testImplementation(kotlin("test"))
 }
 

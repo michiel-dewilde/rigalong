@@ -160,7 +160,8 @@ song being edited:
   * **Own sound**: the song carries a keyboard sound of its own. Set the
     sound up on the CP88/CP73, then press "Import current sound" (unsaved
     edits and the panel's knobs are included; it is kept in the library's
-    CP-88 sounds too), or take one from **From library…**. When the song is opened, its
+    CP-88 sounds too), or take one from **From library…**. **YAML…** edits
+    this song's copy of it as text (see CP-88 sounds below). When the song is opened, its
     sounds are written into the keyboard's reserved page (see Setup): live set
     1 in set 1 of that page, and so on.
 
@@ -193,8 +194,9 @@ Every setlist and song, with its history.
     overwrites: a song changed on both sides is kept in both versions;
   * the CP88/CP73's own files, as its File menu saves them on a USB stick:
     **.X9S** (one sound), **.X9P** (a page), **.X9L** (all live sets) and
-    **.X9A** (a backup). Their Live Set Sounds go into **CP-88 sounds**; a
-    sound the library already has is not added twice;
+    **.X9A** (a backup), and cp-liveset's YAML documents of them (.yaml).
+    Their Live Set Sounds go into **CP-88 sounds**; a sound the library
+    already has is not added twice;
   * an SFZ sample library as a **.zip**. It then appears in every Piano
     patch list.
   One Import is one Undo.
@@ -213,7 +215,15 @@ Every setlist and song, with its history.
   imported from its files or read from the keyboard ("Import current
   sound"). **Play on CP-88** puts one on the keyboard as its current sound,
   without touching a stored set, so you can hear it. **.X9S** saves it as a
-  file the keyboard loads.
+  file the keyboard loads. **YAML…** opens it as text, in cp-liveset's YAML
+  form: only what differs from the standard sound is listed, by name
+  (`category: Organ`, `instrument: Click Organ`, `on: true`); add a line to
+  change anything else, with a name or a number. The line under the text says
+  what it reads as, or where it goes wrong, as you type. **Play on CP-88**
+  plays the edited sound before you keep it; **Save** keeps it as the
+  sound's new version; **Save as .yaml** writes a file cp-liveset reads.
+  The name keeps its padding: trailing NULs show as ` `, trailing spaces
+  are dropped and put back.
 * **Patches**: the library patches, with Details: the songs using each one
   (and "Update to the latest version" for a song left behind), where it was
   forked from, its history.

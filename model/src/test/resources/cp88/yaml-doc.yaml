@@ -1,0 +1,234 @@
+format: cp88-cp73-liveset-yaml-v1
+pages:
+  1:
+    1:
+      name: "Init Sound\0\0\0\0\0"
+      piano:
+        on: true
+        category: Grand Piano
+        instrument: CFX  # 1
+        volume: 127
+      epiano:
+        on: false
+        category: Rd
+        instrument: 78Rd  # 1
+      sub:
+        on: false
+        category: Pad/Strings
+        instrument: Mellow Pad  # 1
+        volume: 127
+      common:
+        delay:
+          on: false
+        reverb:
+          on: true
+  3:
+    1:
+      name: Test 3-1
+      piano:
+        on: true
+        category: Grand Piano
+        instrument: CFX  # 1
+        volume: 50
+        tone: 125
+        delay_depth: 50
+        reverb_depth: 25
+        effect:
+          on: true
+          depth: 75
+      epiano:
+        on: true
+        category: Rd
+        instrument: 78Rd  # 1
+        volume: 100
+      sub:
+        on: false
+        category: Pad/Strings
+        instrument: Mellow Pad  # 1
+        volume: 127
+      common:
+        delay:
+          on: false
+          time: 75
+        reverb:
+          on: true
+          time: 25
+      zones:
+        1:
+          on: true
+          transmit_channel: 10
+          note_limit:
+            high: E6
+    4:
+      name: Test 3-4
+      piano:
+        on: true
+        category: Grand Piano
+        instrument: CFX  # 1
+        volume: 56
+        tone: 12
+        delay_depth: 56
+        reverb_depth: 28
+        effect:
+          on: false
+          depth: 84
+      epiano:
+        on: false
+        category: Rd
+        instrument: 78Rd  # 1
+        volume: 112
+      sub:
+        on: false
+        category: Pad/Strings
+        instrument: Mellow Pad  # 1
+        volume: 127
+      common:
+        delay:
+          on: true
+          time: 84
+        reverb:
+          on: false
+          time: 28
+      zones:
+        1:
+          on: true
+          transmit_channel: 13
+          note_limit:
+            high: E6
+    8:
+      name: Test 3-8
+      piano:
+        on: true
+        category: Grand Piano
+        instrument: CFX  # 1
+        volume: 64
+        tone: 32
+        delay_depth: 64
+        reverb_depth: 32
+        effect:
+          on: false
+          depth: 96
+      epiano:
+        on: false
+        category: Rd
+        instrument: 78Rd  # 1
+        volume: 0
+      sub:
+        on: false
+        category: Pad/Strings
+        instrument: Mellow Pad  # 1
+        volume: 127
+      common:
+        delay:
+          on: true
+          time: 96
+        reverb:
+          on: false
+          time: 32
+      zones:
+        1:
+          on: true
+          note_limit:
+            high: E6
+  7:
+    1:
+      name: Test 7-1
+      piano:
+        on: true
+        category: Grand Piano
+        instrument: CFX  # 1
+        volume: 114
+        tone: 29
+        delay_depth: 114
+        reverb_depth: 57
+        effect:
+          on: true
+          depth: 43
+      epiano:
+        on: true
+        category: Rd
+        instrument: 78Rd  # 1
+        volume: 100
+      sub:
+        on: false
+        category: Pad/Strings
+        instrument: Mellow Pad  # 1
+        volume: 127
+      common:
+        delay:
+          on: false
+          time: 71
+        reverb:
+          on: true
+          time: 57
+      zones:
+        1:
+          on: true
+          transmit_channel: 10
+          note_limit:
+            high: E6
+    4:
+      name: Test 7-4
+      piano:
+        on: true
+        category: Grand Piano
+        instrument: CFX  # 1
+        volume: 120
+        tone: 44
+        delay_depth: 120
+        reverb_depth: 60
+        effect:
+          on: false
+          depth: 52
+      epiano:
+        on: false
+        category: Rd
+        instrument: 78Rd  # 1
+        volume: 112
+      sub:
+        on: false
+        category: Pad/Strings
+        instrument: Mellow Pad  # 1
+        volume: 127
+      common:
+        delay:
+          on: true
+          time: 80
+        reverb:
+          on: false
+          time: 60
+      zones:
+        1:
+          on: true
+          transmit_channel: 13
+          note_limit:
+            high: E6
+    8:
+      name: Test 7-8
+      piano:
+        on: true
+        category: Grand Piano
+        instrument: CFX  # 1
+        volume: 0
+        reverb_depth: 64
+      epiano:
+        on: false
+        category: Rd
+        instrument: 78Rd  # 1
+        volume: 0
+      sub:
+        on: false
+        category: Pad/Strings
+        instrument: Mellow Pad  # 1
+        volume: 127
+      common:
+        delay:
+          on: true
+          time: 92
+        reverb:
+          on: false
+      zones:
+        1:
+          on: true
+          note_limit:
+            high: E6

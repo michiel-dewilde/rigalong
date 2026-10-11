@@ -67,6 +67,7 @@ fun LibraryScreen(player: SongPlayer, lib: Library, host: EngineHost, onOpened: 
     val patches = remember(revision) { lib.patches() }
     val cp88Sounds = remember(revision) { lib.cp88Sounds() }
     var exportSound by remember { mutableStateOf<Digest?>(null) }
+    var editSound by remember { mutableStateOf<Digest?>(null) }
     val last = remember(revision) { lib.lastChange() }
     var exportIds by remember { mutableStateOf<List<Digest>>(emptyList()) }
     var detail by remember { mutableStateOf<Digest?>(null) }
@@ -159,7 +160,7 @@ fun LibraryScreen(player: SongPlayer, lib: Library, host: EngineHost, onOpened: 
                         }
                     }
                 }
-                // CP-88 Live Set Sounds: from the keyboard or its files; heard on it, saved as .X9S.
+                // CP-88 Live Set Sounds: from the keyboard or its files; heard on it, saved as .X9S, edited as YAML.
                 if (cp88Sounds.isNotEmpty()) {
                     Text(stringResource(R.string.cp88_sounds), fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(top = 8.dp))
                     LazyColumn(Modifier.heightIn(max = 220.dp)) {
@@ -173,6 +174,7 @@ fun LibraryScreen(player: SongPlayer, lib: Library, host: EngineHost, onOpened: 
                                 TextButton(onClick = { exportSound = e.id; soundSaver.launch("${e.version.name.trim()}.X9S") }) {
                                     Text(stringResource(R.string.export_x9s))
                                 }
+                                TextButton(onClick = { editSound = e.id }) { Text(stringResource(R.string.edit_yaml)) }
                                 TextButton(onClick = { detail = e.id }) { Text(stringResource(R.string.details)) }
                             }
                         }
@@ -196,6 +198,18 @@ fun LibraryScreen(player: SongPlayer, lib: Library, host: EngineHost, onOpened: 
     }
     detail?.let { id ->
         EntryDialog(id, lib, player, onChanged = { revision++ }, onDismiss = { detail = null })
+    }
+    editSound?.let { id ->
+        val entry = remember(id, revision) { lib.store.entry(id) }
+        val sound = remember(id, revision) { lib.cp88Sound(id) }
+        if (entry == null || sound == null) { editSound = null; return@let }
+        Cp88YamlEditor(entry.version.name, sound, player, onDismiss = { editSound = null }, onSave = { edited ->
+            // The entry follows the sound's name, unless it was given a name of its own.
+            val named = entry.version.name.trim() == be.mdw.bagosynths.model.Cp88.name(sound).trim()
+            val name = if (named) be.mdw.bagosynths.model.Cp88.name(edited).trim().ifEmpty { entry.version.name } else entry.version.name
+            lib.saveCp88Sound(id, name, edited)
+            revision++
+        })
     }
 }
 
@@ -333,12 +347,13 @@ private fun displayName(context: android.content.Context, uri: android.net.Uri):
 
 /**
  * Imports one file, whatever it is (I8.8): told apart by its first bytes.
- * A library archive (.tar), a CP88/CP73 file (.X9S/.X9P/.X9L/.X9A), an SFZ
- * instrument pack (.zip). Returns what it did, for the screen. Blocking.
+ * A library archive (.tar), a CP88/CP73 file (.X9S/.X9P/.X9L/.X9A) or
+ * cp-liveset YAML document of its sounds, an SFZ instrument pack (.zip). Returns what it did, for the screen. Blocking.
  */
 private fun importFile(context: android.content.Context, lib: Library, host: EngineHost, name: String, bytes: ByteArray): String {
     fun starts(s: String, at: Int = 0) = bytes.size >= at + s.length &&
         String(bytes, at, s.length, Charsets.ISO_8859_1) == s
+    val text by lazy { bytes.toString(Charsets.UTF_8) }
     return when {
         starts("YAMAHA-YSFC") -> {
             val slots = be.mdw.bagosynths.model.Cp88X9.read(bytes)
@@ -352,6 +367,12 @@ private fun importFile(context: android.content.Context, lib: Library, host: Eng
         }
         starts("PK\u0003\u0004") ->
             context.getString(R.string.installed_instrument, java.io.ByteArrayInputStream(bytes).use { host.importInstrumentZip(it, name) })
+        // cp-liveset's YAML: text, told by its format line.
+        bytes.size < 4_000_000 && be.mdw.bagosynths.model.Cp88Yaml.isDocument(text) -> {
+            val slots = be.mdw.bagosynths.model.Cp88Yaml.readDocument(text)
+            val added = lib.importCp88Sounds(name, slots)
+            context.getString(R.string.imported_cp88, slots.size, added)
+        }
         else -> error(context.getString(R.string.unknown_file, name))
     }
 }

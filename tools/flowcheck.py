@@ -513,6 +513,41 @@ def flow_cp88_sound_from_library(f):
         shell(f"rm -f /sdcard/Download/{X9P}")
 
 
+# A CP-88 sound edited as cp-liveset's YAML in the Library: the text is
+# checked as it is typed, and saving keeps it as the sound's new version.
+def flow_cp88_yaml_edit(f):
+    here = os.path.dirname(os.path.abspath(__file__))
+    adb("push", os.path.join(here, "..", "model", "src", "test", "resources", "cp88", X9P), "/sdcard/Download/" + X9P)
+    to_library()
+    for n in find_all("Import…"):
+        shell(f"input tap {n.x} {n.y}")
+    time.sleep(2.0)
+    for n in find_all(X9P):
+        shell(f"input tap {n.x} {n.y}")
+    if not wait_for("Test 7-6", timeout=8):
+        raise AssertionError("setup: the page did not import")
+    saves = 1
+    try:
+        # The YAML… of Test 7-6's own row.
+        row = find_all("Test 7-6")[0]
+        button = min(find_all("YAML…"), key=lambda n: abs(n.y - row.y))
+        shell(f"input tap {button.x} {button.y}")
+        f.taps += 1
+        f.see("Reads as “Test 7-6”")
+        f.see("name: Test 7-6", exact=False)
+        f.tap("name: Test 7-6", exact=False)                # into the text
+        shell("input keycombination KEYCODE_CTRL_LEFT KEYCODE_A")
+        shell("input text 'name:%sFlow%sYaml'")
+        f.see("Reads as “Flow Yaml” •")
+        f.tap("Save")
+        saves += 1
+        f.see("Flow Yaml")
+    finally:
+        for _ in range(saves):
+            undo_last()
+        shell(f"rm -f /sdcard/Download/{X9P}")
+
+
 FLOWS = [
     # name, budget (taps), function
     ("select-live-set", 1, flow_select_live_set),
@@ -532,6 +567,7 @@ FLOWS = [
     ("knob-controls-sound", 4, flow_knob_controls_sound),
     ("import-cp88-file", 4, flow_import_cp88_file),
     ("cp88-sound-from-library", 5, flow_cp88_sound_from_library),
+    ("cp88-yaml-edit", 3, flow_cp88_yaml_edit),
 ]
 
 

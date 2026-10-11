@@ -696,6 +696,7 @@ private fun LiveSetCard(song: RackSong, i: Int, ls: RackLiveSet, player: SongPla
     fun put(n: RackLiveSet) = onChange(song.copy(liveSets = song.liveSets.toMutableList().also { it[i] = n }))
     var importing by remember { mutableStateOf("") }
     var pickingCp88 by remember { mutableStateOf(false) }
+    var editingCp88 by remember { mutableStateOf(false) }
     val copyName = stringResource(R.string.copy_of, ls.name)
     val reading = stringResource(R.string.reading_cp88)
     // Opened from the stage on this live set: scrolled into view and outlined.
@@ -806,10 +807,20 @@ private fun LiveSetCard(song: RackSong, i: Int, ls: RackLiveSet, player: SongPla
                     }) { Text(stringResource(R.string.import_current_sound)) }
                     // One the library has: imported from the keyboard's files, or used in another song.
                     TextButton(onClick = { pickingCp88 = true }) { Text(stringResource(R.string.from_library)) }
+                    // Its settings as text (cp-liveset's YAML); the edit is this song's, the library keeps its own.
+                    if (cp.sound != null) TextButton(onClick = { editingCp88 = true }) { Text(stringResource(R.string.edit_yaml)) }
                     Text(importing, color = Warn, fontSize = 12.sp, modifier = Modifier.padding(start = 8.dp))
                 }
             }
         }
+    }
+    if (editingCp88) {
+        val sound = remember(ls.cp88.sound) { ls.cp88.sound?.let { lib.store.get(it) } }
+        if (sound == null) editingCp88 = false
+        else Cp88YamlEditor(ls.cp88.soundName ?: "", sound, player, onDismiss = { editingCp88 = false }, onSave = { edited ->
+            val d = lib.store.put(edited)
+            put(ls.copy(cp88 = ls.cp88.copy(mode = "own", sound = d, soundName = be.mdw.bagosynths.model.Cp88.name(edited).trim())))
+        })
     }
     if (pickingCp88) {
         val sounds = remember { lib.cp88Sounds() }

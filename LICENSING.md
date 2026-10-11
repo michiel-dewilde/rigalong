@@ -81,6 +81,8 @@ instantiate/init/render sequence, which is what `HammondNode` follows.
 | Plaits per-model parameter labels | **GPL-3-or-later** | a table of names copied from Surge XT's `TwistOscillator` into `cpp/graph/PlaitsNode.cpp`. Attributed in the source. Combines because this project is GPL-3-or-later too |
 | **FluidSynth** | **LGPL-2.1-or-later** | SF2/SF3, `third_party/fluidsynth`, linked statically. See the note below -- this is the first LGPL component |
 | **stb_vorbis** | public domain / MIT | `third_party/stb`, one file, the Ogg Vorbis decoder for SF3 samples |
+| snakeyaml-engine 2.10 | Apache-2.0 | a Maven dependency of `model/`: reads CP-88 sounds as cp-liveset's YAML (`Cp88Yaml`). Permissive |
+| cp-liveset tables | (the user's own project) | `Cp88X9Tables.kt` and `Cp88YamlTables.kt` are generated from cp-liveset by `tools/gen_cp88x9.py` |
 
 **The Dexed PLUGIN is not linked.** `Source/msfa` and the two alternative FM
 cores (`EngineMkI.cpp`, `EngineOpl.cpp`) are Apache-2.0 and JUCE-free; the
