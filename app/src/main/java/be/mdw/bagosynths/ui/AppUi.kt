@@ -19,6 +19,7 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.relocation.bringIntoViewRequester
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawingPadding
@@ -108,6 +109,7 @@ fun AppUi(player: SongPlayer, lib: Library, host: EngineHost) {
     }
     LaunchedEffect(screen) { player.onStage = screen == 0 }
     LaunchedEffect(Unit) { player.backToStage = { screen = 0 } }
+    LaunchedEffect(Unit) { player.showSongs = { screen = 1 } }
     LaunchedEffect(Unit) { player.watchControllers() }
     LaunchedEffect(Unit) {
         while (true) {
@@ -205,7 +207,7 @@ private fun StageScreen(player: SongPlayer, host: EngineHost) {
     }
 }
 
-@OptIn(ExperimentalLayoutApi::class)
+@OptIn(ExperimentalLayoutApi::class, ExperimentalFoundationApi::class)
 @Composable
 private fun StageControls(player: SongPlayer, host: EngineHost, modifier: Modifier) {
     Column(modifier) {
@@ -245,7 +247,9 @@ private fun StageControls(player: SongPlayer, host: EngineHost, modifier: Modifi
                 Box(Modifier.size(width = 190.dp, height = 84.dp)
                     .background(if (sel) Accent else Panel, RoundedCornerShape(12.dp))
                     .border(2.dp, if (sel) Accent else Color(0xFF2A2E36), RoundedCornerShape(12.dp))
-                    .clickable { player.selectLiveSet(i) }.padding(10.dp),
+                    // A tap selects it; a long press edits it (quick edit from the stage).
+                    .combinedClickable(onClick = { player.selectLiveSet(i) }, onLongClick = { player.requestEdit(liveSet = i) })
+                    .padding(10.dp),
                     contentAlignment = Alignment.Center) {
                     Text(name, color = if (sel) Color.Black else Color.White, fontSize = 20.sp,
                         fontWeight = FontWeight.SemiBold, textAlign = TextAlign.Center, maxLines = 2)
@@ -262,12 +266,15 @@ private fun StageControls(player: SongPlayer, host: EngineHost, modifier: Modifi
         // Scrolls sideways when the panels do not fit (a phone, portrait: S18.4, S20.2).
         Row(horizontalArrangement = Arrangement.spacedBy(16.dp),
             modifier = Modifier.weight(1f).fillMaxHeight().horizontalScroll(rememberScrollState())) {
-            if (RackEngine.HAMMOND in engines) OrganPanel(player)
+            // The levels first: where the row is narrower than its panels (beside
+            // a lead sheet), the organ's drawbars scroll into view, not the faders.
             for (e in engines) {
                 val plays = player.playing[e] ?: false
                 Column(Modifier.width(140.dp).fillMaxHeight().background(Panel, RoundedCornerShape(10.dp)).padding(10.dp),
                     horizontalAlignment = Alignment.CenterHorizontally) {
-                    Text(engineLabel(e), fontWeight = FontWeight.SemiBold, color = if (plays) Accent else Dim)
+                    // A long press on its name opens its patch in the editor.
+                    Text(engineLabel(e), fontWeight = FontWeight.SemiBold, color = if (plays) Accent else Dim,
+                        modifier = Modifier.combinedClickable(onClick = {}, onLongClick = { player.requestEdit(engine = e) }))
                     Text(stringResource(if (plays) R.string.engine_playing else R.string.engine_silent), fontSize = 12.sp, color = Dim)
                     Spacer(Modifier.height(8.dp))
                     val level = player.levels[e] ?: 0f
@@ -276,6 +283,7 @@ private fun StageControls(player: SongPlayer, host: EngineHost, modifier: Modifi
                     RelativeFader(level, { player.setLevel(e, it) }, Modifier.weight(1f).fillMaxWidth())
                 }
             }
+            if (RackEngine.HAMMOND in engines) OrganPanel(player)
         }
         Spacer(Modifier.width(16.dp))
         MasterFader(host)
@@ -368,19 +376,25 @@ private fun SongsScreen(player: SongPlayer, lib: Library, host: EngineHost) {
     var selected by remember { mutableStateOf<Digest?>(null) }
     var editing by remember { mutableStateOf<Pair<Digest?, RackSong>?>(null) }
     var editName by remember { mutableStateOf("") }
+    var focus by remember { mutableStateOf<SongPlayer.EditRequest?>(null) }
     val newSongName = stringResource(R.string.new_song)
+    fun open(id: Digest) {
+        selected = id
+        val e = lib.store.entry(id)
+        val song = lib.songs().firstOrNull { it.entry.id == id }?.song
+        val rack = song?.let { lib.rackSong(it) }
+        if (e != null && rack != null) { editing = id to rack; editName = e.version.name }
+    }
+    // Quick edit from the stage: the song, scrolled to its live set or with its patch open.
+    LaunchedEffect(player.editRequest) {
+        player.editRequest?.let { r -> open(r.song); focus = r; player.editRequest = null }
+    }
 
     BoxWithConstraints(Modifier.fillMaxSize()) {
         val wide = maxWidth > 900.dp
         val list = @Composable {
             SetlistPanel(lib, setlistId, revision, selected,
-                onSelect = { id ->
-                    selected = id
-                    val e = lib.store.entry(id)
-                    val song = lib.songs().firstOrNull { it.entry.id == id }?.song
-                    val rack = song?.let { lib.rackSong(it) }
-                    if (e != null && rack != null) { editing = id to rack; editName = e.version.name }
-                },
+                onSelect = { id -> focus = null; open(id) },
                 onNew = {
                     editing = null to RackSong.starter(preset = host.currentInstrument())
                     editName = newSongName
@@ -393,7 +407,8 @@ private fun SongsScreen(player: SongPlayer, lib: Library, host: EngineHost) {
             if (ed == null) {
                 Text(stringResource(R.string.pick_song), color = Dim, modifier = Modifier.padding(24.dp))
             } else {
-                SongEditor(ed.second, editName, host, player, onName = { editName = it },
+                SongEditor(ed.second, editName, host, player, focus?.takeIf { it.song == ed.first },
+                    onName = { editName = it },
                     onChange = { editing = ed.first to it },
                     onSave = {
                         val id = lib.saveSong(ed.first, editName, ed.second)
@@ -465,10 +480,12 @@ private fun move(lib: Library, setlistId: Digest, ids: List<Digest>, i: Int, by:
 }
 
 @Composable
-private fun SongEditor(song: RackSong, name: String, host: EngineHost, player: SongPlayer, onName: (String) -> Unit,
+private fun SongEditor(song: RackSong, name: String, host: EngineHost, player: SongPlayer,
+                       focus: SongPlayer.EditRequest?, onName: (String) -> Unit,
                        onChange: (RackSong) -> Unit, onSave: () -> Unit) {
     var picker by remember { mutableStateOf<RackEngine?>(null) }
     var patchEditor by remember { mutableStateOf<RackEngine?>(null) }
+    LaunchedEffect(focus) { focus?.engine?.let { if (song.slots.containsKey(it)) patchEditor = it } }
     var reverbEditor by remember { mutableStateOf(false) }
     var fxEditor by remember { mutableStateOf<RackEngine?>(null) }
     var masterFxEditor by remember { mutableStateOf(false) }
@@ -551,7 +568,7 @@ private fun SongEditor(song: RackSong, name: String, host: EngineHost, player: S
             }) { Text(stringResource(R.string.add_live_set)) }
         }
         song.liveSets.forEachIndexed { i, ls ->
-            LiveSetCard(song, i, ls, player, onChange)
+            LiveSetCard(song, i, ls, player, focused = focus?.liveSet == i, onChange)
         }
     }
     fxEditor?.let { e ->
@@ -585,13 +602,20 @@ private fun SongEditor(song: RackSong, name: String, host: EngineHost, player: S
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun LiveSetCard(song: RackSong, i: Int, ls: RackLiveSet, player: SongPlayer, onChange: (RackSong) -> Unit) {
+private fun LiveSetCard(song: RackSong, i: Int, ls: RackLiveSet, player: SongPlayer, focused: Boolean,
+                        onChange: (RackSong) -> Unit) {
     fun put(n: RackLiveSet) = onChange(song.copy(liveSets = song.liveSets.toMutableList().also { it[i] = n }))
     var importing by remember { mutableStateOf("") }
     val copyName = stringResource(R.string.copy_of, ls.name)
     val reading = stringResource(R.string.reading_cp88)
-    Column(Modifier.fillMaxWidth().padding(vertical = 6.dp).border(1.dp, Color(0xFF2A2E36), RoundedCornerShape(8.dp))
+    // Opened from the stage on this live set: scrolled into view and outlined.
+    val into = remember { androidx.compose.foundation.relocation.BringIntoViewRequester() }
+    LaunchedEffect(focused) { if (focused) into.bringIntoView() }
+    Column(Modifier.fillMaxWidth().padding(vertical = 6.dp)
+        .bringIntoViewRequester(into)
+        .border(if (focused) 2.dp else 1.dp, if (focused) Accent else Color(0xFF2A2E36), RoundedCornerShape(8.dp))
         .padding(8.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             OutlinedTextField(value = ls.name, onValueChange = { put(ls.copy(name = it)) }, singleLine = true,

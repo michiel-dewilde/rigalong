@@ -34,7 +34,9 @@ What you play from.
 
 * **Song**: its name, what comes next, and ◀ ▶ to move through the setlist.
 * **Live sets**: the large buttons. A live set is one state of the song, such
-  as "Verse", "Chorus" or "Solo". Switching never cuts a note: a key you are
+  as "Verse", "Chorus" or "Solo". **Hold** a live set button to edit it: the
+  song opens in Songs at that live set. **Hold** a sound's name above its
+  fader to open its patch. Switching never cuts a note: a key you are
   holding keeps sounding until you release it, even if the new live set no
   longer uses that sound, and tails ring out naturally.
 * **Levels**: one fader per sound the song uses. Faders move only when you

@@ -471,6 +471,21 @@ class SongPlayer(private val lib: Library, private val host: EngineHost, private
         }.start()
     }
 
+    // ------------------------------------------------------------ quick edit
+
+    /** What the stage asked to edit: a song, and in it a live set or an engine's patch. */
+    data class EditRequest(val song: Digest, val liveSet: Int? = null, val engine: RackEngine? = null)
+    var editRequest by mutableStateOf<EditRequest?>(null)
+    /** Set by the UI: shows the Songs screen. */
+    var showSongs: (() -> Unit)? = null
+
+    /** From the stage, one long press: the current song in the editor, at [liveSet] or [engine]'s patch. */
+    fun requestEdit(liveSet: Int? = null, engine: RackEngine? = null) {
+        val id = songEntries.getOrNull(songIndex) ?: return
+        editRequest = EditRequest(id, liveSet, engine)
+        showSongs?.invoke()
+    }
+
     /** The diagnostic log (S19.2), set by the activity. */
     var diagnostics: Diagnostics? = null
 
