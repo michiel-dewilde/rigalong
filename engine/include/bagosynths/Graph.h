@@ -93,6 +93,9 @@ inline float blockPeak(const float* p, int n, float sofar = 0.0f) {
 struct ProcessArgs {
     int numFrames = 0;
     double sampleRate = 44100.0;
+    // The song's tempo in BPM (I12.1), for tempo-synced delays and LFOs; 120
+    // when the song has none, which is what every engine assumes on its own.
+    double tempo = 120.0;
 
     const AudioPort* audioIn = nullptr;    int numAudioIn = 0;
     AudioPort* audioOut = nullptr;         int numAudioOut = 0;
@@ -267,7 +270,7 @@ public:
         int firstDependent = 0, numDependents = 0;
     };
 
-    void run(int numFrames, double sampleRate);
+    void run(int numFrames, double sampleRate, double tempo = 120.0);
 
     // Per-node worst-case time. Cheap (one clock read per node per block) and
     // the only way to answer "which node blew the deadline" without guessing.

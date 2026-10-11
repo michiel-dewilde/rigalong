@@ -314,6 +314,10 @@ void SurgeNode::process(const ProcessArgs& args) {
         });
     }
 
+    // The song's tempo (I12.1): Surge reads it in every processControl(), so
+    // its tempo-synced delays and LFOs follow from the next block of 32.
+    s->time_data.tempo = args.tempo;
+
     int written = 0;
     auto renderTo = [&](int upto) {
         while (written < upto) {

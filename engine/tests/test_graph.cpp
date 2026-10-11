@@ -622,3 +622,35 @@ TEST(a_midi_muted_node_still_runs_but_receives_nothing) {
     CHECK_EQ(probe->received, 2);
     CHECK_EQ(probe->blocks, 3);
 }
+
+// The song's tempo reaches every node (I12.1), and 120 is what a node sees when
+// the host names none.
+namespace {
+class TempoProbe : public Node {
+public:
+    const char* typeName() const override { return "TempoProbe"; }
+    int numOutputs() const override { return 1; }
+    PinSpec outputPin(int) const override { return {DataType::Audio, 1, "out"}; }
+    void process(const ProcessArgs& a) override {
+        seen = a.tempo;
+        std::fill_n(a.audioOut[0].channel(0), a.numFrames, 0.0f);
+    }
+    double seen = 0.0;
+};
+}  // namespace
+
+TEST(tempo_reaches_the_nodes) {
+    Graph g;
+    auto owned = std::make_unique<TempoProbe>();
+    TempoProbe* probe = owned.get();
+    NodeId t = g.addNode(std::move(owned));
+    g.setAudioExit(t);
+    std::string err;
+    auto sched = g.compile(44100.0, kFrames, &err);
+    CHECK(sched != nullptr);
+    if (!sched) return;
+    sched->run(kFrames, 44100.0);
+    CHECK_NEAR(probe->seen, 120.0, 1e-9);
+    sched->run(kFrames, 44100.0, 93.5);
+    CHECK_NEAR(probe->seen, 93.5, 1e-9);
+}

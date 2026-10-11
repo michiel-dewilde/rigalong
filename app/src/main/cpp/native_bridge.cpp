@@ -1079,6 +1079,12 @@ Java_be_mdw_bagosynths_NativeBridge_nativeClickTempo(JNIEnv*, jobject, jdouble b
     engine().click().setBpm(bpm);
 }
 
+// The song's tempo for the engines' tempo-synced parameters (I12.1); 0 = none.
+JNIEXPORT void JNICALL
+Java_be_mdw_bagosynths_NativeBridge_nativeSetTempo(JNIEnv*, jobject, jdouble bpm) {
+    engine().setTempo(bpm);
+}
+
 // MIDI clock out: 24 ticks a beat at `bpm`; 0 stops it.
 JNIEXPORT void JNICALL
 Java_be_mdw_bagosynths_NativeBridge_nativeMidiClock(JNIEnv*, jobject, jdouble bpm) {

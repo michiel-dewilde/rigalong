@@ -18,7 +18,7 @@ namespace bagosynths {
 
 // ---------------------------------------------------------------- Schedule
 
-void Schedule::run(int numFrames, double sampleRate) {
+void Schedule::run(int numFrames, double sampleRate, double tempo) {
     // Serial executor. Steps are in topological order, so every input buffer is
     // already filled by the time its consumer runs.
     //
@@ -86,6 +86,7 @@ void Schedule::run(int numFrames, double sampleRate) {
         ProcessArgs args;
         args.numFrames = numFrames;
         args.sampleRate = sampleRate;
+        args.tempo = tempo;
 
         args.audioIn = s.numAudioIn ? &audioInPorts[s.firstAudioIn] : nullptr;
         args.numAudioIn = s.numAudioIn;

@@ -222,6 +222,8 @@ object NativeBridge {
     external fun nativeClickStop(midi: Boolean)
     external fun nativeClickRunning(): Boolean
     external fun nativeClickTempo(bpm: Double)
+    /** The song's tempo for tempo-synced delays and LFOs (I12.1); 0 = none (they assume 120). */
+    external fun nativeSetTempo(bpm: Double)
     /** MIDI clock out at [bpm], 24 ticks a beat, to the direct-USB MIDI out; 0 stops it. */
     external fun nativeMidiClock(bpm: Double)
     external fun nativeMidiClockTicks(): Long

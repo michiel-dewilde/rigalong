@@ -346,7 +346,9 @@ class SongPlayer(private val lib: AppLibrary, private val host: EngineHost, priv
         return ((now - beatOrigin) / (60e9 / b)).toLong().mod(bar) + 1
     }
 
+    /** The tempo goes to the engines (I12.1) and, when it is on, out as MIDI clock. */
     private fun applyMidiClock() {
+        runCatching { NativeBridge.nativeSetTempo(bpm ?: 0.0) }
         runCatching { NativeBridge.nativeMidiClock(if (midiClock) bpm ?: 0.0 else 0.0) }
     }
 

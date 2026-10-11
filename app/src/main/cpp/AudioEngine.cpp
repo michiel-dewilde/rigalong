@@ -1081,7 +1081,7 @@ void AudioEngine::renderBlockIntoRing(int frames) {
     }
 
     const int chunk = std::min(frames, mScratchFrames);
-    schedule->run(chunk, currentRate());
+    schedule->run(chunk, currentRate(), mTempo.load(std::memory_order_relaxed));
 
     // Interleave, dither, and write into the ring.
     if (schedule->audioOutputSource != nullptr) {
