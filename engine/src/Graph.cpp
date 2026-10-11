@@ -1,3 +1,4 @@
+#include "bagosynths/Wire.h"
 #include <bagosynths/Graph.h>
 
 #include <algorithm>
@@ -33,6 +34,12 @@ void Schedule::run(int numFrames, double sampleRate) {
         // otherwise be mixed in forever, and the node would go on being heard
         // after it stopped running.
         if (!s.node->enabled()) {
+            // Switchable MIDI wires into it still follow the controllers, so
+            // the node can be brought up to date when it is enabled again.
+            for (int i = 0; i < s.numMidiSum; ++i) {
+                const MidiSum& m = midiSums[s.firstMidiSum + i];
+                if (m.wire) m.wire->passMidi(*m.src, *m.dst, m.first, false);
+            }
             for (int i = 0; i < s.numAudioOut; ++i) {
                 const AudioPort& p = audioOutPorts[s.firstAudioOut + i];
                 for (int c = 0; c < p.width; ++c) {
@@ -50,6 +57,10 @@ void Schedule::run(int numFrames, double sampleRate) {
         // rest add, so nothing has to be cleared first.
         for (int i = 0; i < s.numAudioSum; ++i) {
             const AudioSum& m = audioSums[s.firstAudioSum + i];
+            if (m.wire) {
+                m.wire->mixAudio(m.src, m.dst, m.channels, m.stride, numFrames, m.first, sampleRate);
+                continue;
+            }
             // numFrames, not the whole buffer: these are sized for the largest
             // block the engine might ever ask for, and we render 128 at a time.
             for (int c = 0; c < m.channels; ++c) {
@@ -64,6 +75,10 @@ void Schedule::run(int numFrames, double sampleRate) {
         }
         for (int i = 0; i < s.numMidiSum; ++i) {
             const MidiSum& m = midiSums[s.firstMidiSum + i];
+            if (m.wire) {
+                m.wire->passMidi(*m.src, *m.dst, m.first, true);
+                continue;
+            }
             if (m.first) m.dst->clear();
             m.dst->append(*m.src);
         }
@@ -166,8 +181,16 @@ bool Graph::connect(NodeId from, int fromPin, NodeId to, int toPin, std::string*
         return false;
     }
 
-    mEdges.push_back({from, fromPin, to, toPin});
+    mEdges.push_back({from, fromPin, to, toPin, nullptr});
     return true;
+}
+
+std::shared_ptr<WireControl> Graph::connectSwitchable(NodeId from, int fromPin, NodeId to, int toPin,
+                                                      std::string* error) {
+    if (!connect(from, fromPin, to, toPin, error)) return nullptr;
+    auto control = std::make_shared<WireControl>();
+    mEdges.back().control = control;
+    return control;
 }
 
 void Graph::disconnect(const Edge& edge) {
@@ -299,11 +322,15 @@ std::unique_ptr<Schedule> Graph::compile(double sampleRate, int maxFrames,
 
             // Gather incoming edges for this pin.
             std::vector<std::pair<int, int>> sources;   // node index, pin
+            std::vector<WireControl*> controls;           // per source, null if plain
             for (const Edge& e : mEdges) {
                 if (e.toNode == ids[idx] && e.toPin == p) {
                     sources.emplace_back(indexOf(e.fromNode), e.fromPin);
+                    controls.push_back(e.control.get());
+                    if (e.control) sched->wireRefs.push_back(e.control);
                 }
             }
+            const bool alias = sources.size() == 1 && controls[0] == nullptr;
 
             if (s.type == DataType::Audio) {
                 AudioPort port;
@@ -314,7 +341,7 @@ std::unique_ptr<Schedule> Graph::compile(double sampleRate, int maxFrames,
                 // or more are mixed into this pin's own buffer beforehand, which
                 // is what makes layering two instruments into one effect work.
                 int bufIndex;
-                if (sources.size() == 1) {
+                if (alias) {
                     bufIndex = outBuf[sources[0].first][sources[0].second].audio;
                 } else {
                     bufIndex = inBuf[idx][p].audio;
@@ -328,6 +355,7 @@ std::unique_ptr<Schedule> Graph::compile(double sampleRate, int maxFrames,
                         mix.channels = port.width;
                         mix.stride = maxFrames;
                         mix.first = (k == 0);
+                        mix.wire = controls[k];
                         sched->audioSums.push_back(mix);
                         step.numAudioSum++;
                     }
@@ -344,7 +372,7 @@ std::unique_ptr<Schedule> Graph::compile(double sampleRate, int maxFrames,
                 step.numAudioIn++;
             } else if (s.type == DataType::Midi) {
                 int bufIndex;
-                if (sources.size() == 1) {
+                if (alias) {
                     bufIndex = outBuf[sources[0].first][sources[0].second].midi;
                 } else {
                     bufIndex = inBuf[idx][p].midi;
@@ -356,6 +384,7 @@ std::unique_ptr<Schedule> Graph::compile(double sampleRate, int maxFrames,
                                           .get();
                         mix.dst = sched->midiBuffers[bufIndex].get();
                         mix.first = (k == 0);
+                        mix.wire = controls[k];
                         sched->midiSums.push_back(mix);
                         step.numMidiSum++;
                     }

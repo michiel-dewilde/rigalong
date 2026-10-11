@@ -455,7 +455,7 @@ TEST(disconnect_removes_one_edge_only) {
     std::string err;
     CHECK(g.connect(a, 0, p, 0, &err));
     CHECK(g.connect(b, 0, p, 0, &err));
-    g.disconnect({a, 0, p, 0});
+    g.disconnect({a, 0, p, 0, nullptr});
     CHECK_EQ((int)g.edges().size(), 1);
     CHECK_EQ(g.edges()[0].fromNode, b);
 }

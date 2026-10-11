@@ -202,11 +202,17 @@ private:
 
 using NodeId = int32_t;
 
+class WireControl;   // Wire.h
+
 struct Edge {
     NodeId fromNode = -1;
     int fromPin = 0;
     NodeId toNode = -1;
     int toPin = 0;
+    // Set for a SWITCHABLE edge (Graph::connectSwitchable): its on/off and
+    // gain can change without a recompile, so it always gets a mixing step.
+    // Null for a plain edge, which a single source aliases straight through.
+    std::shared_ptr<WireControl> control;
 };
 
 // The compiled, immutable result. The audio thread sees only this.
@@ -226,11 +232,13 @@ public:
         int channels = 0;
         int stride = 0;        // frames between channels; buffers are channel-major
         bool first = false;
+        WireControl* wire = nullptr;   // switchable edge: gain and on/off, ramped
     };
     struct MidiSum {
         const MidiBuffer* src = nullptr;
         MidiBuffer* dst = nullptr;
         bool first = false;
+        WireControl* wire = nullptr;   // switchable edge: gating with note tracking
     };
 
     struct Step {
@@ -262,6 +270,10 @@ public:
     std::vector<MidiSum> midiSums;
     std::vector<int> dependents;        // flattened adjacency, for the future
 
+    // Keeps every switchable edge's control alive while this schedule runs,
+    // even if the graph drops the edge in the meantime.
+    std::vector<std::shared_ptr<WireControl>> wireRefs;
+
     // Buffer pools, preallocated at compile time.
     std::vector<std::vector<float>> audioBuffers;
     std::vector<std::unique_ptr<MidiBuffer>> midiBuffers;
@@ -290,6 +302,10 @@ public:
     NodeId addNode(std::unique_ptr<Node> node);
     void removeNode(NodeId id);
     bool connect(NodeId from, int fromPin, NodeId to, int toPin, std::string* error = nullptr);
+    // A wire a live set can switch (Wire.h). Returns its control, or null with
+    // `error` filled. The control survives recompiles.
+    std::shared_ptr<WireControl> connectSwitchable(NodeId from, int fromPin, NodeId to, int toPin,
+                                                   std::string* error = nullptr);
     void disconnect(const Edge& edge);
 
     Node* node(NodeId id) const;
