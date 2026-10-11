@@ -144,27 +144,54 @@ fun AppUi(player: SongPlayer, lib: Library, host: EngineHost) {
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun TopBar(player: SongPlayer, health: String, screen: Int, onScreen: (Int) -> Unit, onPrototype: () -> Unit) {
-    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp),
-        modifier = Modifier.fillMaxWidth()) {
-        // EDIT LOCK (S17.3): from the stage, the editors open only on a long
-        // press, so a stray tap mid-song never leaves the stage.
-        val locked = screen == 0
+    // EDIT LOCK (S17.3): from the stage, the editors open only on a long
+    // press, so a stray tap mid-song never leaves the stage.
+    val locked = screen == 0
+    val tabs: @Composable () -> Unit = {
         Tab(stringResource(R.string.tab_stage), screen == 0) { onScreen(0) }
         Tab(stringResource(R.string.tab_songs), screen == 1, locked) { onScreen(1) }
         Tab(stringResource(R.string.tab_library), screen == 2, locked) { onScreen(2) }
         Tab(stringResource(R.string.tab_setup), screen == 3, locked) { onScreen(3) }
-        if (locked) Text(stringResource(R.string.hold_to_edit), color = Dim, fontSize = 11.sp)
-        Spacer(Modifier.width(8.dp))
-        // The health line opens the figures (S19.3): Setup, where they are -- on
-        // a long press from the stage, like the tabs.
-        Column(Modifier.weight(1f).combinedClickable(onClick = { if (!locked) onScreen(3) }, onLongClick = { onScreen(3) })) {
-            Text(player.setlistName.ifEmpty { stringResource(R.string.no_setlist) }, color = Dim, fontSize = 14.sp, maxLines = 1)
+    }
+    // The health line opens the figures (S19.3): Setup, where they are -- on
+    // a long press from the stage, like the tabs.
+    val status: @Composable (Modifier) -> Unit = { m ->
+        Column(m.combinedClickable(onClick = { if (!locked) onScreen(3) }, onLongClick = { onScreen(3) })) {
+            Text(player.setlistName.ifEmpty { stringResource(R.string.no_setlist) }, color = Dim, fontSize = 14.sp, maxLines = 1,
+                overflow = TextOverflow.Ellipsis)
             Text(health, color = if (health.startsWith("!")) Warn else Dim, fontSize = 12.sp, maxLines = 1,
                 overflow = TextOverflow.Ellipsis)
         }
-        Tab(stringResource(R.string.tab_prototype), false, locked) { onPrototype() }
+    }
+    val panic: @Composable () -> Unit = {
         Button(onClick = player::panic, colors = ButtonDefaults.buttonColors(containerColor = Danger),
             modifier = Modifier.height(48.dp)) { Text(stringResource(R.string.panic), fontWeight = FontWeight.Bold, color = Color.White) }
+    }
+    androidx.compose.foundation.layout.BoxWithConstraints(Modifier.fillMaxWidth()) {
+        if (maxWidth >= 760.dp) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp),
+                modifier = Modifier.fillMaxWidth()) {
+                tabs()
+                if (locked) Text(stringResource(R.string.hold_to_edit), color = Dim, fontSize = 11.sp)
+                Spacer(Modifier.width(8.dp))
+                status(Modifier.weight(1f))
+                Tab(stringResource(R.string.tab_prototype), false, locked) { onPrototype() }
+                panic()
+            }
+        } else {
+            // A phone, upright: the tabs on a row of their own, and PANIC always on screen beside the status.
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.horizontalScroll(rememberScrollState())) {
+                    tabs()
+                    Tab(stringResource(R.string.tab_prototype), false, locked) { onPrototype() }
+                }
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    status(Modifier.weight(1f))
+                    if (locked) Text(stringResource(R.string.hold_to_edit), color = Dim, fontSize = 11.sp)
+                    panic()
+                }
+            }
+        }
     }
 }
 

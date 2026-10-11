@@ -441,6 +441,8 @@ object NativeBridge {
         val usbErrors get() = v.getOrElse(32) { 0f }.toInt()
         val usbFeedbackRate get() = v.getOrElse(33) { 0f }
         val usbMaxGapMs get() = v.getOrElse(34) { 0f }
+        /** Holds by reason: proof, gap, lost, bad ask, slow burst, starve. */
+        val usbHoldsBy: List<Int> get() = (35..40).map { v.getOrElse(it) { 0f }.toInt() }
 
         /** The unambiguous combination: making signal, and nothing coming out. */
         val audioStalled get() = timestampOk && stalledSeconds > 1.0f && outputPeak > 0.001f

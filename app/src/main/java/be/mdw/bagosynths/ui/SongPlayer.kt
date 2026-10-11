@@ -32,10 +32,14 @@ interface EngineHost {
     fun instrumentPath(id: String): String?
     fun currentInstrument(): String?
     fun showPrototype()
-    /** One line on the state of the audio and MIDI path. */
+    /** The stage's one line: the path and its latency when all is well, else what is wrong ("! ..."). */
     fun healthLine(): String
-    /** Every status figure, for the setup view (S19.3). */
+    /** Every figure on one line, the ones the screen leaves out included: for the diagnostics log. */
+    fun healthDetail(): String
+    /** Every status figure, for the setup view (S19.3), grouped and for the path in use. */
     fun statusLines(): List<String>
+    /** Dropout counts and the engine's peaks start again from now. */
+    fun resetCounts()
     fun routing(): Routing
     fun cycleAudioDevice()
     fun cycleMidiDevice()

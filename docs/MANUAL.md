@@ -23,10 +23,14 @@ The bar at the top switches between **Stage**, **Songs**, **Library** and
   nothing, so it cannot close the instrument mid-song.
 * The red **PANIC** button stops every sound, at once, everywhere.
 
-The line beside the tabs reports the audio path and the tablet's
-temperature. It turns amber when something needs attention: the tablet
-running hot, or dropouts (a gap or a click in the sound) in the last minute,
-with their count.
+The line beside the tabs says where the sound goes and how late it is
+("CP-88 · direct USB · 9,7 ms"), and the tablet's heat when it is not cool.
+It turns amber, and says what is wrong instead, when something needs
+attention: no sound path (the stream down, the wrong device, the tablet's own
+speaker), dropouts in the last minute (a gap or a click in the sound, with
+their count and cause), or the tablet running hot. The first ten seconds
+after the sound starts do not count: a start settles. On a phone held
+upright, the tabs take a row of their own and PANIC stays beside this line.
 
 ### Stage
 
@@ -268,9 +272,27 @@ Every setlist and song, with its history.
   * two pages side by side, in landscape;
   * whether a turn moves one page or two;
   * whether the page turner turns pages or live sets.
-* **Status**:
-  * every figure about the audio and MIDI path, for when something sounds
-    wrong;
+* **Status**: what the sound path is doing, a line each, only the lines that
+  apply to the path in use:
+  * **output**: the device, the path (direct USB, or AAudio with its mode)
+    and whether it runs;
+  * **latency**: the total, and what it is made of: the queue on the wire (or
+    the stream) plus the render reserve, which grows after a dropout and
+    shrinks again while all is calm;
+  * **dropouts**: in the last minute, and since a time it names, by cause:
+    *render* (the engines were late filling the reserve), *USB* (a hold: the
+    direct path's short deliberate silence that keeps the CP-88 from
+    latching), *USB error*, *xrun* (AAudio). **Reset counts** starts them,
+    and the worst figures below, again from now;
+  * **usb** (direct path): holds by reason, wire errors, and alt errors,
+    which must stay 0;
+  * **reap loop** (direct path): the worst gap in the thread that feeds the
+    wire, and the CP-88's clock as it asks for audio;
+  * **presented** and **stream** (AAudio): whether the hardware position
+    advances, and the stream's rate, burst and buffer;
+  * **render**: the slowest 128-frame block against the time it plays, and
+    sfizz's voices;
+  * **level**, **midi**, **heat** and **probe** (Measure latency's result);
   * **Measure latency**: sends a click through your speakers and listens for
     it on the tablet's microphone;
   * the **MIDI monitor**: the last messages to and from the keyboard, the

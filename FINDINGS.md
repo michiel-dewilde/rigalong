@@ -79,10 +79,12 @@ inside a sampler no longer lands on a 2 ms callback deadline, it merely eats int
 the reserve.
 
 Consequences when reading the status panel:
-* `xruns` is structurally 0 and means nothing. **`ring … underruns` is the real
-  counter.**
-* `cpu` and `peak callback` read ~0 for the same reason. **`render peak` is the
-  number that matters**, measured against the render block's duration.
+* `xruns` is structurally 0 and means nothing. **Render underruns are the real
+  counter** -- shown since 2026-10-11 as *render* dropouts, by cause, for the
+  last minute and since a named moment.
+* The callback's cpu and peak read ~0 for the same reason, and are no longer
+  shown. **The worst render block is the number that matters**, shown against
+  the 2,90 ms the block plays.
 
 **Rendering ahead does not reduce latency** — N ms of reserve costs N ms, exactly
 as a larger output buffer would. It buys immunity to jitter, not speed.

@@ -178,6 +178,8 @@ fun SetupScreen(player: SongPlayer, host: EngineHost, lib: Library) {
             .verticalScroll(rememberScrollState())) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(stringResource(R.string.status), fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
+                // Dropouts and peaks count from a moment the status names; this moves it to now.
+                TextButton(onClick = { host.resetCounts(); status = host.statusLines() }) { Text(stringResource(R.string.reset_counts)) }
                 OutlinedButton(onClick = host::measureLatency) { Text(stringResource(R.string.measure)) }
             }
             Text(stringResource(R.string.measure_note), color = dim, fontSize = 12.sp)
@@ -195,7 +197,13 @@ fun SetupScreen(player: SongPlayer, host: EngineHost, lib: Library) {
             Text(stringResource(R.string.midi_monitor_note), color = dim, fontSize = 12.sp)
             for (line in midi.takeLast(8).reversed()) Text(line, fontFamily = FontFamily.Monospace, fontSize = 13.sp)
             Spacer(Modifier.height(10.dp))
-            for (line in status) Text(line, fontFamily = FontFamily.Monospace, fontSize = 13.sp)
+            // Label, then the reading; a reading that needs attention in the warning colour.
+            for (line in status) Row(Modifier.padding(vertical = 2.dp)) {
+                Text(line.take(12).trim(), color = dim, fontSize = 13.sp, modifier = Modifier.width(96.dp))
+                val text = line.drop(12)
+                Text(text, fontSize = 13.sp, fontFamily = if (line.startsWith("level")) FontFamily.Monospace else FontFamily.Default,
+                    color = if (needsAttention(line)) Color(0xFFE3B341) else Color.Unspecified)
+            }
 
         }
     })
@@ -316,4 +324,12 @@ private fun ModeRow(current: String, accent: Color, dim: Color, onMode: (String)
             TextButton(onClick = { onMode(mode) }) { Text(label, color = if (mode == current) accent else dim) }
         }
     }
+}
+
+/** A status reading worth the warning colour: a fault word, a dropout in the last minute, an alt error. */
+private fun needsAttention(line: String): Boolean {
+    val faults = listOf("FROZEN", "NOT CONNECTED", "CLIPPING", "DOWN", "WRONG", "STALLED", "SWITCHING", "NO USB", "HOT", "THROTTLING")
+    return faults.any { it in line } ||
+        (line.startsWith("dropouts") && !line.drop(12).startsWith("none in the last minute")) ||
+        Regex("""\b[1-9][0-9]* alt errors""").containsMatchIn(line)
 }

@@ -53,9 +53,10 @@ class Diagnostics(context: Context) {
         if (now - lastHealth < HEALTH_MS) return
         lastHealth = now
         val health = runCatching { host.healthLine() }.getOrDefault("")
-        // The state words only (running, holds...), not the figures that move every time.
+        // The stage line's words only, not its figures: a new state ("! 2 dropouts", a
+        // reroute) brings the full status; the detail line has every figure each time.
         val state = health.replace(Regex("[0-9.,]+"), "#")
-        append("${stamp()}  $health\n")
+        append("${stamp()}  ${runCatching { host.healthDetail() }.getOrDefault(health)}\n")
         if (now - lastFull >= FULL_MS || state != lastState) {
             lastFull = now
             lastState = state

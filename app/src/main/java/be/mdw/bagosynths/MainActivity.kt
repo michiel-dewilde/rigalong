@@ -2581,36 +2581,6 @@ class MainActivity : androidx.activity.ComponentActivity() {
     private lateinit var composeView: androidx.compose.ui.platform.ComposeView
     private lateinit var appLibrary: Library
 
-    // --- health (S19.3): what the player heard go wrong in the last minute ---
-    private val dropEvents = ArrayDeque<Pair<Long, Int>>()
-    private var dropLast: IntArray? = null
-    private var dropWarmUntil = 0L
-
-    /**
-     * Xruns, holds, USB errors and ring underruns in the last 60 s: each one a
-     * gap or a click someone may have heard. The first 10 s of a running
-     * stream do not count -- a start settles -- and a stopped one resets.
-     */
-    private fun recentDropouts(): Int {
-        val s = runCatching { NativeBridge.Stats(NativeBridge.nativeGetStats()) }.getOrNull() ?: return 0
-        val now = android.os.SystemClock.elapsedRealtime()
-        if (!s.running) {
-            dropLast = null
-            dropEvents.clear()
-            return 0
-        }
-        val cur = intArrayOf(s.xRuns, s.usbHolds, s.usbErrors + s.usbAltErrors, s.ringUnderruns)
-        val last = dropLast
-        dropLast = cur
-        if (last == null) {
-            dropWarmUntil = now + 10_000
-            return 0
-        }
-        val d = cur.indices.sumOf { (cur[it] - last[it]).coerceAtLeast(0) }
-        if (d > 0 && now >= dropWarmUntil) dropEvents.addLast(now to d)
-        while (dropEvents.isNotEmpty() && now - dropEvents.first().first > 60_000) dropEvents.removeFirst()
-        return dropEvents.sumOf { it.second }
-    }
     private lateinit var player: be.mdw.bagosynths.ui.SongPlayer
 
     /**
@@ -2698,18 +2668,10 @@ class MainActivity : androidx.activity.ComponentActivity() {
         override fun instrumentPath(id: String): String? = library.firstOrNull { it.id == id }?.sfz?.absolutePath
         override fun currentInstrument() = currentInstrument?.id
         override fun showPrototype() = showNewUi(false)
-        override fun healthLine(): String {
-            val lines = statusView.text.toString().lines()
-            val pick = lines.filter { l -> listOf("state", "path", "usb", "xruns").any { l.trimStart().startsWith(it) } }
-                .joinToString("   ") { it.trim().replace(Regex("\\s+"), " ") }
-            val (heat, hot) = thermal()
-            val drops = recentDropouts()
-            val bad = hot || drops > 0 || lines.any { it.contains("WRONG") || it.contains("failed") || it.contains("STALLED") }
-            val dropText = if (drops > 0) resources.getQuantityString(R.plurals.dropouts_recent, drops, drops) + "   " else ""
-            return (if (bad) "! " else "") + dropText + heat + "   " + pick
-        }
-        override fun statusLines() = statusView.text.toString().lines() + listOf("", thermal().first,
-            "midi clock  ${NativeBridge.nativeMidiClockTicks()} ticks sent")
+        override fun healthLine(): String = stageHealth()
+        override fun healthDetail(): String = this@MainActivity.healthDetail()
+        override fun statusLines(): List<String> = statusView.text.toString().lines()
+        override fun resetCounts() = this@MainActivity.resetCounts()
         override fun routing(): be.mdw.bagosynths.ui.Routing {
             val (a, m) = effectiveModes(resolveAudio(), resolveMidi())
             return be.mdw.bagosynths.ui.Routing(
@@ -2907,10 +2869,8 @@ class MainActivity : androidx.activity.ComponentActivity() {
         })
 
         buttonRow.addView(makeButton("Reset peaks") {
-            NativeBridge.nativeResetPeaks()
-            // AAudio's xrun counter only ever climbs, so baseline it here:
-            // during a test what matters is "since I started watching".
-            xrunBaseline = NativeBridge.stats().xRuns
+            // Everything counts from now: dropouts, and the peaks the engine keeps.
+            resetCounts()
         })
 
         buttonRow.addView(makeButton("Panic") {
@@ -3157,6 +3117,140 @@ class MainActivity : androidx.activity.ComponentActivity() {
     }
 
 
+    // --- the audio status (S19.3) -------------------------------------------
+    //
+    // What the latch hunt left behind was every counter it ever needed, on one
+    // screen, for both paths at once. Reworked 2026-10-11 so that each line is
+    // a reading that means something on the path in use, says since when, and
+    // carries its unit:
+    //   * direct USB has no AAudio stream: no device id, no HAL timestamp
+    //     ("presented"), no xruns -- those lines are AAudio's;
+    //   * the callback's cpu and worst time read ~0 on either path: it only
+    //     copies from the ring (FINDINGS.md section 3), so they are gone; xruns
+    //     count among the dropouts;
+    //   * `deficit` (wall time minus wire time) drifts with the device's
+    //     crystal and folds every hold in, so it explains nothing a player can
+    //     act on; it stays in the diagnostics log;
+    //   * dropouts are counted by cause, for the last minute and since a named
+    //     moment (AudioHealth), not as raw counters with unknown origins.
+
+    private val audioHealth = AudioHealth()
+    private var lastWarn = ""
+    private var lastFault = false
+
+    private val holdReasons = listOf("proof", "gap", "lost", "bad ask", "slow burst", "starve")
+
+    private fun ms(v: Float, digits: Int = 1) = "%.${digits}f ms".format(v)
+
+    /** Dropouts as "2 render, 1 USB" (causes with a count only), or null for none. */
+    private fun causes(counts: LongArray): String? {
+        val names = listOf("render", "USB", "USB error", "xrun")
+        return counts.indices.filter { counts[it] > 0 }.joinToString(", ") { "${counts[it]} ${names[it]}" }.ifEmpty { null }
+    }
+
+    /** Every status figure for Setup (and the prototype's panel): grouped, and only what applies to the path in use. */
+    private fun statusReport(s: NativeBridge.Stats, warn: String, fault: Boolean): List<String> {
+        val out = ArrayList<String>()
+        fun line(label: String, text: String) = out.add(label.padEnd(12) + text)
+        val (aMode, mMode) = effectiveModes(resolveAudio(), resolveMidi())
+        val running = if (fault) warn else if (s.running) "running" else "stopped"
+        val reserve = s.ringFillMs
+        if (s.usbActive) {
+            val wire = s.bufferFrames * 1000f / maxOf(1, s.sampleRate)
+            line("output", "${shortName(chosenOutputName)}  ·  direct USB (${aMode.label})  ·  $running")
+            line("latency", "${ms(s.latencyMs)}  = ${ms(wire)} on the wire + ${ms(reserve)} render reserve " +
+                "(target ${ms(s.ringTargetMs)})")
+        } else {
+            line("output", "$audioDeviceLabel  ·  ${if (s.usesAAudio) "AAudio" else "OpenSL ES"} " +
+                "${s.sharingModeText.lowercase()} ${s.performanceModeText.lowercase()}  ·  $running")
+            line("presented", when {
+                !s.timestampOk -> "no timestamp from the HAL"
+                s.stalledSeconds > 1.0f -> "FROZEN for ${"%.1f".format(s.stalledSeconds)} s"
+                else -> "advancing (the stream is alive -- not proof of sound)"
+            })
+            line("latency", "${ms(s.latencyMs + reserve)}  = ${ms(s.latencyMs)} stream + ${ms(reserve)} render reserve " +
+                "(target ${ms(s.ringTargetMs)})")
+            line("stream", "${s.sampleRate} Hz  ·  burst ${s.burstFrames} fr (${ms(s.burstFrames * 1000f / maxOf(1, s.sampleRate), 2)})  ·  " +
+                "buffer ${s.bufferFrames} fr (${ms(s.bufferFrames * 1000f / maxOf(1, s.sampleRate), 2)})")
+        }
+        if (routingStatus.isNotEmpty()) line("routing", routingStatus)
+
+        // Dropouts: what someone may have heard, by cause.
+        val minute = audioHealth.lastMinute().map { it.toLong() }.toLongArray()
+        val since = java.text.SimpleDateFormat("HH:mm", java.util.Locale.getDefault()).format(java.util.Date(audioHealth.since))
+        line("dropouts", "${causes(minute)?.let { "$it in the last minute" } ?: "none in the last minute"}  ·  " +
+            "since $since: ${causes(audioHealth.total()) ?: "none"}")
+
+        if (s.usbActive) {
+            // A hold is a short silence by design: the transport empties the
+            // CP-88's FIFO after anything it could not prove, so it never
+            // latches. Alt errors are holds that could not empty it.
+            val by = s.usbHoldsBy.mapIndexedNotNull { i, n -> if (n > 0) "$n ${holdReasons[i]}" else null }
+            line("usb", "${s.usbHolds} holds${if (by.isEmpty()) "" else " (${by.joinToString(", ")})"}  ·  " +
+                "${s.usbErrors} wire errors  ·  ${s.usbAltErrors} alt errors (must stay 0)  ·  since the transport started")
+            line("reap loop", "worst gap ${ms(s.usbMaxGapMs)} since the last reset  ·  " +
+                "CP-88 clock ${"%.0f".format(s.usbFeedbackRate)} Hz")
+        }
+        // The render thread fills the ring a 128-frame block at a time; a block
+        // that takes longer than it plays eats the reserve, and an empty ring
+        // is a render dropout (concealed on the direct path).
+        val block = 128 * 1000f / maxOf(1, s.sampleRate)
+        line("render", "worst block ${ms(s.renderMaxMs, 2)} (it plays ${ms(block, 2)})  ·  " +
+            "sfizz voices ${s.activeVoices} / ${s.voiceLimit}")
+        val bars = (s.outputPeak.coerceIn(0f, 1f) * 24f).toInt()
+        line("level", "${"#".repeat(bars).padEnd(24, '.')} ${"%.3f".format(s.outputPeak)}" +
+            if (s.outputPeak >= 0.999f) "  CLIPPING" else "")
+        line("midi", "${if (NativeBridge.nativeMidiOpen()) "connected" else "NOT CONNECTED"} (${mMode.label})  ·  " +
+            "${s.midiMessages} messages in  ·  ${NativeBridge.nativeMidiClockTicks()} clock ticks out")
+        line("heat", thermal().first.removePrefix("heat "))
+        if (s.loading || warming) line("loading", if (warming) "$warmedMb MB read into the page cache…" else "an instrument…")
+        line("probe", if (s.usbActive && s.probeState == 0) "unavailable on the direct path (no input stream to listen on)"
+            else s.probeText + if (s.probeState != 0)
+            "  ·  input ${"%.4f".format(s.inputPeak)}, ${ms(s.inputLatencyMs)}" else "")
+        return out
+    }
+
+    /** The stage's one line: the path and its latency when all is well, else what is wrong. */
+    private fun stageHealth(): String {
+        val s = runCatching { NativeBridge.stats() }.getOrNull() ?: return ""
+        val (heat, hot) = thermal()
+        val warm = !heat.startsWith("heat cool")
+        val minute = audioHealth.lastMinute()
+        val drops = minute.sum()
+        return when {
+            lastFault -> "! $lastWarn"
+            drops > 0 -> "! " + resources.getQuantityString(R.plurals.dropouts_recent, drops, drops) +
+                " (" + causes(minute.map { it.toLong() }.toLongArray()) + ")"
+            hot -> "! $heat"
+            else -> {
+                val total = if (s.usbActive) s.latencyMs else s.latencyMs + s.ringFillMs
+                val path = if (s.usbActive) getString(R.string.health_direct_usb) else getString(R.string.health_aaudio)
+                getString(R.string.health_ok, shortName(chosenOutputName), path, "%.1f".format(total)) +
+                    if (warm) "  ·  $heat" else ""
+            }
+        }
+    }
+
+    /** One dense line for the diagnostics log: every figure, including those the screen leaves out. */
+    private fun healthDetail(): String {
+        val s = runCatching { NativeBridge.stats() }.getOrNull() ?: return ""
+        val t = audioHealth.total()
+        return "warn=$lastWarn running=${s.running} usb=${s.usbActive} latency=${"%.1f".format(s.latencyMs)} " +
+            "reserve=${"%.1f".format(s.ringFillMs)} target=${"%.1f".format(s.ringTargetMs)} " +
+            "drops[render,hold,usbErr,xrun]=${t.joinToString(",")} holds=${s.usbHolds} by=${s.usbHoldsBy} " +
+            "altErr=${s.usbAltErrors} errors=${s.usbErrors} deficit=${"%.1f".format(s.usbDeficitMs)} " +
+            "maxGap=${"%.1f".format(s.usbMaxGapMs)} clock=${"%.1f".format(s.usbFeedbackRate)} " +
+            "renderPeak=${"%.2f".format(s.renderMaxMs)} voices=${s.activeVoices} xruns=${s.xRuns} " +
+            "stalled=${"%.1f".format(s.stalledSeconds)} peak=${"%.3f".format(s.outputPeak)} ${thermal().first}"
+    }
+
+    /** Counting starts again: the dropout totals, and the peaks the engine keeps (render, reap gap). */
+    private fun resetCounts() {
+        NativeBridge.nativeResetPeaks()
+        xrunBaseline = NativeBridge.stats().xRuns
+        audioHealth.reset()
+    }
+
     private fun makeTestKeys(): View {
         return TouchKeyboardView(this) { note, velocity ->
             NativeBridge.nativeTestNote(note, velocity)
@@ -3195,81 +3289,13 @@ class MainActivity : androidx.activity.ComponentActivity() {
             xrunsNow > 0 -> "$xrunsNow xruns"
             else -> "clean"
         }
+        // The states above "direct USB": something is wrong with the path itself.
+        val fault = routingBusy || (s.usbActive && !s.usbRunning) || !s.running ||
+            output == NativeBridge.DEVICE_UNSPECIFIED || !onChosen || s.audioStalled
 
-        statusView.text = buildString {
-            appendLine("device     $audioDeviceLabel  [id ${s.deviceId}]")
-            // The presentation position: the only reading here that does not
-            // come from this process.
-            //
-            // It says the STREAM IS ALIVE. It does NOT say anything is audible,
-            // and the wording matters because it was read as a guarantee once
-            // already. On an MMAP stream this position can come from a hardware
-            // counter that keeps ticking whether or not the data path reaches
-            // the DAC -- which is exactly what happened on 2026-09-20, when the
-            // dock starved the CP-88 of isochronous bandwidth and every reading
-            // in this app stayed healthy through hours of silence.
-            appendLine("presented  " + when {
-                !s.timestampOk -> "no timestamp from the HAL"
-                s.stalledSeconds > 1.0f -> "FROZEN for ${"%.1f".format(s.stalledSeconds)} s"
-                else -> "advancing  (stream alive — not proof of sound)"
-            })
-            val (aMode, mMode) = effectiveModes(resolveAudio(), resolveMidi())
-            appendLine("midi       ${if (NativeBridge.nativeMidiOpen()) "connected" else "NOT CONNECTED"}" +
-                "   [${mMode.label}]")
-            appendLine("state      ${if (s.running) "running" else "stopped"}   [$warn]")
-            if (s.usbActive) {
-                appendLine("path       USB direct (${aMode.label})  buffer $usbBufferMs ms  " +
-                    "device clock ${"%.1f".format(s.usbFeedbackRate)} Hz")
-                // A hold is a short silence by design (the transport emptying
-                // the device's FIFO after something it could not prove); alt
-                // errors are holds that could not, and must stay 0.
-                appendLine("usb        holds ${s.usbHolds}   alt errors ${s.usbAltErrors}   " +
-                    "errors ${s.usbErrors}   deficit ${"%.1f".format(s.usbDeficitMs)} ms   " +
-                    "max gap ${"%.1f".format(s.usbMaxGapMs)} ms")
-            } else {
-                appendLine("path       ${if (s.usesAAudio) "AAudio" else "OpenSLES"}  " +
-                    "${s.sharingModeText}  ${s.performanceModeText}   [${aMode.label}]")
-            }
-            if (routingStatus.isNotEmpty()) appendLine("routing    $routingStatus")
-            appendLine("rate       ${s.sampleRate} Hz")
-            appendLine("burst      ${s.burstFrames} fr  (" +
-                "${"%.2f".format(s.burstFrames * 1000f / maxOf(1, s.sampleRate))} ms)")
-            appendLine("buffer     ${s.bufferFrames} fr  (" +
-                "${"%.2f".format(s.bufferFrames * 1000f / maxOf(1, s.sampleRate))} ms)")
-            appendLine("latency    ${"%.1f".format(s.latencyMs)} ms")
-            appendLine("xruns      $xrunsNow   (total ${s.xRuns})")
-            appendLine("ring       ${"%.1f".format(s.ringFillMs)} ms reserve, " +
-                "${s.ringUnderruns} underruns, target ${"%.1f".format(s.ringTargetMs)} ms, " +
-                "render peak ${"%.2f".format(s.renderMaxMs)} ms")
-            appendLine("cpu        ${"%.1f".format(s.cpuLoadPercent)} %  " +
-                "(peak callback ${"%.2f".format(s.callbackMaxMs)} ms)")
-            val current = currentInstrument
-            val loaded = NativeBridge.nativeLoadedInstrument()
-            val label = when {
-                s.loading -> "loading ${current?.name ?: ""}…"
-                current == null -> "none — put an instrument folder in $instrumentDir"
-                loaded.isEmpty() -> "FAILED to load ${current.id}"
-                else -> "${current.name}  [id: ${current.id}, ${current.sizeLabel}]"
-            }
-            appendLine("instrument $label")
-            if (warming) appendLine("warming    ${warmedMb} MB read into page cache…")
-            appendLine("library    ${library.size} available: " +
-                library.joinToString(", ") { it.id }.ifEmpty { "—" })
-            appendLine("voices     ${s.activeVoices} / ${s.voiceLimit}")
-            // A bar, not a number: the useful question is "is it moving", which
-            // the eye answers from a bar at a glance and from four decimals not
-            // at all. The number stays for when a figure is actually wanted.
-            val bars = (s.outputPeak.coerceIn(0f, 1f) * 24f).toInt()
-            appendLine("out        ${"#".repeat(bars).padEnd(24, '.')} " +
-                "${"%.3f".format(s.outputPeak)}" +
-                if (s.outputPeak >= 0.999f) "  CLIPPING" else "")
-            appendLine("midi msgs  ${s.midiMessages}")
-            appendLine("patch      $patchStatus   " +
-                "(${PatchStore.list(this@MainActivity).size} saved)")
-            appendLine("")
-            appendLine("in level   ${"%.4f".format(s.inputPeak)}   " +
-                "(in latency ${"%.1f".format(s.inputLatencyMs)} ms)")
-            append("probe      ${s.probeText}")
-        }
+        audioHealth.update(s)
+        lastWarn = warn
+        lastFault = fault
+        statusView.text = statusReport(s, warn, fault).joinToString("\n")
     }
 }

@@ -321,6 +321,9 @@ public:
         int32_t usbErrors = 0;
         float usbFeedbackRate = 0.0f;
         float usbMaxGapMs = 0.0f;
+        // Holds by reason (UsbAudioOut::HoldReason 1-6): proof, gap, lost,
+        // bad ask, slow burst, starve -- the reap loop late, or the wire failing.
+        int32_t usbHoldsBy[6] = {};
     };
 
     Stats stats() const;

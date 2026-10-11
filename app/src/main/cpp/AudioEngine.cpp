@@ -1577,6 +1577,7 @@ AudioEngine::Stats AudioEngine::stats() const {
         s.usbErrors = static_cast<int32_t>(u.outLost + u.inBad);
         s.usbFeedbackRate = u.feedbackRate;
         s.usbMaxGapMs = u.maxGapMs;
+        for (int r = 1; r < UsbAudioOut::kHoldReasons; ++r) s.usbHoldsBy[r - 1] = static_cast<int32_t>(u.holdsBy[r]);
 
         // EVERY HOLD, as it happens, with why. A hold is a short silence by
         // design; the reasons say whether this thread was late (proof, gap,
