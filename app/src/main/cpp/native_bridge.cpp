@@ -1026,6 +1026,12 @@ Java_be_mdw_bagosynths_NativeBridge_nativeStartUsbMidi(JNIEnv* env, jobject, jin
     return nullptr;
 }
 
+// Whether MIDI out on the direct USB path is running (a device in a direct mode).
+JNIEXPORT jboolean JNICALL
+Java_be_mdw_bagosynths_NativeBridge_nativeUsbMidiOutReady(JNIEnv*, jobject) {
+    return engine().midi().usbOut().running() ? JNI_TRUE : JNI_FALSE;
+}
+
 // Sends MIDI bytes (complete messages, SysEx included) to the device's MIDI
 // OUT endpoint in a direct-USB mode. Returns bytes accepted, or -errno.
 JNIEXPORT jint JNICALL

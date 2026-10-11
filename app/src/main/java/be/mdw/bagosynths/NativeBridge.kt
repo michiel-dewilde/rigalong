@@ -211,6 +211,9 @@ object NativeBridge {
     /** `port` is the cable (MIDI 1.0) or group (MIDI 2.0). Null on success. */
     external fun nativeStartUsbMidi(fd: Int, raw: ByteArray, preferUmp: Boolean, port: Int): String?
 
+    /** Whether MIDI out on the direct USB path is running. */
+    external fun nativeUsbMidiOutReady(): Boolean
+
     /** MIDI bytes to the device's MIDI OUT endpoint (direct USB). Bytes accepted, or -errno. */
     external fun nativeUsbMidiSend(data: ByteArray): Int
 

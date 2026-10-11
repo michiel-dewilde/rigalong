@@ -68,12 +68,11 @@ object Environments {
         host.setStageDnd(env.doNotDisturb)
         env.masterDb?.let { host.setMasterDb(it.toFloat()) }
         // After the reroute has settled -- it runs on its own thread and takes
-        // the USB device away and back -- or the song's CP-88 page would be
-        // written to the session being closed.
-        android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
-            player.forgetCp88Page()
-            player.reload()
-        }, 2500)
+        // the USB device away and back -- or the song would be set up on the
+        // session being closed. The CP-88's page is rewritten in full as soon
+        // as MIDI out comes back (SongPlayer.watchMidiOut); this reload then
+        // finds it in place and writes only what the new settings change.
+        android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({ player.reload() }, 2500)
     }
 
     /** Every device the environment names is plugged in (S3.10); "automatic" always is. */

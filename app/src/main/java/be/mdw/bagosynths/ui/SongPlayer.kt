@@ -179,11 +179,6 @@ class SongPlayer(private val lib: AppLibrary, private val host: EngineHost, priv
     // ------------------------------------------------------------ the CP-88
 
     /**
-     * A song's owned sounds go into the reserved page when the song is
-     * selected (S5.3, S4.11), one set each in live set order, so a live set
-     * switch is only a Program Change. 7 ms a sound (V3), so done here.
-     */
-    /**
      * Whether the CP-88's own live set buttons select the app's live sets
      * (set n, live set n). Then its reserved page must hold, in every slot a
      * song does not give a sound of its own, a SILENT sound: pressing set n
@@ -462,7 +457,35 @@ class SongPlayer(private val lib: AppLibrary, private val host: EngineHost, priv
         }
     }
 
+    private var midiOutWasReady = false
+
+    /**
+     * Brings the CP-88 back in line whenever MIDI out to it BECOMES available
+     * (I13.3): after start-up, when the route took longer than the stage, and
+     * after a re-plug or a power cycle -- its page rewritten where it changed,
+     * the current live set selected again.
+     */
+    private fun watchMidiOut() {
+        val ready = runCatching { NativeBridge.nativeUsbMidiOutReady() }.getOrDefault(false)
+        if (ready && !midiOutWasReady && songIndex >= 0) {
+            // It may be another keyboard than before (the stage's spare, a
+            // rental): what this tablet wrote to the last one says nothing.
+            forgetCp88Page()
+            val liveSets = song?.liveSets?.map { lib.store.getTyped<LiveSet>(it.toRef().digest) }.orEmpty()
+            writeSongPage(liveSets)
+            val i = liveSetIndex
+            val action = liveSets.getOrNull(i)?.cp88
+            when {
+                action?.mode == "select" -> selectCp88(action.page ?: 1, action.set ?: 1)
+                ownedSlots[i] != null -> selectCp88(reservedPage, ownedSlots[i]!!)
+            }
+            Log.i(TAG, "MIDI out ready: the CP-88 brought in line ($cp88Status)")
+        }
+        midiOutWasReady = ready
+    }
+
     fun pollSelections() {
+        watchMidiOut()
         val pcs = runCatching { NativeBridge.nativeDrainPrograms() }.getOrNull() ?: return
         for (v in pcs) {
             if (v ushr 31 == 1) {
