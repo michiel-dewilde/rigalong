@@ -1884,6 +1884,16 @@ class MainActivity : androidx.activity.ComponentActivity() {
                             .onFailure { android.util.Log.e("bos-stage", "sheet: $it") }
                     }
                     when (intent.getIntExtra("page", 0)) { 1 -> player.forwardKey(); -1 -> player.backKey() }
+                    // A zip in the app's own folder, installed as an instrument (I8.8):
+                    //   --es instrument test-sine.zip
+                    intent.getStringExtra("instrument")?.let { name ->
+                        Thread {
+                            val r = runCatching {
+                                java.io.File(getExternalFilesDir(null), name).inputStream().use { engineHost.importInstrumentZip(it, name) }
+                            }
+                            android.util.Log.i("bos-stage", "instrument import $name: $r; library ${library.map { it.id }}")
+                        }.start()
+                    }
                 }
                 // TEST: the CP-88 path end to end (SongPlayer.cp88SelfTest):
                 //   adb shell am broadcast -a be.mdw.bagosynths.CP88SELFTEST --ei liveset 1
@@ -2603,6 +2613,38 @@ class MainActivity : androidx.activity.ComponentActivity() {
                 audioDevice = shortName(chosenOutputName), audioMode = a.name,
                 midiDevice = shortName(chosenMidiName), midiMode = m.name,
                 usbBufferMs = usbBufferMs, usbBufferChoices = UsbBuffers.choicesMs.toList())
+        }
+        override fun importInstrumentZip(input: java.io.InputStream, fileName: String): String {
+            val id = fileName.substringBeforeLast('.').lowercase()
+                .replace(Regex("[^a-z0-9._-]+"), "-").trim('-').ifEmpty { "instrument" }
+            val root = java.io.File(getExternalFilesDir(null), "instruments").apply { mkdirs() }
+            val target = java.io.File(root, id)
+            require(!target.exists()) { "an instrument called '$id' is already installed" }
+            val staging = java.io.File(root, ".$id.part").apply { deleteRecursively(); mkdirs() }
+            try {
+                java.util.zip.ZipInputStream(input.buffered()).use { zip ->
+                    while (true) {
+                        val e = zip.nextEntry ?: break
+                        val out = java.io.File(staging, e.name)
+                        // No entry may land outside the staging folder (zip slip).
+                        require(out.canonicalPath.startsWith(staging.canonicalPath + java.io.File.separator)) {
+                            "the zip has a path outside its folder: ${e.name}"
+                        }
+                        if (e.isDirectory) out.mkdirs()
+                        else { out.parentFile?.mkdirs(); out.outputStream().use { zip.copyTo(it) } }
+                    }
+                }
+                // A zip of one folder: that folder is the pack.
+                val top = staging.listFiles()?.filter { !it.name.startsWith(".") }.orEmpty()
+                val pack = if (top.size == 1 && top[0].isDirectory) top[0] else staging
+                require(pack.walk().any { it.isFile && it.extension.equals("sfz", true) }) { "no .sfz file in the zip" }
+                require(pack.renameTo(target)) { "could not move the pack into place" }
+            } finally {
+                staging.deleteRecursively()
+            }
+            val privateDir = java.io.File(filesDir, "instruments")
+            library = InstrumentLibrary.scan(listOf(root, privateDir))
+            return id
         }
         override fun measureLatency() {
             // As the MEASURE broadcast: the input first, armed once it has settled.

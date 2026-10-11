@@ -93,6 +93,10 @@
 
     <!-- library -->
     <string name="import_archive">Import…</string>
+    <string name="import_instrument">Install instrument (zip)…</string>
+    <string name="installing">Installing…</string>
+    <string name="installed_instrument">Installed "%1$s": it is now in every Piano patch list.</string>
+    <string name="install_failed">Installing failed: %1$s</string>
     <string name="export_setlist">Export this setlist…</string>
     <string name="setlists">Setlists</string>
     <string name="on_stage">"   (on stage)"</string>

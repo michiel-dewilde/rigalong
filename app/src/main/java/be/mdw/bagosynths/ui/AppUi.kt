@@ -123,7 +123,7 @@ fun AppUi(player: SongPlayer, lib: AppLibrary, host: EngineHost) {
                     Spacer(Modifier.height(8.dp))
                     TestKeys()
                 }
-                2 -> LibraryScreen(player, lib, onOpened = { screen = 0 })
+                2 -> LibraryScreen(player, lib, host, onOpened = { screen = 0 })
                 else -> SetupScreen(player, host)
             }
         }

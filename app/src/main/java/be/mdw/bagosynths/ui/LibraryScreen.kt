@@ -54,7 +54,7 @@ private val PanelColor = Color(0xFF1A1D23)
 private val DimColor = Color(0xFF8A919C)
 
 @Composable
-fun LibraryScreen(player: SongPlayer, lib: AppLibrary, onOpened: () -> Unit) {
+fun LibraryScreen(player: SongPlayer, lib: AppLibrary, host: EngineHost, onOpened: () -> Unit) {
     val context = LocalContext.current
     var revision by remember { mutableIntStateOf(0) }
     var message by remember { mutableStateOf("") }
@@ -80,8 +80,27 @@ fun LibraryScreen(player: SongPlayer, lib: AppLibrary, onOpened: () -> Unit) {
         }
     }
 
+    val instrumentImporter = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) {
+            message = context.getString(R.string.installing)
+            val name = uri.lastPathSegment?.substringAfterLast('/') ?: "instrument.zip"
+            Thread {
+                val r = runCatching {
+                    context.contentResolver.openInputStream(uri)!!.use { host.importInstrumentZip(it, name) }
+                }
+                android.os.Handler(android.os.Looper.getMainLooper()).post {
+                    message = r.fold({ context.getString(R.string.installed_instrument, it) },
+                        { context.getString(R.string.install_failed, it.message ?: "") })
+                }
+            }.start()
+        }
+    }
+
     Column(Modifier.fillMaxSize()) {
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
+            OutlinedButton(onClick = { instrumentImporter.launch(arrayOf("application/zip", "application/x-zip-compressed")) }) {
+                Text(stringResource(R.string.import_instrument))
+            }
             OutlinedButton(onClick = { importer.launch(arrayOf("*/*")) }) { Text(stringResource(R.string.import_archive)) }
             OutlinedButton(enabled = player.setlistId != null, onClick = {
                 val sl = player.setlistId ?: return@OutlinedButton

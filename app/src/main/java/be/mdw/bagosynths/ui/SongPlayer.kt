@@ -36,6 +36,12 @@ interface EngineHost {
     fun setAudioMode(mode: String)
     fun setMidiMode(mode: String)
     fun setUsbBufferMs(ms: Int)
+    /**
+     * Installs an SFZ instrument pack from a zip (I8.8: no adb), into the app's
+     * instruments folder, and rescans. Blocking: call off the UI thread.
+     * Returns the new instrument's id.
+     */
+    fun importInstrumentZip(input: java.io.InputStream, fileName: String): String
     /** MEASURE (S20.3): a click through the device, heard on the tablet's mic; the result is in [statusLines]. */
     fun measureLatency()
     /** The master volume in dB, a global control: never recalled by a live set (I6.8). */
