@@ -2604,6 +2604,8 @@ class MainActivity : androidx.activity.ComponentActivity() {
                 midiDevice = shortName(chosenMidiName), midiMode = m.name,
                 usbBufferMs = usbBufferMs, usbBufferChoices = UsbBuffers.choicesMs.toList())
         }
+        override fun masterDb() = masterDb
+        override fun setMasterDb(db: Float) = this@MainActivity.setMasterDb(db)
         override fun stageDnd() = prefs().getBoolean("stage.dnd", false) &&
                 notificationManager().isNotificationPolicyAccessGranted
         override fun setStageDnd(on: Boolean) {

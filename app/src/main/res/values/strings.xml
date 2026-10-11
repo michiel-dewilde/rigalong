@@ -23,6 +23,7 @@
     <string name="last_song">last song</string>
     <string name="from_keys">"   ·   last from the keys: %1$s"</string>
     <string name="levels">Levels</string>
+    <string name="master">Master</string>
     <string name="store_levels">Store levels in this live set (hold)</string>
     <string name="engine_playing">playing</string>
     <string name="engine_silent">silent</string>

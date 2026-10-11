@@ -117,7 +117,7 @@ fun AppUi(player: SongPlayer, lib: AppLibrary, host: EngineHost) {
             TopBar(player, health, screen, onScreen = { screen = it }, onPrototype = host::showPrototype)
             Spacer(Modifier.height(8.dp))
             when (screen) {
-                0 -> StageScreen(player)
+                0 -> StageScreen(player, host)
                 1 -> SongsScreen(player, lib, host)
                 2 -> LibraryScreen(player, lib, onOpened = { screen = 0 })
                 else -> SetupScreen(player, host)
@@ -164,11 +164,11 @@ private fun Tab(label: String, selected: Boolean, longPressOnly: Boolean = false
 // ------------------------------------------------------------------ stage
 
 @Composable
-private fun StageScreen(player: SongPlayer) {
+private fun StageScreen(player: SongPlayer, host: EngineHost) {
     // With a lead sheet the screen is split between it and the controls (S9.1, S15.3).
     val sheet = player.sheetFile
     if (sheet == null) {
-        StageControls(player, Modifier.fillMaxSize())
+        StageControls(player, host, Modifier.fillMaxSize())
         return
     }
     BoxWithConstraints(Modifier.fillMaxSize()) {
@@ -181,13 +181,13 @@ private fun StageScreen(player: SongPlayer) {
             Column(Modifier.fillMaxSize()) {
                 sheetView(Modifier.fillMaxWidth().weight(0.6f))
                 Spacer(Modifier.height(8.dp))
-                StageControls(player, Modifier.fillMaxWidth().weight(0.4f))
+                StageControls(player, host, Modifier.fillMaxWidth().weight(0.4f))
             }
         } else {
             Row(Modifier.fillMaxSize()) {
                 sheetView(Modifier.fillMaxHeight().weight(0.6f))
                 Spacer(Modifier.width(10.dp))
-                StageControls(player, Modifier.fillMaxHeight().weight(0.4f))
+                StageControls(player, host, Modifier.fillMaxHeight().weight(0.4f))
             }
         }
     }
@@ -195,7 +195,7 @@ private fun StageScreen(player: SongPlayer) {
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun StageControls(player: SongPlayer, modifier: Modifier) {
+private fun StageControls(player: SongPlayer, host: EngineHost, modifier: Modifier) {
     Column(modifier) {
         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
             BigButton("◀", enabled = player.songIndex > 0, width = 88) { player.previousSong() }
@@ -233,9 +233,10 @@ private fun StageControls(player: SongPlayer, modifier: Modifier) {
             Tab(stringResource(R.string.store_levels), false, longPressOnly = true) { player.storeLevels() }
         }
         val engines = player.rack?.slots?.keys?.sorted().orEmpty()
+        Row(Modifier.fillMaxWidth().weight(1f)) {
         // Scrolls sideways when the panels do not fit (a phone, portrait: S18.4, S20.2).
         Row(horizontalArrangement = Arrangement.spacedBy(16.dp),
-            modifier = Modifier.fillMaxWidth().weight(1f).horizontalScroll(rememberScrollState())) {
+            modifier = Modifier.weight(1f).fillMaxHeight().horizontalScroll(rememberScrollState())) {
             if (RackEngine.HAMMOND in engines) OrganPanel(player)
             for (e in engines) {
                 val plays = player.playing[e] ?: false
@@ -251,6 +252,33 @@ private fun StageControls(player: SongPlayer, modifier: Modifier) {
                 }
             }
         }
+        Spacer(Modifier.width(16.dp))
+        MasterFader(host)
+        }
+    }
+}
+
+/**
+ * The master volume, at the end of the chain (README "Master volume"): a global
+ * control, never recalled by a live set (I6.8). -40 to +12 dB; a long press on
+ * its label returns it to 0 dB. Moves only by dragging (S17.4).
+ */
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun MasterFader(host: EngineHost) {
+    var db by remember { mutableStateOf(host.masterDb()) }
+    val min = NativeBridge.MASTER_MIN_DB
+    val max = NativeBridge.MASTER_MAX_DB
+    Column(Modifier.width(110.dp).fillMaxHeight().background(Panel, RoundedCornerShape(10.dp)).padding(10.dp),
+        horizontalAlignment = Alignment.CenterHorizontally) {
+        Text(stringResource(R.string.master), fontWeight = FontWeight.SemiBold,
+            modifier = Modifier.combinedClickable(onClick = {}, onLongClick = { host.setMasterDb(0f); db = 0f }))
+        Text("%+.1f dB".format(db), fontSize = 16.sp)
+        Spacer(Modifier.height(8.dp))
+        RelativeFader((db - min) / (max - min), { f ->
+            val v = Math.round((min + f * (max - min)) * 2f) / 2f
+            host.setMasterDb(v); db = v
+        }, Modifier.weight(1f).fillMaxWidth(), color = Warn)
     }
 }
 

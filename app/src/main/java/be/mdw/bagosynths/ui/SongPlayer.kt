@@ -36,6 +36,9 @@ interface EngineHost {
     fun setAudioMode(mode: String)
     fun setMidiMode(mode: String)
     fun setUsbBufferMs(ms: Int)
+    /** The master volume in dB, a global control: never recalled by a live set (I6.8). */
+    fun masterDb(): Float
+    fun setMasterDb(db: Float)
     /** Do Not Disturb while the app is in front (S17.2); asking for access first if needed. */
     fun stageDnd(): Boolean
     fun setStageDnd(on: Boolean)
