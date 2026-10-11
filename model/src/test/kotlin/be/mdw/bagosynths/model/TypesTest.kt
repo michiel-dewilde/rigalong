@@ -48,9 +48,10 @@ class TypesTest {
 
     @Test
     fun cp88ProfileMatchesFbx() {
-        val j = Types.toJson(UsbProfile.CP88).canonical()
+        val profile = be.mdw.bagosynths.model.devices.cp88.Cp88Driver.usbAudio
+        val j = Types.toJson(profile).canonical()
         assertTrue("\"startFill\":176" in j)
         assertTrue("\"nominal\":44.1" in j)
-        assertEquals(UsbProfile.CP88, Types.fromJson<UsbProfile>(Json.parse(j)))
+        assertEquals(profile, Types.fromJson<UsbProfile>(Json.parse(j)))
     }
 }

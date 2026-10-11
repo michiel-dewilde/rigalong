@@ -66,7 +66,6 @@ object MediaTypes {
     const val TYPE_PREFIX = "bagosynths."
     const val OCTET = "application/octet-stream"
     const val ENTRY = "application/vnd.bagosynths.entry.v1+json"
-    const val CP88_SOUND = "application/vnd.bagosynths.cp88sound.v1"
 
     /** `bagosynths.song/1` -> `application/vnd.bagosynths.song.v1+json`. */
     fun ofType(atType: String): String {

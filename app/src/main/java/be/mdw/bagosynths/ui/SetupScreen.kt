@@ -104,25 +104,38 @@ fun SetupScreen(player: SongPlayer, host: EngineHost, lib: Library) {
             ModeRow(routing.midiMode, accent, dim) { host.setMidiMode(it) }
             Text(stringResource(R.string.usb_device_note), color = dim, fontSize = 12.sp)
             Spacer(Modifier.height(6.dp))
-            Text(stringResource(R.string.cp88), fontWeight = FontWeight.SemiBold)
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(stringResource(R.string.reserved_page), color = dim, modifier = Modifier.width(140.dp))
-                TextButton(onClick = { player.reservedPage = player.reservedPage - 1; tick++ }) { Text("−") }
-                Text(player.reservedPage.toString(), modifier = Modifier.width(32.dp))
-                TextButton(onClick = { player.reservedPage = player.reservedPage + 1; tick++ }) { Text("+") }
-                Text(stringResource(R.string.reserved_page_note), color = dim, fontSize = 12.sp)
+            // External devices (I10.1): each as its driver allows (model/devices).
+            Text(stringResource(R.string.devices), fontWeight = FontWeight.SemiBold)
+            Text(stringResource(R.string.devices_note), color = dim, fontSize = 12.sp)
+            for (d in player.devices.devices.toList()) {
+                val drv = player.devices.driver(d)
+                // A change to a device rewrites what the song gives it.
+                fun put(n: be.mdw.bagosynths.model.ExternalSynth) { player.devices.replace(d, n); player.devices.forget(); player.reload(); tick++ }
+                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 6.dp)) {
+                    Text(d.name, fontWeight = FontWeight.SemiBold)
+                    Text("  " + drv.label, color = dim, fontSize = 12.sp, modifier = Modifier.weight(1f))
+                    TextButton(onClick = { player.devices.update(player.devices.devices - d); tick++ }) {
+                        Text(stringResource(R.string.remove_device), color = Color(0xFFE5534B))
+                    }
+                }
+                Stepper(stringResource(R.string.device_channel), d.channel, 1..16, dim) { put(d.copy(channel = it)) }
+                drv.sounds?.let { s ->
+                    val area = d.reservedAreas.firstOrNull() ?: s.area.range.last
+                    Stepper(stringResource(R.string.reserved_area, s.area.label), area, s.area.range, dim,
+                        note = stringResource(R.string.reserved_area_note)) { put(d.copy(reservedAreas = listOf(it))) }
+                    SetupToggle(stringResource(R.string.device_follows, s.area.label), d.selectsLiveSets, accent, dim) {
+                        put(d.copy(selectsLiveSets = it))
+                    }
+                    OutlinedButton(onClick = { player.devices.forget(); player.reload() }) {
+                        Text(stringResource(R.string.rewrite_area, s.area.label))
+                    }
+                }
             }
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(stringResource(R.string.midi_channel), color = dim, modifier = Modifier.width(140.dp))
-                TextButton(onClick = { player.cp88Channel = player.cp88Channel - 1; tick++ }) { Text("−") }
-                Text(player.cp88Channel.toString(), modifier = Modifier.width(32.dp))
-                TextButton(onClick = { player.cp88Channel = player.cp88Channel + 1; tick++ }) { Text("+") }
+                for (drv in be.mdw.bagosynths.model.devices.Devices.drivers) {
+                    TextButton(onClick = { player.devices.add(drv); tick++ }) { Text(stringResource(R.string.add_device, drv.label)) }
+                }
             }
-            var follows by remember { mutableStateOf(player.cp88Follows) }
-            SetupToggle(stringResource(R.string.cp88_follows), follows, accent, dim) {
-                player.cp88Follows = it; follows = it; player.forgetCp88Page(); player.reload()
-            }
-            OutlinedButton(onClick = { player.forgetCp88Page(); player.reload() }) { Text(stringResource(R.string.rewrite_cp88_page)) }
             Spacer(Modifier.height(6.dp))
             Text(stringResource(R.string.switching), fontWeight = FontWeight.SemiBold)
             for (action in SongPlayer.CONTROLLER_ACTIONS) {
@@ -332,4 +345,16 @@ private fun needsAttention(line: String): Boolean {
     return faults.any { it in line } ||
         (line.startsWith("dropouts") && !line.drop(12).startsWith("none in the last minute")) ||
         Regex("""\b[1-9][0-9]* alt errors""").containsMatchIn(line)
+}
+
+/** A whole number with − and +, kept within [range]. */
+@Composable
+private fun Stepper(label: String, value: Int, range: IntRange, dim: Color, note: String = "", onSet: (Int) -> Unit) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Text(label, color = dim, modifier = Modifier.width(140.dp))
+        TextButton(onClick = { onSet((value - 1).coerceIn(range)) }) { Text("−") }
+        Text(value.toString(), modifier = Modifier.width(32.dp))
+        TextButton(onClick = { onSet((value + 1).coerceIn(range)) }) { Text("+") }
+        if (note.isNotEmpty()) Text(note, color = dim, fontSize = 12.sp)
+    }
 }

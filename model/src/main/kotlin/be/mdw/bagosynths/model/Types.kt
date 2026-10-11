@@ -115,7 +115,7 @@ data class MidiBinding(
 data class Control(
     val id: String,
     val label: String,
-    /** "node.param", or "cp88.<parameter>" for the CP-88's own. */
+    /** "node.param", or "<device>.<parameter>" for an external device's own. */
     val target: String,
     val widget: String = "fader",     // fader | knob | drawbar | toggle | button | selector
     val min: Double = 0.0,
@@ -141,7 +141,7 @@ data class Song(
     val liveSets: List<RefJ> = emptyList(),
     val controls: List<Control> = emptyList(),
     val stage: StageLayout? = null,
-    /** Incoming selection ("pc:<ch>:<n>", "cp88:<page>:<set>", "key:<name>") -> live set index (I10.4). */
+    /** Incoming selection ("pc:<ch>:<n>", "<device>:<address>", "key:<name>") -> live set index (I10.4). */
     val switching: Map<String, Int> = emptyMap(),
     val tempo: Tempo? = null,
     val leadSheet: RefJ? = null,
@@ -156,12 +156,21 @@ data class WireState(val on: Boolean = true, val gain: Double = 1.0)
 @Serializable
 data class MidiSend(val port: String, val hex: String)
 
-/** What a live set does to the CP-88 (I4.7). */
+/**
+ * What a live set does to one external device (I4.7, I6.7): leave it, select
+ * one of its stored sounds, or give it a sound of its own. The device's driver
+ * ([be.mdw.bagosynths.model.devices.DeviceDriver]) says what an address is
+ * (a CP-88's page and set, a module's program and bank) and whether it can own
+ * a sound; the sound is in the driver's stored form, with its media type.
+ */
 @Serializable
-data class Cp88Action(
+data class DeviceAction(
+    /** The driver: "midi", "yamaha.cp88". */
+    val kind: String,
     val mode: String,                 // leave | select | own
-    val page: Int? = null,
-    val set: Int? = null,
+    /** select: the driver's address fields, e.g. {"page": 3, "set": 5} or {"program": 12}. */
+    val address: Map<String, Int> = emptyMap(),
+    /** own: the sound. */
     val sound: RefJ? = null,
 )
 
@@ -175,7 +184,8 @@ data class LiveSet(
     val recall: Map<String, Recall> = emptyMap(),
     val transitionMs: Map<String, Double> = emptyMap(),
     val onSelect: List<MidiSend> = emptyList(),
-    val cp88: Cp88Action? = null,
+    /** Per external device, by its name in the environment ("CP-88"): what selecting this live set does to it. */
+    val devices: Map<String, DeviceAction> = emptyMap(),
     /** Stage cells shown in this live set; empty means all. */
     val visible: List<String> = emptyList(),
     val leadSheetPage: Int? = null,
@@ -235,14 +245,16 @@ data class Binding(
 
 @Serializable
 data class ExternalSynth(
+    /** What songs call it: the key of [LiveSet.devices]. */
     val name: String,
-    val kind: String,                 // cp88 | midi
+    /** Its driver: "midi", "yamaha.cp88" (model/devices). */
+    val kind: String,
     val midiOut: String,
     val midiIn: String? = null,
     val channel: Int = 1,
-    /** CP-88 pages (1-40) the app may write songs into (I3.4). */
-    val reservedPages: List<Int> = emptyList(),
-    /** Its own live set buttons select the app's live sets, its page kept silent elsewhere (S4.12). */
+    /** Areas of the device the app may write songs' own sounds into (I3.4): for a CP-88, pages 1-40. */
+    val reservedAreas: List<Int> = emptyList(),
+    /** Its own selections in the reserved area select the app's live sets, the area kept silent elsewhere (S4.12). */
     val selectsLiveSets: Boolean = false,
     val midnam: RefJ? = null,
 )
@@ -250,7 +262,7 @@ data class ExternalSynth(
 @Serializable
 data class SwitchSource(
     val port: String,
-    /** programChange | cc | key | cp88 */
+    /** programChange | cc | key | device */
     val kind: String,
     val channel: Int? = null,
     val number: Int? = null,
@@ -309,16 +321,8 @@ data class UsbProfile(
     val notes: String? = null,
     @SerialName("@type") @EncodeDefault val type: String = TYPE,
 ) {
-    companion object {
-        const val TYPE = "bagosynths.usbprofile/1"
-
-        /** FBX_PROFILE_CP88, measured on Michiel's unit (CP88-USB-AUDIO.md). */
-        val CP88 = UsbProfile(
-            match = DeviceMatch(vendor = 0x0499, name = "CP88/CP73"),
-            fbx = FbxProfile(1, 1, 0x07, 2, 1, 0x86, 6, 45, 44.1, 176, 4, 132.7, 135.5, 1.0),
-            measuredOn = "CP88, 2026-10-04, cp88bench",
-        )
-    }
+    /** A device's own profile is its driver's (DeviceDriver.usbAudio). */
+    companion object { const val TYPE = "bagosynths.usbprofile/1" }
 }
 
 // ------------------------------------------------------------------- codec
@@ -361,6 +365,12 @@ object Types {
         is Json.Arr -> JsonArray(j.items.map(::toKx))
         is Json.Obj -> JsonObject(j.members.mapValues { toKx(it.value) })
     }
+}
+
+/** An environment's external devices as text and back, for the app's own settings between sessions. */
+object ExternalSynths {
+    fun toText(list: List<ExternalSynth>): String = Json.Arr(list.map { Types.toJson(it) }).canonical()
+    fun fromText(text: String): List<ExternalSynth> = Json.parse(text).arr().map { Types.fromJson<ExternalSynth>(it) }
 }
 
 inline fun <reified T> Store.putTyped(value: T): Digest = put(Types.toJson(value))

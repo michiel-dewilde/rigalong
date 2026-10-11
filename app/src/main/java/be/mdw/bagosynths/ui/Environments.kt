@@ -3,7 +3,6 @@ package be.mdw.bagosynths.ui
 import be.mdw.bagosynths.model.Binding
 import be.mdw.bagosynths.model.DeviceMatch
 import be.mdw.bagosynths.model.Environment
-import be.mdw.bagosynths.model.ExternalSynth
 import be.mdw.bagosynths.model.PortDef
 import be.mdw.bagosynths.model.PortKind
 import be.mdw.bagosynths.model.SwitchSource
@@ -13,8 +12,8 @@ import be.mdw.bagosynths.model.SwitchSource
  *
  * This first slice keeps the rack's fixed ports -- "Main Out" (audio), "Keys"
  * (MIDI in and out) -- and binds them to devices by their own names, with
- * their modes and the USB buffer; the CP-88 as an external synth with its
- * reserved page, channel and whether its buttons select live sets; the
+ * their modes and the USB buffer; the external devices with their
+ * channels, reserved areas and whether they select live sets; the
  * switching controllers; the lead-sheet options; Do Not Disturb; and the
  * master volume, which is a property of the room.
  */
@@ -31,9 +30,7 @@ object Environments {
                     bufferMs = r.bufferMs.toDouble()),
                 KEYS to Binding(mode = r.midiMode, device = DeviceMatch(name = r.midiName)),
             ),
-            externalSynths = listOf(ExternalSynth(
-                name = "CP-88", kind = "cp88", midiOut = KEYS, midiIn = KEYS, channel = player.cp88Channel,
-                reservedPages = listOf(player.reservedPage), selectsLiveSets = player.cp88Follows)),
+            externalSynths = player.devices.devices.toList(),
             switching = SongPlayer.CONTROLLER_ACTIONS.mapNotNull { a ->
                 player.controllers[a]?.takeIf { it >= 0 }?.let { SwitchSource(KEYS, "cc", number = it, action = a) }
             },
@@ -56,11 +53,8 @@ object Environments {
             audioName = out?.device?.name, audioMode = out?.mode ?: "ALSA",
             midiName = keys?.device?.name, midiMode = keys?.mode ?: "ALSA",
             bufferMs = out?.bufferMs?.toInt() ?: 6))
-        env.externalSynths.firstOrNull { it.kind == "cp88" }?.let { cp ->
-            player.cp88Channel = cp.channel
-            cp.reservedPages.firstOrNull()?.let { player.reservedPage = it }
-            player.cp88Follows = cp.selectsLiveSets
-        }
+        player.devices.update(env.externalSynths)
+        player.devices.forget()
         player.setControllers(env.switching.filter { it.kind == "cc" && it.number != null }
             .associate { it.action to it.number!! })
         player.sheetTwoUp = env.twoUp
@@ -76,8 +70,8 @@ object Environments {
         env.masterDb?.let { host.setMasterDb(it.toFloat()) }
         // After the reroute has settled -- it runs on its own thread and takes
         // the USB device away and back -- or the song would be set up on the
-        // session being closed. The CP-88's page is rewritten in full as soon
-        // as MIDI out comes back (SongPlayer.watchMidiOut); this reload then
+        // session being closed. The devices' reserved areas are rewritten in full
+        // as soon as MIDI out comes back (DeviceRig.midiOutReady); this reload then
         // finds it in place and writes only what the new settings change.
         android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({ player.reload() }, 2500)
     }

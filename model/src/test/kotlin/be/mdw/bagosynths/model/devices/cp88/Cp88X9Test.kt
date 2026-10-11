@@ -1,4 +1,4 @@
-package be.mdw.bagosynths.model
+package be.mdw.bagosynths.model.devices.cp88
 
 import kotlin.test.Test
 import kotlin.test.assertContentEquals

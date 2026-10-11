@@ -1,5 +1,7 @@
 package be.mdw.bagosynths.model
 
+import be.mdw.bagosynths.model.devices.Devices
+import be.mdw.bagosynths.model.devices.FoundSound
 import java.io.File
 import java.time.Instant
 
@@ -125,33 +127,36 @@ class Library(dir: File, private val author: String) {
         else update(entryId, author, now(), target = target, name = name)
     }
 
-    /** CP-88 Live Set Sounds kept in the library (I8.1): read from the keyboard, or from its files. */
-    fun cp88Sounds(): List<Entry> = store.entries()
-        .filter { it.version.target?.type == Cp88.MEDIA_TYPE }
+    /**
+     * External devices' own sounds kept in the library (I8.1) -- read from a
+     * device, or from its files: every entry whose type is a driver's sound
+     * type (model/devices), or only [mediaType]'s.
+     */
+    fun deviceSounds(mediaType: String? = null): List<Entry> = store.entries()
+        .filter { e -> e.version.target?.type?.let { t -> if (mediaType != null) t == mediaType else Devices.forSounds(t) != null } == true }
         .sortedBy { it.version.name.lowercase() }
 
-    /** The sound (stored form, Cp88) entry [id] holds now. */
-    fun cp88Sound(id: Digest): ByteArray? = store.entry(id)?.version?.target?.let { store.get(it.digest) }
+    /** The sound (the driver's stored form) entry [id] holds now. */
+    fun deviceSound(id: Digest): ByteArray? = store.entry(id)?.version?.target?.let { store.get(it.digest) }
 
-    fun saveCp88Sound(entryId: Digest?, name: String, sound: ByteArray): Digest = change("CP-88 sound", name) {
-        val target = Ref(store.put(sound), Cp88.MEDIA_TYPE)
+    fun saveDeviceSound(entryId: Digest?, name: String, mediaType: String, sound: ByteArray): Digest = change("device sound", name) {
+        val target = Ref(store.put(sound), mediaType)
         if (entryId == null) create(name, target, author, now())
         else update(entryId, author, now(), target = target, name = name)
     }
 
     /**
-     * The Live Set Sounds of a CP88/CP73 file (Cp88X9), as one change -- one
-     * Undo. A sound the library already has, under any name, is not added
-     * again (a backup holds the same Init Sound many times). Returns how many
-     * were added.
+     * The sounds of a device's file, as one change -- one Undo. A sound the
+     * library already has, under any name, is not added again (a CP-88 backup
+     * holds the same Init Sound many times). Returns how many were added.
      */
-    fun importCp88Sounds(fileName: String, slots: List<Cp88X9.Slot>): Int = change("import", fileName) {
-        val have = cp88Sounds().mapNotNull { it.version.target?.digest }.toMutableSet()
+    fun importDeviceSounds(fileName: String, mediaType: String, sounds: List<FoundSound>): Int = change("import", fileName) {
+        val have = deviceSounds(mediaType).mapNotNull { it.version.target?.digest }.toMutableSet()
         var added = 0
-        for (s in slots) {
+        for (s in sounds) {
             val d = store.put(s.sound)
             if (!have.add(d)) continue
-            create(s.name.ifBlank { "${s.page}:${s.set}" }, Ref(d, Cp88.MEDIA_TYPE), author, now())
+            create(s.name.ifBlank { s.where }, Ref(d, mediaType), author, now())
             added++
         }
         added

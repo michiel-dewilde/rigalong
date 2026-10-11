@@ -26,7 +26,8 @@ class LiveSetSwitcher(private val song: Song, private val liveSets: List<LiveSet
         data class Enable(val node: String, val on: Boolean) : Change()
         data class WireSet(val wire: String, val on: Boolean, val gain: Double) : Change()
         data class Send(val port: String, val hex: String) : Change()
-        data class Cp88(val action: Cp88Action) : Change()
+        /** What to do to the external device [device] (its name in the environment). */
+        data class Device(val device: String, val action: DeviceAction) : Change()
     }
 
     /** The value each parameter has now, as far as this switcher knows. */
@@ -107,7 +108,7 @@ class LiveSetSwitcher(private val song: Song, private val liveSets: List<LiveSet
             }
         }
         for (m in ls.onSelect) out += Change.Send(m.port, m.hex)
-        ls.cp88?.let { out += Change.Cp88(it) }
+        for ((name, a) in ls.devices) out += Change.Device(name, a)
 
         selected = index
         return out

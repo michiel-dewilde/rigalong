@@ -51,19 +51,27 @@ class RackTest {
     }
 
     @Test
-    fun cp88ActionsRoundTrip() {
+    fun deviceActionsRoundTrip() {
         val sound = store.put(byteArrayOf(1, 2, 3))
         val d = draft.copy(liveSets = listOf(
-            draft.liveSets[0].copy(cp88 = RackCp88("select", page = 3, set = 5)),
-            draft.liveSets[1].copy(cp88 = RackCp88("own", sound = sound)),
+            draft.liveSets[0].copy(devices = mapOf(
+                "CP-88" to RackDevicePart("yamaha.cp88", "select", mapOf("page" to 3, "set" to 5)),
+                "Module" to RackDevicePart("midi", "select", mapOf("program" to 12, "bankMsb" to 0)))),
+            draft.liveSets[1].copy(devices = mapOf("CP-88" to RackDevicePart("yamaha.cp88", "own", sound = sound))),
         ))
         val back = RackSong.fromObjects(store, d.toObjects(store))!!
-        assertEquals(RackCp88("select", 3, 5), back.liveSets[0].cp88)
-        assertEquals("own", back.liveSets[1].cp88.mode)
-        assertEquals(sound, back.liveSets[1].cp88.sound)
-        // The song reaches its CP-88 sound, so export carries it.
+        assertEquals(RackDevicePart("yamaha.cp88", "select", mapOf("page" to 3, "set" to 5)), back.liveSets[0].devices["CP-88"])
+        assertEquals(mapOf("program" to 12, "bankMsb" to 0), back.liveSets[0].devices["Module"]?.address)
+        assertEquals("own", back.liveSets[1].devices["CP-88"]?.mode)
+        assertEquals(sound, back.liveSets[1].devices["CP-88"]?.sound)
+        // A device a live set leaves alone is not stored at all.
+        val left = draft.copy(liveSets = listOf(draft.liveSets[0].copy(devices = mapOf("CP-88" to RackDevicePart("yamaha.cp88"))),
+            draft.liveSets[1]))
+        assertEquals(emptyMap(), RackSong.fromObjects(store, left.toObjects(store))!!.liveSets[0].devices)
+        // The song reaches its device sound, typed as the driver's, so export carries it.
         val c = store.closure(listOf(Ref(store.putTyped(d.toObjects(store)))))
         assertTrue(sound in c.types.keys)
+        assertEquals("application/vnd.bagosynths.cp88sound.v1", c.types[sound])
     }
 
     @Test
@@ -127,21 +135,6 @@ class RackTest {
         assertEquals("mix.fx:out", song.wires["mix.out"]?.from)
         assertEquals(hall, RackSong.fromObjects(store, song)?.masterFx)
         assertEquals("mix:out", draft.toObjects(store).wires["mix.out"]?.from)
-    }
-
-    @Test
-    fun aProgramChangeOnSelectRoundTrips() {
-        val pc = RackProgram(channel = 3, program = 12, bankMsb = 0, bankLsb = 5)
-        assertEquals("b20000b22005c20b", pc.hex())
-        assertEquals(pc, RackProgram.parse(pc.hex()))
-        assertEquals(RackProgram(1, 128), RackProgram.parse(RackProgram(1, 128).hex()))
-        assertEquals(null, RackProgram.parse("b0076e"))          // a volume change is not one
-        val song = draft.copy(liveSets = listOf(draft.liveSets[0].copy(program = pc), draft.liveSets[1])).toObjects(store)
-        val back = assertNotNull(RackSong.fromObjects(store, song))
-        assertEquals(pc, back.liveSets[0].program)
-        assertEquals(null, back.liveSets[1].program)
-        val switcher = LiveSetSwitcher(song, song.liveSets.map { store.getTyped<LiveSet>(it.toRef().digest) })
-        assertTrue(switcher.select(0).contains(LiveSetSwitcher.Change.Send("Keys", "b20000b22005c20b")))
     }
 
     @Test

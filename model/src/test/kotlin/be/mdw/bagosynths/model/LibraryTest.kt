@@ -1,5 +1,8 @@
 package be.mdw.bagosynths.model
 
+import be.mdw.bagosynths.model.devices.FoundSound
+import be.mdw.bagosynths.model.devices.cp88.Cp88
+import be.mdw.bagosynths.model.devices.cp88.Cp88X9
 import java.nio.file.Files
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -88,20 +91,22 @@ class LibraryTest {
     }
 
     @Test
-    fun cp88SoundsFromAFileAreOneChangeAndKeptOnce() {
-        val slots = listOf(
-            Cp88X9.Slot(1, 1, "Silent", Cp88.SILENT),
-            Cp88X9.Slot(1, 2, "Init Sound", Cp88X9.INIT_SOUND),
-            Cp88X9.Slot(1, 3, "Init Sound", Cp88X9.INIT_SOUND),
+    fun deviceSoundsFromAFileAreOneChangeAndKeptOnce() {
+        val type = Cp88.MEDIA_TYPE
+        val sounds = listOf(
+            FoundSound("Silent", Cp88.SILENT, "1:1"),
+            FoundSound("Init Sound", Cp88X9.INIT_SOUND, "1:2"),
+            FoundSound("Init Sound", Cp88X9.INIT_SOUND, "1:3"),
         )
-        val before = lib.cp88Sounds().size
-        assertEquals(2, lib.importCp88Sounds("backup.X9A", slots))
-        assertEquals(before + 2, lib.cp88Sounds().size)
-        assertEquals(0, lib.importCp88Sounds("again.X9A", slots), "nothing new the second time")
-        val silent = lib.cp88Sounds().first { it.version.name == "Silent" }
-        kotlin.test.assertContentEquals(Cp88.SILENT, lib.cp88Sound(silent.id))
+        val before = lib.deviceSounds().size
+        assertEquals(2, lib.importDeviceSounds("backup.X9A", type, sounds))
+        assertEquals(before + 2, lib.deviceSounds().size)
+        assertEquals(before + 2, lib.deviceSounds(type).size)
+        assertEquals(0, lib.importDeviceSounds("again.X9A", type, sounds), "nothing new the second time")
+        val silent = lib.deviceSounds().first { it.version.name == "Silent" }
+        kotlin.test.assertContentEquals(Cp88.SILENT, lib.deviceSound(silent.id))
         assertEquals("backup.X9A", lib.lastChange()?.name, "an import that added nothing is no change")
         lib.undo()          // the import: both sounds go
-        assertEquals(before, lib.cp88Sounds().size)
+        assertEquals(before, lib.deviceSounds().size)
     }
 }

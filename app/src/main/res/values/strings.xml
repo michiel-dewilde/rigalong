@@ -3,7 +3,7 @@
   Every string of the new UI (REQUIREMENTS S19.1): English at release, and a
   translation is a values-xx/strings.xml with no code change. Not here yet,
   and going with the rest of M3: the prototype screen, the engine's status
-  lines, and the player's own status messages (SongPlayer.cp88Status).
+  lines, and the player's own status messages (DeviceRig.status).
 -->
 <resources>
     <string name="app_name">Bag-O-Synths</string>
@@ -39,12 +39,6 @@
     <string name="reverb">Reverb</string>
     <string name="fx_button">FX…</string>
     <string name="fx_in_live_set">effect</string>
-    <string name="program_change">Program change</string>
-    <string name="channel_short">ch</string>
-    <string name="program_short">program</string>
-    <string name="bank">bank</string>
-    <string name="bank_msb">MSB</string>
-    <string name="bank_lsb">LSB</string>
     <string name="master_fx_button">Master FX…</string>
     <string name="master_fx_is">Master: %1$s</string>
     <string name="master_fx_title">Effect on the whole mix</string>
@@ -66,7 +60,7 @@
     <string name="click_audio">Click in the main out (otherwise: the beat on the screen only)</string>
     <string name="click_level">Click level</string>
     <string name="midi_clock">MIDI clock out to the keyboard (USB device or interface mode)</string>
-    <string name="click_note">With the CP-88 as the only output, the click reaches the audience too. MIDI clock (24 a beat, with Start at the click) lets gear that follows it, such as tempo-synced delays, keep the song\'s tempo.</string>
+    <string name="click_note">With the keyboard as the only output, the click reaches the audience too. MIDI clock (24 a beat, with Start at the click) lets gear that follows it, such as tempo-synced delays, keep the song\'s tempo.</string>
     <string name="tempo">Tempo</string>
     <string name="bpm_short">BPM</string>
 
@@ -100,16 +94,9 @@
     <string name="transpose_short">transp.</string>
     <string name="channel_in_short">ch in</string>
     <string name="own_level">own level</string>
-    <string name="cp88">CP-88</string>
-    <string name="cp88_leave">Leave</string>
-    <string name="cp88_select">Select</string>
-    <string name="cp88_own">Own sound</string>
-    <string name="page">page</string>
-    <string name="set">set</string>
     <string name="unnamed">(unnamed)</string>
     <string name="no_sound_yet">no sound yet</string>
     <string name="import_current_sound">Import current sound</string>
-    <string name="reading_cp88">reading the CP-88…</string>
     <string name="as_loaded">As loaded</string>
     <string name="cancel">Cancel</string>
     <string name="patch_of">%1$s: patch</string>
@@ -123,21 +110,34 @@
     <string name="new_sound_for_live_set">New sound for this live set</string>
     <string name="use_in_song">Use in song</string>
     <string name="import_any">Import…</string>
-    <string name="imported_cp88">%1$d CP-88 sounds in the file, %2$d new in the library</string>
     <string name="unknown_file">“%1$s”: not a file the app can import yet</string>
-    <string name="cp88_sounds">CP-88 sounds</string>
-    <string name="no_cp88_sounds">None yet: import a .X9S, .X9P, .X9L, .X9A or cp-liveset .yaml file in the Library, or import the current sound.</string>
+    <string name="device_leave">Leave</string>
+    <string name="device_select">Select</string>
+    <string name="device_own">Own sound</string>
+    <string name="reading_device">reading %1$s…</string>
+    <string name="imported_device_sounds">%1$d %2$s sounds in the file, %3$d new in the library</string>
+    <string name="device_sounds">Device sounds</string>
+    <string name="device_sounds_of">%1$s sounds</string>
+    <string name="no_device_sounds">None yet: import a device\'s own files in the Library (for a CP-88: .X9S, .X9P, .X9L, .X9A or cp-liveset .yaml), or import its current sound.</string>
+    <string name="play_on">Play on %1$s</string>
+    <string name="device_playing">On %1$s now, as its current sound</string>
+    <string name="device_unreachable">%1$s not reachable (MIDI out needs a direct USB mode)</string>
+    <string name="save_ext">.%1$s</string>
+    <string name="export_area">%1$s %2$s .%3$s</string>
+    <string name="edit_as">%1$s…</string>
+    <string name="device_sound_title">%1$s sound “%2$s”</string>
+    <string name="text_reads_as">Reads as “%1$s”</string>
+    <string name="save_as_ext">Save as .%1$s</string>
+    <string name="devices">Devices</string>
+    <string name="devices_note">Keyboards and sound modules the app drives over MIDI. What a live set does to each is set in its song. A device the app knows by name is added when it is plugged in.</string>
+    <string name="add_device">+ %1$s</string>
+    <string name="device_channel">MIDI channel</string>
+    <string name="reserved_area">Reserved %1$s</string>
+    <string name="reserved_area_note">songs write their own sounds here</string>
+    <string name="device_follows">Its own selections choose the song\'s live sets. Its reserved %1$s then gets a silent sound wherever a live set does not give it one, so it never mixes in sounds of its own.</string>
+    <string name="rewrite_area">Rewrite the reserved %1$s</string>
+    <string name="remove_device">Remove</string>
     <string name="from_library">From library…</string>
-    <string name="play_on_cp88">Play on CP-88</string>
-    <string name="cp88_playing">On the CP-88 now, as its current sound</string>
-    <string name="cp88_unreachable">CP-88 not reachable (MIDI out needs a direct USB mode)</string>
-    <string name="export_x9s">.X9S</string>
-    <string name="export_cp88_page">CP-88 page .X9P</string>
-    <string name="edit_yaml">YAML…</string>
-    <string name="cp88_yaml_title">CP-88 sound “%1$s”</string>
-    <string name="cp88_yaml_hint">cp-liveset’s YAML: only what differs from the standard sound is listed. Add a line to change anything else; names or numbers both work.</string>
-    <string name="cp88_yaml_ok">Reads as “%1$s”</string>
-    <string name="export_yaml">Save as .yaml</string>
     <string name="revert">Revert</string>
     <string name="learn_control">MIDI</string>
     <string name="move_a_control">Move a control…</string>
@@ -146,7 +146,7 @@
     <string name="live_set_sound_n">Sound (%1$d)</string>
     <string name="done">Done</string>
     <string name="share_diagnostics">Share diagnostics…</string>
-    <string name="share_diagnostics_note">The log of the audio path, the CP-88 and the heat, kept on this tablet. It leaves only when you send it, to whom you choose.</string>
+    <string name="share_diagnostics_note">The log of the audio path, the devices and the heat, kept on this tablet. It leaves only when you send it, to whom you choose.</string>
     <string name="details">Details</string>
     <string name="library_tag">library</string>
     <string name="patch_is_library">Library patch “%1$s”</string>
@@ -235,11 +235,10 @@
     <string name="ms">%1$d ms</string>
     <string name="usb_buffer_note">the queue on the wire in the direct modes</string>
     <string name="midi_in_out">MIDI in and out</string>
-    <string name="usb_device_note">USB device mode owns the whole device; moving one use there moves both. MIDI out (CP-88 selection, sounds) works in the direct modes.</string>
-    <string name="reserved_page">Reserved page</string>
+    <string name="usb_device_note">USB device mode owns the whole device; moving one use there moves both. MIDI out (device selection, sounds) works in the direct modes.</string>
     <string name="reserved_page_note">songs write their own sounds here</string>
     <string name="midi_channel">MIDI channel</string>
-    <string name="keys_note">The CP-88\'s own live set buttons select the current song\'s live sets (set n, live set n). Page turners and footswitches: Page Down / right arrow next live set, Page Up / left previous.</string>
+    <string name="keys_note">A device that follows the app (see Devices) selects the current song\'s live sets with its own buttons (set n, live set n). Page turners and footswitches: Page Down / right arrow next live set, Page Up / left previous.</string>
     <string name="open_prototype">Open the prototype screen</string>
     <string name="switching">Footswitches and MIDI controllers</string>
     <string name="cc_next">Next live set</string>
@@ -249,9 +248,7 @@
     <string name="learn">Learn</string>
     <string name="press_it">press it now…</string>
     <string name="none">none</string>
-    <string name="switching_note">"A controller pressed (value 64 or more) steps through live sets (or turns lead-sheet pages when the page-turner setting says so), taps the tempo, or starts and stops the click. The CP-88's foot switch jacks can be assigned to a controller. Direct USB modes."</string>
-    <string name="cp88_follows">"The CP-88's live set buttons select the song's live sets. Its reserved page then gets a silent sound wherever a live set does not give it one, so it never mixes in its own instruments."</string>
-    <string name="rewrite_cp88_page">"Rewrite the CP-88's reserved page"</string>
+    <string name="switching_note">"A controller pressed (value 64 or more) steps through live sets (or turns lead-sheet pages when the page-turner setting says so), taps the tempo, or starts and stops the click. A keyboard's foot switch jacks can be assigned to a controller. Direct USB modes."</string>
     <string name="status">Status</string>
     <string name="reset_counts">Reset counts</string>
     <string name="health_ok">%1$s  ·  %2$s  ·  %3$s ms</string>

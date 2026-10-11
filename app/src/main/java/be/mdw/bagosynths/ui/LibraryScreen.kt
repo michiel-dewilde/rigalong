@@ -65,8 +65,8 @@ fun LibraryScreen(player: SongPlayer, lib: Library, host: EngineHost, onOpened: 
     val setlists = remember(revision) { lib.setlists() }
     val songs = remember(revision) { lib.songs() }
     val patches = remember(revision) { lib.patches() }
-    val cp88Sounds = remember(revision) { lib.cp88Sounds() }
-    var exportSound by remember { mutableStateOf<Digest?>(null) }
+    val deviceSounds = remember(revision) { lib.deviceSounds() }
+    var exportSound by remember { mutableStateOf<Pair<Digest, be.mdw.bagosynths.model.devices.SoundFormat>?>(null) }
     var editSound by remember { mutableStateOf<Digest?>(null) }
     val last = remember(revision) { lib.lastChange() }
     var exportIds by remember { mutableStateOf<List<Digest>>(emptyList()) }
@@ -95,10 +95,11 @@ fun LibraryScreen(player: SongPlayer, lib: Library, host: EngineHost, onOpened: 
         }
     }
     val soundSaver = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/octet-stream")) { uri ->
-        val id = exportSound
-        if (uri != null && id != null) message = runCatching {
-            val sound = lib.cp88Sound(id) ?: error("no sound")
-            context.contentResolver.openOutputStream(uri)!!.use { it.write(be.mdw.bagosynths.model.Cp88X9.x9s(1, 1, sound)) }
+        val (id, format) = exportSound ?: return@rememberLauncherForActivityResult
+        if (uri != null) message = runCatching {
+            val sound = lib.deviceSound(id) ?: error("no sound")
+            val file = format.writeOne(sound) ?: error("${format.label} writes no single sounds")
+            context.contentResolver.openOutputStream(uri)!!.use { it.write(file.second) }
         }.fold({ context.getString(R.string.exported, 1) }, { context.getString(R.string.export_failed, it.message ?: "") })
     }
 
@@ -160,22 +161,35 @@ fun LibraryScreen(player: SongPlayer, lib: Library, host: EngineHost, onOpened: 
                         }
                     }
                 }
-                // CP-88 Live Set Sounds: from the keyboard or its files; heard on it, saved as .X9S, edited as YAML.
-                if (cp88Sounds.isNotEmpty()) {
-                    Text(stringResource(R.string.cp88_sounds), fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(top = 8.dp))
+                // External devices' own sounds (model/devices), by driver: from the device or its
+                // files; heard on it, saved as its files, edited as text where its driver can.
+                if (deviceSounds.isNotEmpty()) {
+                    Text(stringResource(R.string.device_sounds), fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(top = 8.dp))
                     LazyColumn(Modifier.heightIn(max = 220.dp)) {
-                        items(cp88Sounds) { e ->
-                            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-                                Text(e.version.name, modifier = Modifier.weight(1f))
-                                TextButton(onClick = {
-                                    val ok = lib.cp88Sound(e.id)?.let { player.auditionCp88(it) } ?: false
-                                    message = context.getString(if (ok) R.string.cp88_playing else R.string.cp88_unreachable)
-                                }) { Text(stringResource(R.string.play_on_cp88)) }
-                                TextButton(onClick = { exportSound = e.id; soundSaver.launch("${e.version.name.trim()}.X9S") }) {
-                                    Text(stringResource(R.string.export_x9s))
+                        for ((drv, entries) in deviceSounds.groupBy { be.mdw.bagosynths.model.devices.Devices.forSounds(it.version.target?.type ?: "") }) {
+                            if (drv == null) continue
+                            val sounds = drv.sounds!!
+                            item { Text(stringResource(R.string.device_sounds_of, drv.label), color = DimColor, fontSize = 12.sp) }
+                            items(entries) { e ->
+                                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                                    Text(e.version.name, modifier = Modifier.weight(1f))
+                                    player.devices.withSounds(sounds.mediaType).firstOrNull()?.let { d ->
+                                        TextButton(onClick = {
+                                            val ok = lib.deviceSound(e.id)?.let { player.devices.audition(d, it) } ?: false
+                                            message = context.getString(if (ok) R.string.device_playing else R.string.device_unreachable, d.name)
+                                        }) { Text(stringResource(R.string.play_on, d.name)) }
+                                    }
+                                    for (f in sounds.formats) {
+                                        val ext = remember(f) { f.writeOne(sounds.silent)?.first } ?: continue
+                                        TextButton(onClick = { exportSound = e.id to f; soundSaver.launch("${e.version.name.trim()}.$ext") }) {
+                                            Text(stringResource(R.string.save_ext, ext))
+                                        }
+                                    }
+                                    sounds.formats.firstOrNull { it.editable }?.let { f ->
+                                        TextButton(onClick = { editSound = e.id }) { Text(stringResource(R.string.edit_as, f.label)) }
+                                    }
+                                    TextButton(onClick = { detail = e.id }) { Text(stringResource(R.string.details)) }
                                 }
-                                TextButton(onClick = { editSound = e.id }) { Text(stringResource(R.string.edit_yaml)) }
-                                TextButton(onClick = { detail = e.id }) { Text(stringResource(R.string.details)) }
                             }
                         }
                     }
@@ -201,15 +215,21 @@ fun LibraryScreen(player: SongPlayer, lib: Library, host: EngineHost, onOpened: 
     }
     editSound?.let { id ->
         val entry = remember(id, revision) { lib.store.entry(id) }
-        val sound = remember(id, revision) { lib.cp88Sound(id) }
-        if (entry == null || sound == null) { editSound = null; return@let }
-        Cp88YamlEditor(entry.version.name, sound, player, onDismiss = { editSound = null }, onSave = { edited ->
-            // The entry follows the sound's name, unless it was given a name of its own.
-            val named = entry.version.name.trim() == be.mdw.bagosynths.model.Cp88.name(sound).trim()
-            val name = if (named) be.mdw.bagosynths.model.Cp88.name(edited).trim().ifEmpty { entry.version.name } else entry.version.name
-            lib.saveCp88Sound(id, name, edited)
-            revision++
-        })
+        val sound = remember(id, revision) { lib.deviceSound(id) }
+        val drv = entry?.version?.target?.type?.let { be.mdw.bagosynths.model.devices.Devices.forSounds(it) }
+        val format = drv?.sounds?.formats?.firstOrNull { it.editable }
+        if (entry == null || sound == null || drv == null || format == null) { editSound = null; return@let }
+        val sounds = drv.sounds!!
+        val device = player.devices.withSounds(sounds.mediaType).firstOrNull()
+        DeviceSoundEditor(device?.name ?: drv.defaultName, entry.version.name, sound, drv, format,
+            play = device?.let { d -> { s: ByteArray -> player.devices.audition(d, s) } },
+            onDismiss = { editSound = null }, onSave = { edited ->
+                // The entry follows the sound's name, unless it was given a name of its own.
+                val named = entry.version.name.trim() == sounds.name(sound).trim()
+                val name = if (named) sounds.name(edited).trim().ifEmpty { entry.version.name } else entry.version.name
+                lib.saveDeviceSound(id, name, sounds.mediaType, edited)
+                revision++
+            })
     }
 }
 
@@ -347,19 +367,14 @@ private fun displayName(context: android.content.Context, uri: android.net.Uri):
 
 /**
  * Imports one file, whatever it is (I8.8): told apart by its first bytes.
- * A library archive (.tar), a CP88/CP73 file (.X9S/.X9P/.X9L/.X9A) or
- * cp-liveset YAML document of its sounds, an SFZ instrument pack (.zip). Returns what it did, for the screen. Blocking.
+ * A library archive (.tar), an SFZ instrument pack (.zip), or a device's own
+ * file of sounds, recognised by its driver (model/devices: a CP-88's .X9* or
+ * cp-liveset YAML). Returns what it did, for the screen. Blocking.
  */
 private fun importFile(context: android.content.Context, lib: Library, host: EngineHost, name: String, bytes: ByteArray): String {
     fun starts(s: String, at: Int = 0) = bytes.size >= at + s.length &&
         String(bytes, at, s.length, Charsets.ISO_8859_1) == s
-    val text by lazy { bytes.toString(Charsets.UTF_8) }
     return when {
-        starts("YAMAHA-YSFC") -> {
-            val slots = be.mdw.bagosynths.model.Cp88X9.read(bytes)
-            val added = lib.importCp88Sounds(name, slots)
-            context.getString(R.string.imported_cp88, slots.size, added)
-        }
         starts("ustar", 257) -> {
             val r = java.io.ByteArrayInputStream(bytes).use { Exchange.import(lib.store, it) }
             val counts = r.results.values.groupingBy { it::class.simpleName }.eachCount()
@@ -367,12 +382,12 @@ private fun importFile(context: android.content.Context, lib: Library, host: Eng
         }
         starts("PK\u0003\u0004") ->
             context.getString(R.string.installed_instrument, java.io.ByteArrayInputStream(bytes).use { host.importInstrumentZip(it, name) })
-        // cp-liveset's YAML: text, told by its format line.
-        bytes.size < 4_000_000 && be.mdw.bagosynths.model.Cp88Yaml.isDocument(text) -> {
-            val slots = be.mdw.bagosynths.model.Cp88Yaml.readDocument(text)
-            val added = lib.importCp88Sounds(name, slots)
-            context.getString(R.string.imported_cp88, slots.size, added)
+        // A device's own file, as its driver recognises it.
+        else -> {
+            val (drv, sounds) = be.mdw.bagosynths.model.devices.Devices.readFile(name, bytes)
+                ?: error(context.getString(R.string.unknown_file, name))
+            val added = lib.importDeviceSounds(name, drv.sounds!!.mediaType, sounds)
+            context.getString(R.string.imported_device_sounds, sounds.size, drv.label, added)
         }
-        else -> error(context.getString(R.string.unknown_file, name))
     }
 }

@@ -1,6 +1,6 @@
-package be.mdw.bagosynths.model
+package be.mdw.bagosynths.model.devices.cp88
 
-import be.mdw.bagosynths.model.Cp88X9Tables as T
+import be.mdw.bagosynths.model.devices.cp88.Cp88X9Tables as T
 
 /**
  * The CP88/CP73's own files (REQUIREMENTS I4.17), after cp-liveset's

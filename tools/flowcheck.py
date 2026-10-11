@@ -473,7 +473,7 @@ def flow_import_cp88_file(f):
         time.sleep(1.5)
     f.tap(X9P)
     try:
-        f.see("8 CP-88 sounds in the file", exact=False, timeout=8)
+        f.see("8 Yamaha CP88/CP73 sounds in the file", exact=False, timeout=8)
         f.see("Test 7-6")
     finally:
         if "be.mdw.bagosynths" in focused_app():

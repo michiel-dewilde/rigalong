@@ -1,5 +1,7 @@
 package be.mdw.bagosynths.model
 
+import be.mdw.bagosynths.model.devices.Devices
+
 /**
  * The rack: songs as a simple form can edit them (PLAN.md M2/M3). A rack song
  * has INSTANCES -- its sounds, each an instance of one of six engines, several
@@ -128,67 +130,28 @@ data class RackPart(
 )
 
 /**
- * What a live set does to the CP-88 (I4.7): leave it alone, select one of its
- * stored sounds, or own a sound (stored in the library, written into the
- * environment's reserved page when the song is selected).
+ * What a live set does to one external device (I4.7, I6.7), keyed by the
+ * device's name in the environment: leave it alone, select one of its stored
+ * sounds at [address] (its driver's fields: a CP-88's page and set, a module's
+ * program and bank), or give it a sound of its own -- kept in the library in
+ * the driver's form, written into the device's reserved area when the song is
+ * selected. See model/devices.
  */
-data class RackCp88(
+data class RackDevicePart(
+    /** The driver: "midi", "yamaha.cp88". */
+    val kind: String,
     val mode: String = "leave",          // leave | select | own
-    val page: Int = 1,
-    val set: Int = 1,
+    val address: Map<String, Int> = emptyMap(),
     val sound: Digest? = null,           // mode own: the sound object
     val soundName: String? = null,
 )
-
-/**
- * A program change sent when the live set is selected (I6.7), for any
- * keyboard or sound module on the MIDI out: channel 1-16, program 1-128, and a
- * bank select before it when given (MSB, then LSB, 0-127).
- */
-data class RackProgram(val channel: Int = 1, val program: Int = 1, val bankMsb: Int? = null, val bankLsb: Int? = null) {
-    fun bytes(): ByteArray {
-        val ch = (channel - 1).coerceIn(0, 15)
-        val out = ArrayList<Int>()
-        bankMsb?.let { out += listOf(0xB0 or ch, 0x00, it.coerceIn(0, 127)) }
-        bankLsb?.let { out += listOf(0xB0 or ch, 0x20, it.coerceIn(0, 127)) }
-        out += listOf(0xC0 or ch, (program - 1).coerceIn(0, 127))
-        return ByteArray(out.size) { out[it].toByte() }
-    }
-
-    fun hex(): String = bytes().joinToString("") { "%02x".format(it.toInt() and 0xFF) }
-
-    companion object {
-        /** Reads back what [hex] wrote; null for anything else. */
-        fun parse(hex: String): RackProgram? {
-            if (hex.length % 2 != 0) return null
-            val b = runCatching { (hex.indices step 2).map { hex.substring(it, it + 2).toInt(16) } }.getOrNull() ?: return null
-            var i = 0
-            var msb: Int? = null
-            var lsb: Int? = null
-            var ch: Int? = null
-            while (i + 2 < b.size && (b[i] and 0xF0) == 0xB0) {
-                if (ch != null && (b[i] and 0x0F) != ch) return null
-                ch = b[i] and 0x0F
-                when (b[i + 1]) {
-                    0x00 -> msb = b[i + 2]
-                    0x20 -> lsb = b[i + 2]
-                    else -> return null
-                }
-                i += 3
-            }
-            if (i + 2 != b.size || (b[i] and 0xF0) != 0xC0 || (ch != null && (b[i] and 0x0F) != ch)) return null
-            return RackProgram((b[i] and 0x0F) + 1, b[i + 1] + 1, msb, lsb)
-        }
-    }
-}
 
 data class RackLiveSet(
     val name: String,
     /** Per instance id, what it does in this live set; an instance left out does not play. */
     val parts: Map<String, RackPart> = emptyMap(),
-    val cp88: RackCp88 = RackCp88(),
-    /** Sent to the MIDI out when this live set is selected, or null. */
-    val program: RackProgram? = null,
+    /** Per external device, by its name in the environment: what selecting this live set does to it. */
+    val devices: Map<String, RackDevicePart> = emptyMap(),
 )
 
 /** A rack song as the form edits it. */
@@ -362,14 +325,15 @@ data class RackSong(
                 if (inst.slot.fx?.takeIf { it.type != "off" } != null) overrides[inst.fxAmountKey] = part.fxAmount
                 for ((name, v) in part.params) if (isEngineParam(name)) overrides["${inst.id}.$name"] = v
             }
-            val cp = when (ls.cp88.mode) {
-                "select" -> Cp88Action("select", page = ls.cp88.page, set = ls.cp88.set)
-                "own" -> ls.cp88.sound?.let { Cp88Action("own", sound = RefJ.of(it, Cp88.MEDIA_TYPE)) }
-                else -> null
-            }
-            val sends = listOfNotNull(ls.program?.let { MidiSend(port = "Keys", hex = it.hex()) })
-            RefJ.of(store.putTyped(LiveSet(name = ls.name, overrides = overrides, wires = wireStates, cp88 = cp,
-                onSelect = sends)), LiveSet.TYPE)
+            val devices = ls.devices.mapNotNull { (name, d) ->
+                when (d.mode) {
+                    "select" -> name to DeviceAction(d.kind, "select", address = d.address)
+                    "own" -> d.sound?.let { name to DeviceAction(d.kind, "own", sound = RefJ.of(it, soundType(d.kind))) }
+                    else -> null
+                }
+            }.toMap()
+            RefJ.of(store.putTyped(LiveSet(name = ls.name, overrides = overrides, wires = wireStates, devices = devices)),
+                LiveSet.TYPE)
         }
         // Controls (I6.1): min and max as fractions of the parameter's range; channel 0 is any.
         val controls = instances.flatMap { inst ->
@@ -424,16 +388,20 @@ data class RackSong(
                         }.toMap(),
                     )
                 }
-                val cp = ls.cp88?.let { a ->
+                val devices = ls.devices.mapValues { (_, a) ->
                     val d = a.sound?.toRef()?.digest
-                    RackCp88(a.mode, a.page ?: 1, a.set ?: 1, d, d?.let { store.get(it) }?.let(Cp88::name))
-                } ?: RackCp88()
-                RackLiveSet(ls.name, parts, cp, ls.onSelect.firstNotNullOfOrNull { RackProgram.parse(it.hex) })
+                    RackDevicePart(a.kind, a.mode, a.address, d,
+                        d?.let { store.get(it) }?.let { Devices.driver(a.kind)?.sounds?.name(it) })
+                }
+                RackLiveSet(ls.name, parts, devices)
             }
             return RackSong(instances, liveSets, song.tempo, song.leadSheet?.toRef()?.digest,
                 song.nodes["mix"]?.params ?: emptyMap(),
                 song.nodes["mix.fx"]?.let { RackFx(it.kind.removePrefix("fx."), it.params) })
         }
+
+        /** The media type of a [kind] device's own sounds. */
+        private fun soundType(kind: String) = Devices.driver(kind)?.sounds?.mediaType ?: MediaTypes.OCTET
 
         /** A key's part after "<instance>.": the engine's own parameter, not its level, zone or effect. */
         private fun isEngineParam(rest: String) = rest != "Level" && !rest.startsWith("zone.") && !rest.startsWith("fx.")

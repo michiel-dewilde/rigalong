@@ -1,4 +1,4 @@
-package be.mdw.bagosynths.model
+package be.mdw.bagosynths.model.devices.cp88
 
 /**
  * CP-88 Live Set Sounds over SysEx (REQUIREMENTS S4.9-S4.11, I4.16; LOG.md

@@ -79,8 +79,9 @@ PageFlip Butterfly work as keyboards.
 * MIDI footswitches, including the CP88/CP73's foot switch jacks, work too
   once you have taught them in Setup.
 
-**The CP88/CP73's own live set buttons** select the current song's live
-sets: set 1 selects live set 1, and so on.
+**A device that follows the app** (see Setup, Devices) selects the current
+song's live sets with its own buttons: on a CP88/CP73, set 1 selects live
+set 1, and so on.
 
 ### Songs
 
@@ -154,24 +155,27 @@ song being edited:
   this live set (where the original stops), and opens the preset list for
   it. Both sounds are loaded with the song, so switching to it is still
   instant; a live set that loaded a preset itself would cut the sound.
-* **Program change**, per live set: for any other keyboard or sound module
-  on the MIDI out, a program (and, if it needs one, a bank) sent on its
-  channel when the live set is selected. Direct USB modes.
-* **CP-88**, per live set:
-  * **Leave**: the keyboard plays whatever it has;
-  * **Select**: switching to this live set selects one of its stored sounds
-    (page and set);
-  * **Own sound**: the song carries a keyboard sound of its own. Set the
-    sound up on the CP88/CP73, then press "Import current sound" (unsaved
-    edits and the panel's knobs are included; it is kept in the library's
-    CP-88 sounds too), or take one from **From library…**. **YAML…** edits
-    this song's copy of it as text (see CP-88 sounds below). When the song is opened, its
-    sounds are written into the keyboard's reserved page (see Setup): live set
-    1 in set 1 of that page, and so on.
+* **Devices**, per live set: one row for each keyboard or sound module in
+  Setup's Devices, offering what that device can do. Every device:
+  * **Leave**: it plays whatever it has;
+  * **Select**: switching to this live set selects one of its stored sounds,
+    by the device's own address -- a program (and, if it needs one, a bank)
+    for a plain MIDI device, a page and set for a CP88/CP73. Direct USB modes.
 
-  **CP-88 page .X9P** (at the top, when a live set owns a sound) saves the
-  page the app writes into the keyboard for this song as a file, to load on
-  a CP88/CP73 from a USB stick.
+  A device whose own sounds the app can hold (a CP88/CP73) also has:
+  * **Own sound**: the song carries a sound of its own for the device. Set the
+    sound up on the device, then press "Import current sound" (unsaved edits
+    and the panel's knobs are included; it is kept in the library's device
+    sounds too), or take one from **From library…**. **YAML…** (the
+    device's text form) edits this song's copy of it as text (see Device
+    sounds below). When the song is opened, its sounds are written into the
+    device's reserved area (see Setup): live set 1 in its first slot, and so
+    on -- for a CP88/CP73, set 1 of the reserved page.
+
+  **CP-88 page .X9P** (at the top, when a live set owns a sound; one per
+  device that has a file for it) saves the area the app writes into the
+  device for this song as the device's own file, to load on a CP88/CP73
+  from a USB stick.
 
   When the keyboard's own live set buttons select the app's live sets (the
   default), every set of the reserved page that a live set doesn't give a
@@ -196,11 +200,11 @@ Every setlist and song, with its history.
   not by its name:
   * an exported library file, on this tablet or another one. Importing never
     overwrites: a song changed on both sides is kept in both versions;
-  * the CP88/CP73's own files, as its File menu saves them on a USB stick:
-    **.X9S** (one sound), **.X9P** (a page), **.X9L** (all live sets) and
-    **.X9A** (a backup), and cp-liveset's YAML documents of them (.yaml).
-    Their Live Set Sounds go into **CP-88 sounds**; a sound the library
-    already has is not added twice;
+  * a device's own files, recognised by its driver. For a CP88/CP73, as its
+    File menu saves them on a USB stick: **.X9S** (one sound), **.X9P** (a
+    page), **.X9L** (all live sets) and **.X9A** (a backup), and
+    cp-liveset's YAML documents of them (.yaml). Their sounds go into
+    **Device sounds**; a sound the library already has is not added twice;
   * an SFZ sample library as a **.zip**. It then appears in every sfizz
     patch list.
   One Import is one Undo.
@@ -215,11 +219,12 @@ Every setlist and song, with its history.
     version keeps it until you press **Update to the latest version**;
   * versions **changed elsewhere too**, after an import: use one of them, or
     keep this tablet's.
-* **CP-88 sounds**: the keyboard's Live Set Sounds the library holds,
-  imported from its files or read from the keyboard ("Import current
-  sound"). **Play on CP-88** puts one on the keyboard as its current sound,
-  without touching a stored set, so you can hear it. **.X9S** saves it as a
-  file the keyboard loads. **YAML…** opens it as text, in cp-liveset's YAML
+* **Device sounds**: the devices' own sounds the library holds, by kind of
+  device, imported from their files or read from a device ("Import current
+  sound"). For the CP88/CP73's Live Set Sounds: **Play on CP-88** puts one
+  on the keyboard as its current sound, without touching a stored set, so
+  you can hear it. **.X9S** and **.yaml** save it as a file the keyboard or
+  cp-liveset loads. **YAML…** opens it as text, in cp-liveset's YAML
   form: only what differs from the standard sound is listed, by name
   (`category: Organ`, `instrument: Click Organ`, `on: true`); add a line to
   change anything else, with a name or a number. The line under the text says
@@ -238,7 +243,7 @@ Every setlist and song, with its history.
 ### Setup
 
 * **Environment**: your rigs, such as "Stage" and "Home". Each one remembers
-  the devices and their modes, the CP-88 settings, the footswitches, the
+  the devices and their modes, the external devices, the footswitches, the
   lead-sheet options, the click, Do Not Disturb and the master volume.
   * Tap one to switch to it.
   * "Suggest" marks the ones whose devices are all plugged in.
@@ -248,11 +253,16 @@ Every setlist and song, with its history.
     directly, for the lowest latency. These are needed for sending anything
     to the CP88/CP73, and "USB device" is the one to prefer.
 * **USB buffer**: 6 or 8 ms of audio queued on the wire, in the direct modes.
-* **CP-88**:
-  * the **reserved page** that songs write their own sounds into (page 40 by
-    default). Its eight sounds are overwritten.
-  * the **MIDI channel** it listens on.
-  * whether its **live set buttons select the app's live sets**.
+* **Devices**: the keyboards and sound modules the app drives over MIDI.
+  A device the app knows by name (a CP88/CP73) is added the first time it is
+  plugged in; **+ MIDI device** adds any other, **Remove** takes one away.
+  Songs refer to a device by its name here. For each:
+  * the **MIDI channel** it listens on;
+  * for a device whose own sounds the app holds, the **reserved area** that
+    songs write their sounds into -- for a CP88/CP73, a page (40 by default),
+    whose eight sounds are overwritten -- and whether its **own selections
+    choose the app's live sets**; **Rewrite the reserved page** writes it all
+    again.
 * **Footswitches and MIDI controllers**: a controller each for the next and
   the previous live set (or lead-sheet page), tap tempo, and the count-in or
   click. Press **Learn**, then the pedal. A controller does one thing: learning

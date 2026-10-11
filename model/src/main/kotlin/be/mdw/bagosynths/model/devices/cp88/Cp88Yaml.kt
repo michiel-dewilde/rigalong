@@ -1,6 +1,6 @@
-package be.mdw.bagosynths.model
+package be.mdw.bagosynths.model.devices.cp88
 
-import be.mdw.bagosynths.model.Cp88YamlTables as Y
+import be.mdw.bagosynths.model.devices.cp88.Cp88YamlTables as Y
 import org.snakeyaml.engine.v2.api.Load
 import org.snakeyaml.engine.v2.api.LoadSettings
 import org.snakeyaml.engine.v2.exceptions.YamlEngineException

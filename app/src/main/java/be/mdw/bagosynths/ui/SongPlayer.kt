@@ -9,7 +9,6 @@ import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import be.mdw.bagosynths.NativeBridge
-import be.mdw.bagosynths.model.Cp88
 import be.mdw.bagosynths.model.Digest
 import be.mdw.bagosynths.model.LiveSet
 import be.mdw.bagosynths.model.LiveSetSwitcher
@@ -90,19 +89,10 @@ class SongPlayer(private val lib: Library, private val host: EngineHost, private
     val levels = androidx.compose.runtime.mutableStateMapOf<String, Float>()
     val playing = androidx.compose.runtime.mutableStateMapOf<String, Boolean>()
 
-    /** The CP-88 page the app may write songs into (I3.4), and its MIDI channel. */
-    var reservedPage: Int
-        get() = prefs.getInt("cp88.reservedPage", 40)
-        set(v) { prefs.edit().putInt("cp88.reservedPage", v.coerceIn(1, 40)).apply() }
-    var cp88Channel: Int
-        get() = prefs.getInt("cp88.channel", 1)
-        set(v) { prefs.edit().putInt("cp88.channel", v.coerceIn(1, 16)).apply() }
-    /** One line on the last CP-88 action, for the stage view. */
-    var cp88Status by mutableStateOf(""); private set
-
-    /** Live set index -> the reserved slot its owned sound was written to. */
-    private val ownedSlots = HashMap<Int, Int>()
-    private var lastSent: Triple<Int, Int, Long>? = null
+    /** The external devices and what the songs do to them (model/devices). */
+    val devices = DeviceRig(lib, prefs) { note(it) }
+    /** The live sets of the song on stage, as stored. */
+    private var liveSetObjects: List<LiveSet> = emptyList()
 
     private var songs: List<Song> = emptyList()
     private var switcher: LiveSetSwitcher? = null
@@ -176,7 +166,8 @@ class SongPlayer(private val lib: Library, private val host: EngineHost, private
         sheetPages = 0
         sheetFile = s.leadSheet?.toRef()?.digest?.let { java.io.File(lib.store.root, "blobs/sha256/${it.hex}") }
             ?.takeIf { it.exists() }
-        writeSongPage(liveSets)
+        liveSetObjects = liveSets
+        devices.writeSong(liveSets)
         if (liveSets.isNotEmpty()) selectLiveSet(liveSet.coerceIn(0, liveSets.size - 1))
     }
 
@@ -186,9 +177,8 @@ class SongPlayer(private val lib: Library, private val host: EngineHost, private
         val changes = sw.select(index)
         pendingLiveSet = index
         apply(changes)
-        // A live set that leaves the CP-88 alone, while its buttons select live
-        // sets: put it on this live set's slot, which holds silence.
-        if (cp88Follows && changes.none { it is Change.Cp88 }) ownedSlots[index]?.let { selectCp88(reservedPage, it) }
+        // The external devices: each does what this live set says (DeviceRig).
+        devices.liveSetSelected(index, liveSetObjects.getOrNull(index))
         liveSetIndex = index
         Log.i(TAG, "live set ${index + 1} '${liveSetNames[index]}': ${changes.size} changes: " +
                 changes.joinToString("; ") { c -> when (c) {
@@ -248,103 +238,6 @@ class SongPlayer(private val lib: Library, private val host: EngineHost, private
     }
 
     // ------------------------------------------------------------ the CP-88
-
-    /**
-     * Whether the CP-88's own live set buttons select the app's live sets
-     * (set n, live set n). Then its reserved page must hold, in every slot a
-     * song does not give a sound of its own, a SILENT sound: pressing set n
-     * switches the CP-88 to that slot too, and it must not mix in its own
-     * instruments (Michiel, 2026-10-11).
-     */
-    var cp88Follows: Boolean
-        get() = prefs.getBoolean("cp88.follow", true)
-        set(v) { prefs.edit().putBoolean("cp88.follow", v).apply() }
-
-    /**
-     * The song's page on the CP-88, written when the song is selected (S5.3,
-     * S4.11): live set n owns slot n of the reserved page. A live set that owns
-     * a sound gets it; when the CP-88 follows, every other slot gets the silent
-     * sound. 7 ms a sound (V3); a slot already holding the same sound is not
-     * written again, which spares the CP-88's flash ([forgetCp88Page] resets that).
-     */
-    private fun writeSongPage(liveSets: List<LiveSet>) {
-        ownedSlots.clear()
-        var written = 0
-        var kept = 0
-        var failed = 0
-        val follows = cp88Follows
-        for (i in 0 until minOf(8, liveSets.size)) {
-            val a = liveSets[i].cp88
-            val own = if (a?.mode == "own") a.sound?.toRef()?.digest?.let { lib.store.get(it) } else null
-            val bytes = own ?: if (follows && a?.mode != "select") Cp88.SILENT else continue
-            val slot = i + 1
-            val key = "cp88.slot.$reservedPage.$slot"
-            val digest = Digest.of(bytes).hex
-            if (prefs.getString(key, null) == digest) { ownedSlots[i] = slot; kept++; continue }
-            val ok = Cp88.retarget(bytes, reservedPage, slot).all { NativeBridge.nativeUsbMidiSend(it) > 0 }
-            if (ok) { ownedSlots[i] = slot; written++; prefs.edit().putString(key, digest).apply() } else failed++
-        }
-        if (liveSets.size > 8 && liveSets.drop(8).any { it.cp88?.mode == "own" }) {
-            cp88Status = "only live sets 1-8 can own a CP-88 sound (one page)"
-        } else if (written + failed > 0) {
-            cp88Status = if (failed == 0) "CP-88: page $reservedPage, $written slot(s) written, $kept unchanged"
-            else "CP-88: could not write $failed slot(s) -- is it in a direct USB mode?"
-        }
-        if (written + failed > 0) note(cp88Status)
-    }
-
-    /** Forget what the CP-88's reserved page holds, so the next song rewrites it all. */
-    fun forgetCp88Page() {
-        val e = prefs.edit()
-        for (n in 1..8) e.remove("cp88.slot.$reservedPage.$n")
-        e.apply()
-    }
-
-    private fun selectCp88(page: Int, set: Int) {
-        val r = NativeBridge.nativeUsbMidiSend(Cp88.selectMessages(page, set, cp88Channel))
-        lastSent = Triple(page, set, System.currentTimeMillis())
-        cp88Status = if (r > 0) "CP-88 -> $page:$set" else "CP-88 not reachable (MIDI out needs a direct USB mode)"
-    }
-
-    /**
-     * Reads the CP-88's current sound -- unsaved edits and panel state
-     * included (V2) -- into the library. Blocking, about 0,2 s: call off the
-     * UI thread. Returns the sound and its name, or throws with the reason.
-     */
-    fun importCurrentCp88Sound(): Pair<Digest, String> {
-        while (NativeBridge.nativeUsbSysexDrain() != null) { /* stale replies */ }
-        val r = NativeBridge.nativeUsbMidiSend(Cp88.dumpRequest())
-        check(r > 0) { "MIDI out failed ($r): the CP-88 must be in a direct USB mode" }
-        val got = ArrayList<ByteArray>()
-        val end = System.currentTimeMillis() + 2000
-        while (got.size < 19 && System.currentTimeMillis() < end) {
-            val m = NativeBridge.nativeUsbSysexDrain()
-            if (m == null) Thread.sleep(5) else if (Cp88.parse(m) != null) got += m
-        }
-        check(got.size == 19) { "the CP-88 answered with ${got.size} of 19 messages" }
-        val sound = Cp88.normalize(got)
-        return lib.store.put(sound) to Cp88.name(sound)
-    }
-
-    /** [sound] (stored form) into the CP-88's current sound, to hear it; no stored slot is touched. */
-    fun auditionCp88(sound: ByteArray): Boolean =
-        Cp88.split(sound).all { runCatching { NativeBridge.nativeUsbMidiSend(it) }.getOrDefault(-1) > 0 }
-
-    /**
-     * The song's CP-88 page as the app writes it into the reserved page (see
-     * [writeSongPage]), as an .X9P file the keyboard loads from a USB stick:
-     * set n holds live set n's own sound, the silent sound where the CP-88
-     * follows the app and the live set selects none of its own, the Init
-     * Sound otherwise.
-     */
-    fun cp88PageFile(song: RackSong): ByteArray {
-        val sets = HashMap<Int, ByteArray>()
-        for ((i, ls) in song.liveSets.take(8).withIndex()) {
-            val own = if (ls.cp88.mode == "own") ls.cp88.sound?.let { lib.store.get(it) } else null
-            (own ?: if (cp88Follows && ls.cp88.mode != "select") Cp88.SILENT else null)?.let { sets[i + 1] = it }
-        }
-        return be.mdw.bagosynths.model.Cp88X9.x9p(reservedPage, sets)
-    }
 
     // ------------------------------------------------------------------ tempo
 
@@ -637,23 +530,30 @@ class SongPlayer(private val lib: Library, private val host: EngineHost, private
     @Volatile var onStage = true
 
     /**
-     * TEST (PROVISIONAL.md): the CP-88 path end to end, without the screen.
-     * Imports the current sound, builds a song whose live set 1 owns it and
-     * whose live set 2 selects 1:1, opens it on the stage (which writes the
-     * sound into the reserved page) and selects live set [liveSet]. Logs what
-     * it did under bos-stage; tools/cp88sysex reads the CP-88 back.
+     * TEST (PROVISIONAL.md): a device's own-sound path end to end, without the
+     * screen, on the first device that can own sounds (a CP-88). Imports its
+     * current sound, builds a song whose live set 1 owns it and whose live
+     * set 2 selects the device's first stored sound, opens it on the stage
+     * (which writes the sound into the reserved area) and selects live set
+     * [liveSet]. Logs what it did under bos-stage; tools/cp88sysex reads a
+     * CP-88 back.
      */
-    fun cp88SelfTest(liveSet: Int) {
+    fun deviceSelfTest(liveSet: Int) {
         Thread {
             runCatching {
-                val (sound, name) = importCurrentCp88Sound()
-                Log.i(TAG, "selftest: imported '$name' ${sound.short}")
+                val d = devices.withSounds().firstOrNull() ?: error("no device that can own a sound")
+                val drv = devices.driver(d)
+                val (sound, name) = devices.importCurrent(d)
+                Log.i(TAG, "selftest: imported '$name' ${sound.short} from ${d.name}")
+                val first = drv.address.associate { it.key to it.range.first }.filterKeys { k -> drv.address.none { it.key == k && it.optional } }
                 val draft = RackSong(
                     instances = listOf(be.mdw.bagosynths.model.RackInstance("sfizz", RackEngine.SFIZZ,
                         be.mdw.bagosynths.model.RackSlot(level = 0.0))),
                     liveSets = listOf(
-                        be.mdw.bagosynths.model.RackLiveSet("Own", cp88 = be.mdw.bagosynths.model.RackCp88("own", sound = sound, soundName = name)),
-                        be.mdw.bagosynths.model.RackLiveSet("Select 1:1", cp88 = be.mdw.bagosynths.model.RackCp88("select", 1, 1)),
+                        be.mdw.bagosynths.model.RackLiveSet("Own", devices = mapOf(d.name to
+                            be.mdw.bagosynths.model.RackDevicePart(d.kind, "own", sound = sound, soundName = name))),
+                        be.mdw.bagosynths.model.RackLiveSet("Select ${drv.describe(first)}", devices = mapOf(d.name to
+                            be.mdw.bagosynths.model.RackDevicePart(d.kind, "select", first))),
                     ))
                 val song = draft.toObjects(lib.store)
                 val liveSets = song.liveSets.map { lib.store.getTyped<LiveSet>(it.toRef().digest) }
@@ -661,10 +561,11 @@ class SongPlayer(private val lib: Library, private val host: EngineHost, private
                     this.song = song
                     rack = draft
                     switcher = LiveSetSwitcher(song, liveSets)
+                    liveSetObjects = liveSets
                     liveSetNames.clear(); liveSetNames.addAll(liveSets.map { it.name })
-                    writeSongPage(liveSets)
+                    devices.writeSong(liveSets)
                     selectLiveSet(liveSet - 1)
-                    Log.i(TAG, "selftest: live set $liveSet selected; $cp88Status")
+                    Log.i(TAG, "selftest: live set $liveSet selected; ${devices.status}")
                 }
             }.onFailure { Log.e(TAG, "selftest failed: $it") }
         }.start()
@@ -786,18 +687,9 @@ class SongPlayer(private val lib: Library, private val host: EngineHost, private
     private fun watchMidiOut() {
         val ready = runCatching { NativeBridge.nativeUsbMidiOutReady() }.getOrDefault(false)
         if (ready && !midiOutWasReady && songIndex >= 0) {
-            // It may be another keyboard than before (the stage's spare, a
-            // rental): what this tablet wrote to the last one says nothing.
-            forgetCp88Page()
-            val liveSets = song?.liveSets?.map { lib.store.getTyped<LiveSet>(it.toRef().digest) }.orEmpty()
-            writeSongPage(liveSets)
-            val i = liveSetIndex
-            val action = liveSets.getOrNull(i)?.cp88
-            when {
-                action?.mode == "select" -> selectCp88(action.page ?: 1, action.set ?: 1)
-                ownedSlots[i] != null -> selectCp88(reservedPage, ownedSlots[i]!!)
-            }
-            note("MIDI out ready: the CP-88 brought in line ($cp88Status)")
+            // It may be another unit than before (the stage's spare, a rental):
+            // what this tablet wrote to the last one says nothing.
+            devices.midiOutReady(liveSetObjects, liveSetIndex)
         }
         midiOutWasReady = ready
     }
@@ -829,15 +721,12 @@ class SongPlayer(private val lib: Library, private val host: EngineHost, private
             val msb = (v shr 16) and 0x7F
             val lsb = (v shr 8) and 0x7F
             val pc = v and 0x7F
-            if (msb == 63 && cp88Follows) {
-                // Our own selection coming back is not the player choosing.
-                val sent = lastSent
-                if (sent != null && sent.first == lsb + 1 && sent.second == pc + 1 &&
-                    System.currentTimeMillis() - sent.third < 2000) continue
-                lastSelection = "CP-88 ${lsb + 1}:${pc + 1}"
-                if (pc in liveSetNames.indices) selectLiveSet(pc)
-            } else {
-                lastSelection = "PC ${pc + 1} (bank $msb/$lsb, ch ${(v ushr 24) + 1})"
+            // A device that follows the app reporting one of its own (its live set
+            // buttons): that live set. -1 is a device's own with nothing to do, or our echo.
+            val followed = devices.followed(msb, lsb, pc) { lastSelection = it }
+            when {
+                followed == null -> lastSelection = "PC ${pc + 1} (bank $msb/$lsb, ch ${(v ushr 24) + 1})"
+                followed in liveSetNames.indices -> selectLiveSet(followed)
             }
         }
     }
@@ -1132,10 +1021,8 @@ class SongPlayer(private val lib: Library, private val host: EngineHost, private
                     "audio" -> setWireAt(i, audio = c.on, g = c.gain.toFloat())
                 }
             }
-            is Change.Cp88 -> when (c.action.mode) {
-                "select" -> selectCp88(c.action.page ?: 1, c.action.set ?: 1)
-                "own" -> ownedSlots[pendingLiveSet]?.let { selectCp88(reservedPage, it) }
-            }
+            // External devices: DeviceRig.liveSetSelected, after the changes.
+            is Change.Device -> Unit
             // On-select MIDI (I6.7): to the keyboard's MIDI out, in the direct modes.
             is Change.Send -> {
                 val bytes = runCatching { ByteArray(c.hex.length / 2) { c.hex.substring(it * 2, it * 2 + 2).toInt(16).toByte() } }

@@ -1,5 +1,6 @@
-package be.mdw.bagosynths.model
+package be.mdw.bagosynths.model.devices.cp88
 
+import be.mdw.bagosynths.model.Digest
 import kotlin.test.Test
 import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals

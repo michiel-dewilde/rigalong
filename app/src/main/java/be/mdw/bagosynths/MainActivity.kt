@@ -1,5 +1,6 @@
 package be.mdw.bagosynths
 
+import be.mdw.bagosynths.model.devices.Devices
 import be.mdw.bagosynths.model.Library
 import android.app.Activity
 import android.content.Context
@@ -134,6 +135,7 @@ class MainActivity : androidx.activity.ComponentActivity() {
             // device id and the status line reports against that. The other way
             // round, every frame would describe the previous one.
             watchAudioDevice()
+            if (::player.isInitialized) recogniseDevices()
             updateStats()
             if (++altTick % 4 == 0) watchUsbAltSetting()
             // Surge comes up asynchronously and its patch loads are asynchronous
@@ -263,7 +265,7 @@ class MainActivity : androidx.activity.ComponentActivity() {
         filter.addAction("be.mdw.bagosynths.STAGE")
         filter.addAction("be.mdw.bagosynths.INSTANCE")
         filter.addAction("be.mdw.bagosynths.CC")
-        filter.addAction("be.mdw.bagosynths.CP88SELFTEST")
+        filter.addAction("be.mdw.bagosynths.DEVICESELFTEST")
         if (Build.VERSION.SDK_INT >= 33) {
             registerReceiver(debugReceiver, filter, Context.RECEIVER_EXPORTED)
         } else {
@@ -457,17 +459,15 @@ class MainActivity : androidx.activity.ComponentActivity() {
     // away was that sending the output to the phone's own speaker took the
     // peak from 0,015 to 0,69.
     @Suppress("unused")  // kept: useful if a future Android release allows full duplex
-    private fun findCp88InputDeviceId(): Int {
+    private fun findUsbInputDeviceId(): Int {
         val am = getSystemService(Context.AUDIO_SERVICE) as AudioManager
         val inputs = am.getDevices(AudioManager.GET_DEVICES_INPUTS).filter {
             it.type == AudioDeviceInfo.TYPE_USB_DEVICE ||
                 it.type == AudioDeviceInfo.TYPE_USB_HEADSET ||
                 it.type == AudioDeviceInfo.TYPE_USB_ACCESSORY
         }
-        val named = inputs.firstOrNull { d ->
-            val name = d.productName?.toString()?.uppercase().orEmpty()
-            name.contains("CP88") || name.contains("CP73") || name.contains("YAMAHA")
-        }
+        // A device one of the drivers knows (model/devices) before any other.
+        val named = inputs.firstOrNull { d -> Devices.recognise(d.productName?.toString().orEmpty()) != null }
         return (named ?: inputs.firstOrNull())?.id ?: NativeBridge.DEVICE_UNSPECIFIED
     }
 
@@ -951,7 +951,7 @@ class MainActivity : androidx.activity.ComponentActivity() {
         // is a trap anywhere the CP-88 is simply not part of the setup.
         //
         // So: fall back to the built-in speaker, but only after the CP-88 has
-        // been missing for a good while, and SAY SO loudly -- findCp88OutputDeviceId
+        // been missing for a good while, and SAY SO loudly -- findOutputDeviceId
         // already labels it "built-in (NO USB DEVICE ...)" and the status line
         // shows that label. The CP-88 is still preferred and is taken back the
         // moment it reappears, which is the branch above.
@@ -966,7 +966,7 @@ class MainActivity : androidx.activity.ComponentActivity() {
             NativeBridge.nativeStop()
             if (NativeBridge.nativeStart(NativeBridge.DEVICE_UNSPECIFIED, bufferBursts)) {
                 android.util.Log.i("bos-ui",
-                    "no CP-88 for ${SPEAKER_FALLBACK_AFTER_MS} ms -- fell back to the " +
+                    "no USB output for ${SPEAKER_FALLBACK_AFTER_MS} ms -- fell back to the " +
                         "built-in speaker so the instrument still plays")
             }
             return
@@ -1178,8 +1178,9 @@ class MainActivity : androidx.activity.ComponentActivity() {
      * The output in use. The user's choice wins; otherwise the interim order,
      * hardcoded until the graph editor makes the output a property of the
      * patch: an audio interface (Scarlett) -- where one is present it is the
-     * monitoring path and the CP-88 is just a controller -- then the CP-88,
-     * then any other USB device. Null: the caller decides about the speaker.
+     * monitoring path and a keyboard is just a controller -- then a device a
+     * driver knows (model/devices: a CP-88), then any other USB device. Null:
+     * the caller decides about the speaker.
      */
     private fun resolveAudio(): OutputChoice? {
         val c = outputChoices()
@@ -1187,16 +1188,27 @@ class MainActivity : androidx.activity.ComponentActivity() {
         fun named(vararg keys: String) = c.firstOrNull { ch ->
             ch.usb != null && keys.any { ch.name.uppercase().contains(it) }
         }
-        return named("SCARLETT", "FOCUSRITE") ?: named("CP88", "CP73", "YAMAHA")
+        return named("SCARLETT", "FOCUSRITE") ?: c.firstOrNull { it.usb != null && Devices.recognise(it.name) != null }
             ?: c.firstOrNull { it.usb != null }
+    }
+
+    /**
+     * A USB device one of the drivers knows (model/devices), plugged in for the
+     * first time ever: added to the devices with its driver's defaults. Once
+     * only, so a device the player removed stays removed.
+     */
+    private fun recogniseDevices() {
+        val seen = prefs().getStringSet("devices.seen", emptySet())!!
+        val now = midiChoices().map { it.card }.filter { Devices.recognise(it) != null && it !in seen }.toSet()
+        if (now.isEmpty()) return
+        for (card in now) player.devices.recognised(card)
+        prefs().edit().putStringSet("devices.seen", seen + now).apply()
     }
 
     private fun resolveMidi(): MidiChoice? {
         val c = midiChoices()
         chosenMidiName?.let { want -> c.firstOrNull { it.name == want }?.let { return it } }
-        return c.firstOrNull { ch ->
-            ch.port == 0 && listOf("CP88", "CP73", "YAMAHA").any { ch.card.uppercase().contains(it) }
-        } ?: c.firstOrNull()
+        return c.firstOrNull { ch -> ch.port == 0 && Devices.recognise(ch.card) != null } ?: c.firstOrNull()
     }
 
     private fun sameDevice(a: OutputChoice?, m: MidiChoice?): Boolean =
@@ -1948,9 +1960,9 @@ class MainActivity : androidx.activity.ComponentActivity() {
                         }.start()
                     }
                 }
-                // TEST: the CP-88 path end to end (SongPlayer.cp88SelfTest):
-                //   adb shell am broadcast -a be.mdw.bagosynths.CP88SELFTEST --ei liveset 1
-                "be.mdw.bagosynths.CP88SELFTEST" -> player.cp88SelfTest(intent.getIntExtra("liveset", 1))
+                // TEST: a device's own-sound path end to end (SongPlayer.deviceSelfTest):
+                //   adb shell am broadcast -a be.mdw.bagosynths.DEVICESELFTEST --ei liveset 1
+                "be.mdw.bagosynths.DEVICESELFTEST" -> player.deviceSelfTest(intent.getIntExtra("liveset", 1))
                 "be.mdw.bagosynths.SYSEX" -> sysexExchange(
                     intent.getStringExtra("hex").orEmpty(),
                     intent.getIntExtra("gap", 20),
@@ -2256,7 +2268,7 @@ class MainActivity : androidx.activity.ComponentActivity() {
         if (!ok) {
             runOnUiThread {
                 statusView.text = "Failed to open audio stream.\n" +
-                    "Is the CP-88 connected and powered on?"
+                    "Is the USB audio device connected and powered on?"
             }
         }
     }
@@ -2291,8 +2303,10 @@ class MainActivity : androidx.activity.ComponentActivity() {
         val s = n.orEmpty()
         return when {
             s.isEmpty() -> "auto"
-            s.contains("CP88") || s.contains("CP73") ->
-                if (s.contains("MIDI")) "CP-88 " + s.substringAfterLast(' ') else "CP-88"
+            // A device a driver knows goes by the driver's name for it ("CP-88", "CP-88 1" for its MIDI port).
+            Devices.recognise(s) != null -> Devices.recognise(s)!!.defaultName.let { n ->
+                if (s.contains("MIDI")) n + " " + s.substringAfterLast(' ') else n
+            }
             s.uppercase().contains("SCARLETT") -> "Scarlett"
             s.length > 14 -> s.takeLast(14)
             else -> s
@@ -2307,13 +2321,13 @@ class MainActivity : androidx.activity.ComponentActivity() {
         val choice = resolveAudio()
         val d = choice?.alsa
         audioDeviceLabel = when {
-            choice == null -> "built-in (NO USB DEVICE — CP-88 not connected?)"
+            choice == null -> "built-in (NO USB DEVICE — keyboard not connected?)"
             d == null -> "${choice.name}  [owned by this app -- no ALSA device]"
             chosenOutputName != null -> "${choice.name}  [chosen, ALSA]"
             choice.name.uppercase().let { it.contains("SCARLETT") || it.contains("FOCUSRITE") } ->
                 "${choice.name}  [interface, ALSA]"
-            choice.name.uppercase().let { it.contains("CP88") || it.contains("CP73") } ->
-                "${choice.name}  [CP-88, ALSA]"
+            Devices.recognise(choice.name) != null ->
+                "${choice.name}  [${Devices.recognise(choice.name)!!.defaultName}, ALSA]"
             else -> "${choice.name}  [USB, ALSA]"
         }
         NativeBridge.nativeSetPreferredRate(
@@ -3189,7 +3203,7 @@ class MainActivity : androidx.activity.ComponentActivity() {
             line("usb", "${s.usbHolds} holds${if (by.isEmpty()) "" else " (${by.joinToString(", ")})"}  ·  " +
                 "${s.usbErrors} wire errors  ·  ${s.usbAltErrors} alt errors (must stay 0)  ·  since the transport started")
             line("reap loop", "worst gap ${ms(s.usbMaxGapMs)} since the last reset  ·  " +
-                "CP-88 clock ${"%.0f".format(s.usbFeedbackRate)} Hz")
+                "device clock ${"%.0f".format(s.usbFeedbackRate)} Hz")
         }
         // The render thread fills the ring a 128-frame block at a time; a block
         // that takes longer than it plays eats the reserve, and an empty ring
