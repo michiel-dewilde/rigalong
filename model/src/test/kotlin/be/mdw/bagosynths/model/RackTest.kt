@@ -12,16 +12,16 @@ class RackTest {
     private val store = Store(Files.createTempDirectory("bos-rack").toFile())
 
     private val draft = RackSong(
-        slots = mapOf(
-            RackEngine.SFIZZ to RackSlot(preset = "salamander-grand", level = 0.9),
-            RackEngine.HAMMOND to RackSlot(preset = "Jimmy Smith", level = 0.7,
-                params = mapOf("Upper 16" to 8.0, "Leslie" to 2.0)),
+        instances = listOf(
+            RackInstance("sfizz", RackEngine.SFIZZ, RackSlot(preset = "salamander-grand", level = 0.9)),
+            RackInstance("hammond", RackEngine.HAMMOND, RackSlot(preset = "Jimmy Smith", level = 0.7,
+                params = mapOf("Upper 16" to 8.0, "Leslie" to 2.0))),
         ),
         liveSets = listOf(
-            RackLiveSet("Verse", mapOf(RackEngine.SFIZZ to RackPart(), RackEngine.HAMMOND to RackPart(plays = false))),
+            RackLiveSet("Verse", mapOf("sfizz" to RackPart(), "hammond" to RackPart(plays = false))),
             RackLiveSet("Split", mapOf(
-                RackEngine.HAMMOND to RackPart(keyHigh = 59, transpose = 12),
-                RackEngine.SFIZZ to RackPart(keyLow = 60, level = 1.0))),
+                "hammond" to RackPart(keyHigh = 59, transpose = 12),
+                "sfizz" to RackPart(keyLow = 60, level = 1.0))),
         ),
     )
 
@@ -29,10 +29,10 @@ class RackTest {
     fun aRackSongRoundTrips() {
         val song = draft.toObjects(store)
         val back = assertNotNull(RackSong.fromObjects(store, song))
-        assertEquals(draft.slots, back.slots)
+        assertEquals(draft.instances, back.instances)
         assertEquals(draft.liveSets.map { it.name }, back.liveSets.map { it.name })
-        assertEquals(draft.liveSets[1].parts[RackEngine.HAMMOND], back.liveSets[1].parts[RackEngine.HAMMOND])
-        assertEquals(false, back.liveSets[0].parts[RackEngine.HAMMOND]?.plays)
+        assertEquals(draft.liveSets[1].parts["hammond"], back.liveSets[1].parts["hammond"])
+        assertEquals(false, back.liveSets[0].parts["hammond"]?.plays)
     }
 
     @Test
@@ -88,13 +88,13 @@ class RackTest {
     @Test
     fun anInsertEffectTravelsWithItsEngine() {
         val fx = RackFx("delay", mapOf("Left" to -1.0, "Left sync" to 1.0, "Mix" to 0.3))
-        val wet = draft.copy(slots = draft.slots + (RackEngine.SFIZZ to draft.slots[RackEngine.SFIZZ]!!.copy(fx = fx)))
+        val wet = draft.withSlot("sfizz", draft.instance("sfizz")!!.slot.copy(fx = fx))
         val song = wet.toObjects(store)
         assertEquals("fx.delay", song.nodes["sfizz.fx"]?.kind)
-        assertEquals("sfizz.fx:out", song.wires[RackEngine.SFIZZ.audioWire]?.from)
+        assertEquals("sfizz.fx:out", song.wires["sfizz.audio"]?.from)
         val back = assertNotNull(RackSong.fromObjects(store, song))
-        assertEquals(fx, back.slots[RackEngine.SFIZZ]?.fx)
-        assertEquals(null, back.slots[RackEngine.HAMMOND]?.fx)
+        assertEquals(fx, back.instance("sfizz")?.slot?.fx)
+        assertEquals(null, back.instance("hammond")?.slot?.fx)
         // Without one, the engine is wired as it always was.
         assertEquals(null, draft.toObjects(store).nodes["sfizz.fx"])
     }
@@ -103,21 +103,21 @@ class RackTest {
     fun eachLiveSetSaysHowMuchGoesThroughTheEffect() {
         val fx = RackFx("delay")
         val withFx = draft.copy(
-            slots = draft.slots + (RackEngine.SFIZZ to draft.slots[RackEngine.SFIZZ]!!.copy(fx = fx)),
+            instances = draft.withSlot("sfizz", draft.instance("sfizz")!!.slot.copy(fx = fx)).instances,
             liveSets = listOf(
                 draft.liveSets[0],
                 draft.liveSets[1].copy(parts = draft.liveSets[1].parts +
-                    (RackEngine.SFIZZ to draft.liveSets[1].parts[RackEngine.SFIZZ]!!.copy(fxAmount = 0.0)))),
+                    ("sfizz" to draft.liveSets[1].parts["sfizz"]!!.copy(fxAmount = 0.0)))),
         )
         val song = withFx.toObjects(store)
         val sets = song.liveSets.map { store.getTyped<LiveSet>(it.toRef().digest) }
         // Every live set carries the amount, so switching always recalls it.
-        assertEquals(listOf(1.0, 0.0), sets.map { it.overrides[RackEngine.SFIZZ.fxAmountKey] })
+        assertEquals(listOf(1.0, 0.0), sets.map { it.overrides["sfizz.fx.Amount"] })
         val back = assertNotNull(RackSong.fromObjects(store, song))
-        assertEquals(0.0, back.liveSets[1].parts[RackEngine.SFIZZ]?.fxAmount)
+        assertEquals(0.0, back.liveSets[1].parts["sfizz"]?.fxAmount)
         // No effect, no amount.
         val plain = draft.toObjects(store).liveSets.map { store.getTyped<LiveSet>(it.toRef().digest) }
-        assertTrue(plain.none { RackEngine.SFIZZ.fxAmountKey in it.overrides })
+        assertTrue(plain.none { "sfizz.fx.Amount" in it.overrides })
     }
 
     @Test
@@ -142,6 +142,42 @@ class RackTest {
         assertEquals(null, back.liveSets[1].program)
         val switcher = LiveSetSwitcher(song, song.liveSets.map { store.getTyped<LiveSet>(it.toRef().digest) })
         assertTrue(switcher.select(0).contains(LiveSetSwitcher.Change.Send("Keys", "b20000b22005c20b")))
+    }
+
+    @Test
+    fun aSongWithOneInstanceOfEachEngineKeepsItsHash() {
+        // The shape songs had before instances were first class, written by hand.
+        val nodes = draft.toObjects(store).nodes
+        assertEquals(setOf("in", "mix", "out", "sfizz", "sfizz.zone", "hammond", "hammond.zone"), nodes.keys)
+        assertEquals(null, nodes["sfizz"]?.label)
+        assertEquals(draft, RackSong.fromObjects(store, draft.toObjects(store))?.let { back ->
+            back.copy(instances = back.instances.sortedBy { if (it.id == "sfizz") 0 else 1 })
+        })
+    }
+
+    @Test
+    fun twoPianosAreTwoInstances() {
+        val two = draft.plus(RackEngine.SFIZZ, RackSlot(preset = "salamander-tight", level = 0.5))
+        val second = two.instances.last()
+        assertEquals("sfizz-2", second.id)
+        assertEquals("Piano 2", two.displayName(second))
+        assertEquals("Piano 1", two.displayName(two.instance("sfizz")!!))
+        val named = two.copy(instances = two.instances.map { if (it.id == "sfizz-2") it.copy(label = "Bright") else it },
+            liveSets = two.liveSets.map { it.copy(parts = it.parts + ("sfizz-2" to RackPart(keyLow = 72))) })
+        val song = named.toObjects(store)
+        assertEquals("sfizz", song.nodes["sfizz-2"]?.kind)
+        assertEquals("Bright", song.nodes["sfizz-2"]?.label)
+        val back = assertNotNull(RackSong.fromObjects(store, song))
+        assertEquals(listOf("sfizz", "sfizz-2", "hammond"), back.instances.map { it.id })
+        assertEquals("salamander-tight", back.instance("sfizz-2")?.slot?.preset)
+        assertEquals(72, back.liveSets[0].parts["sfizz-2"]?.keyLow)
+        // Each switches on its own.
+        val sets = song.liveSets.map { store.getTyped<LiveSet>(it.toRef().digest) }
+        assertEquals(72.0, sets[0].overrides["sfizz-2.zone.keyLow"])
+        // Removing one takes it out everywhere.
+        val one = back.minus("sfizz-2")
+        assertTrue(one.liveSets.none { "sfizz-2" in it.parts })
+        assertEquals(null, one.toObjects(store).nodes["sfizz-2"])
     }
 
     @Test

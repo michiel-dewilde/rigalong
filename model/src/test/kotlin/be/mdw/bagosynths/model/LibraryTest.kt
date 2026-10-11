@@ -11,8 +11,8 @@ class LibraryTest {
     private val lib = Library(Files.createTempDirectory("bos-lib").toFile(), "test")
 
     private fun song(level: Double) = RackSong(
-        slots = mapOf(RackEngine.SFIZZ to RackSlot(level = level)),
-        liveSets = listOf(RackLiveSet("Main", mapOf(RackEngine.SFIZZ to RackPart()))),
+        instances = listOf(RackInstance("sfizz", RackEngine.SFIZZ, RackSlot(level = level))),
+        liveSets = listOf(RackLiveSet("Main", mapOf("sfizz" to RackPart()))),
     )
 
     private fun target(id: Digest) = lib.store.entry(id)!!.version.target!!.digest

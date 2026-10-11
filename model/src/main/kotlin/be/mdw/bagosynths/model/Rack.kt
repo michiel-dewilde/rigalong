@@ -1,25 +1,27 @@
 package be.mdw.bagosynths.model
 
 /**
- * The rack: the first slice of songs (PLAN.md M2/M3). The engine runs one
- * instance of each of six engines, each behind a MIDI zone and two switchable
- * wires. A rack song is a song whose graph is exactly that shape, so a simple
- * form can edit it: which engines it uses with which patch, and per live set
- * which engines play, at what level, over which keys, transposed how far.
+ * The rack: songs as a simple form can edit them (PLAN.md M2/M3). A rack song
+ * has INSTANCES -- its sounds, each an instance of one of six engines, several
+ * of one engine if it wants (two pianos, three synths) -- each behind a MIDI
+ * zone and two switchable wires; and live sets that say which instances play,
+ * at what level, over which keys, transposed how far.
  *
- * Names in the song graph, for engine `e` (its [RackEngine.key]):
- *   node  `e`        the engine; parameter `Level`
- *   node  `e.zone`   its zone; `keyLow`, `keyHigh`, `transpose`, `channelIn`, ...
- *   wire  `e.midi`   zone -> engine: off means the engine takes no new notes,
+ * Names in the song graph, for instance `i` (its [RackInstance.id]: the
+ * engine's key for the first of an engine, "sfizz", then "sfizz-2", ...):
+ *   node  `i`        the engine; parameter `Level`; `label` if the player named it
+ *   node  `i.zone`   its zone; `keyLow`, `keyHigh`, `transpose`, `channelIn`, ...
+ *   wire  `i.midi`   zone -> engine: off means the engine takes no new notes,
  *                    while held ones still end and tails still ring (Wire.h)
- *   wire  `e.audio`  engine -> mix, or its insert effect -> mix
- *   node  `e.fx`     the engine's insert effect, kind `fx.<type>`, when it has one;
- *                    then wire `e.fx.in` runs engine -> effect
- * so a parameter key is `e.Level` or `e.zone.keyLow`. The engines meet in
- * node `mix`, the reverb, whose parameters ("Room size", "Damping", "Width",
- * "Mix") the song may set; those it leaves out keep the reverb's defaults.
- * A song may put an effect on the whole mix: node `mix.fx`, kind `fx.<type>`,
- * between `mix` and `out`.
+ *   wire  `i.audio`  engine -> mix, or its insert effect -> mix
+ *   node  `i.fx`     its insert effect, kind `fx.<type>`, when it has one;
+ *                    then wire `i.fx.in` runs engine -> effect
+ * so a parameter key is `i.Level` or `i.zone.keyLow`. A song with one
+ * instance of each engine is exactly the song of before instances were first
+ * class: same names, same hash. The instances meet in node `mix`, the reverb,
+ * whose parameters ("Room size", "Damping", "Width", "Mix") the song may set;
+ * those it leaves out keep the reverb's defaults. A song may put an effect on
+ * the whole mix: node `mix.fx`, kind `fx.<type>`, between `mix` and `out`.
  */
 enum class RackEngine(val key: String, val nodeType: String, val label: String) {
     SFIZZ("sfizz", "sfizz", "Piano"),
@@ -30,15 +32,30 @@ enum class RackEngine(val key: String, val nodeType: String, val label: String) 
     FLUID("fluid", "FluidSynth", "SF2");
 
     val rackIndex: Int get() = ordinal
-    val levelKey: String get() = "$key.Level"
-    fun zoneKey(param: String) = "$key.zone.$param"
-    val midiWire: String get() = "$key.midi"
-    val audioWire: String get() = "$key.audio"
-    val fxAmountKey: String get() = "$key.fx.Amount"
 
     companion object {
         fun ofKey(k: String): RackEngine? = entries.firstOrNull { it.key == k }
+        fun ofNodeType(t: String): RackEngine? = entries.firstOrNull { it.nodeType == t }
     }
+}
+
+/**
+ * A sound in a rack song: an instance of an engine, first class -- its own
+ * patch, level and effect, its own part in every live set, and a name.
+ */
+data class RackInstance(
+    /** Its name in the song graph: the engine's key for the first of an engine, then "<key>-2", ... */
+    val id: String,
+    val engine: RackEngine,
+    val slot: RackSlot = RackSlot(),
+    /** What the player calls it ("Pad", "Bass"), or null for the engine's own label. */
+    val label: String? = null,
+) {
+    val levelKey: String get() = "$id.Level"
+    fun zoneKey(param: String) = "$id.zone.$param"
+    val midiWire: String get() = "$id.midi"
+    val audioWire: String get() = "$id.audio"
+    val fxAmountKey: String get() = "$id.fx.Amount"
 }
 
 /** One engine as a rack song uses it. */
@@ -141,7 +158,8 @@ data class RackProgram(val channel: Int = 1, val program: Int = 1, val bankMsb: 
 
 data class RackLiveSet(
     val name: String,
-    val parts: Map<RackEngine, RackPart> = emptyMap(),
+    /** Per instance id, what it does in this live set; an instance left out does not play. */
+    val parts: Map<String, RackPart> = emptyMap(),
     val cp88: RackCp88 = RackCp88(),
     /** Sent to the MIDI out when this live set is selected, or null. */
     val program: RackProgram? = null,
@@ -149,16 +167,48 @@ data class RackLiveSet(
 
 /** A rack song as the form edits it. */
 data class RackSong(
-    val slots: Map<RackEngine, RackSlot>,
+    val instances: List<RackInstance>,
     val liveSets: List<RackLiveSet>,
     val tempo: Tempo? = null,
     /** The song's lead sheet, a PDF object (S9.3). */
     val leadSheet: Digest? = null,
-    /** The reverb the engines meet in, by parameter name; empty = its defaults. */
+    /** The reverb the instances meet in, by parameter name; empty = its defaults. */
     val reverb: Map<String, Double> = emptyMap(),
     /** An effect on the whole mix, after the reverb, or null. */
     val masterFx: RackFx? = null,
 ) {
+    fun instance(id: String): RackInstance? = instances.firstOrNull { it.id == id }
+
+    /** [id] with [slot]. */
+    fun withSlot(id: String, slot: RackSlot) =
+        copy(instances = instances.map { if (it.id == id) it.copy(slot = slot) else it })
+
+    /** An id for another instance of [e]: its key if the song has none yet, else "<key>-n". */
+    fun newInstanceId(e: RackEngine): String {
+        if (instances.none { it.id == e.key }) return e.key
+        var n = 2
+        while (instances.any { it.id == "${e.key}-$n" }) n++
+        return "${e.key}-$n"
+    }
+
+    /** A new instance of [e], playing in every live set. */
+    fun plus(e: RackEngine, slot: RackSlot = RackSlot()): RackSong {
+        val id = newInstanceId(e)
+        return copy(instances = instances + RackInstance(id, e, slot),
+            liveSets = liveSets.map { it.copy(parts = it.parts + (id to RackPart())) })
+    }
+
+    /** Without instance [id], everywhere. */
+    fun minus(id: String) = copy(instances = instances.filter { it.id != id },
+        liveSets = liveSets.map { it.copy(parts = it.parts - id) })
+
+    /** What the player sees it called: its own name, or the engine's label, numbered if the song has several. */
+    fun displayName(inst: RackInstance): String {
+        inst.label?.let { return it }
+        val same = instances.filter { it.engine == inst.engine }
+        return if (same.size < 2) inst.engine.label else "${inst.engine.label} ${same.indexOf(inst) + 1}"
+    }
+
     /** The song and its live sets as library objects. Live sets are put into [store]. */
     fun toObjects(store: Store): Song {
         val nodes = LinkedHashMap<String, Node>()
@@ -174,37 +224,39 @@ data class RackSong(
             wires["mix.fx.in"] = Wire("mix:out", "mix.fx:in")
             wires["mix.out"] = Wire("mix.fx:out", "out:in")
         }
-        for ((e, slot) in slots.toSortedMap()) {
-            val patch = store.putTyped(slot.patch(e))
-            nodes[e.key] = Node(kind = e.nodeType, patch = RefJ.of(patch, Patch.TYPE),
-                patchEntry = slot.libraryPatch?.toString(), params = mapOf("Level" to slot.level))
-            nodes["${e.key}.zone"] = Node(kind = "midi.zone")
-            wires["${e.key}.in"] = Wire("in:midi", "${e.key}.zone:midi")
-            wires[e.midiWire] = Wire("${e.key}.zone:midi", "${e.key}:midi")
+        for (inst in instances) {
+            val id = inst.id
+            val slot = inst.slot
+            val patch = store.putTyped(slot.patch(inst.engine))
+            nodes[id] = Node(kind = inst.engine.nodeType, patch = RefJ.of(patch, Patch.TYPE),
+                patchEntry = slot.libraryPatch?.toString(), params = mapOf("Level" to slot.level), label = inst.label)
+            nodes["$id.zone"] = Node(kind = "midi.zone")
+            wires["$id.in"] = Wire("in:midi", "$id.zone:midi")
+            wires[inst.midiWire] = Wire("$id.zone:midi", "$id:midi")
             val fx = slot.fx?.takeIf { it.type != "off" }
             if (fx == null) {
-                wires[e.audioWire] = Wire("${e.key}:out", "mix:in")
+                wires[inst.audioWire] = Wire("$id:out", "mix:in")
             } else {
                 // Only a song with an effect has the node, so no other song changes hash.
-                nodes["${e.key}.fx"] = Node(kind = "fx.${fx.type}", params = fx.params)
-                wires["${e.key}.fx.in"] = Wire("${e.key}:out", "${e.key}.fx:in")
-                wires[e.audioWire] = Wire("${e.key}.fx:out", "mix:in")
+                nodes["$id.fx"] = Node(kind = "fx.${fx.type}", params = fx.params)
+                wires["$id.fx.in"] = Wire("$id:out", "$id.fx:in")
+                wires[inst.audioWire] = Wire("$id.fx:out", "mix:in")
             }
         }
         val refs = liveSets.map { ls ->
             val overrides = LinkedHashMap<String, Double>()
             val wireStates = LinkedHashMap<String, WireState>()
-            for (e in slots.keys.sorted()) {
-                val part = ls.parts[e] ?: RackPart(plays = false)
-                if (!part.plays) wireStates[e.midiWire] = WireState(on = false)
-                part.level?.let { overrides[e.levelKey] = it }
+            for (inst in instances) {
+                val part = ls.parts[inst.id] ?: RackPart(plays = false)
+                if (!part.plays) wireStates[inst.midiWire] = WireState(on = false)
+                part.level?.let { overrides[inst.levelKey] = it }
                 // Zones always written, so every live set recalls its own split.
-                overrides[e.zoneKey("keyLow")] = part.keyLow.toDouble()
-                overrides[e.zoneKey("keyHigh")] = part.keyHigh.toDouble()
-                overrides[e.zoneKey("transpose")] = part.transpose.toDouble()
-                overrides[e.zoneKey("channelIn")] = part.channelIn.toDouble()
-                // Written in every live set while the engine has an effect, like the zones.
-                if (slots[e]?.fx?.takeIf { it.type != "off" } != null) overrides[e.fxAmountKey] = part.fxAmount
+                overrides[inst.zoneKey("keyLow")] = part.keyLow.toDouble()
+                overrides[inst.zoneKey("keyHigh")] = part.keyHigh.toDouble()
+                overrides[inst.zoneKey("transpose")] = part.transpose.toDouble()
+                overrides[inst.zoneKey("channelIn")] = part.channelIn.toDouble()
+                // Written in every live set while the instance has an effect, like the zones.
+                if (inst.slot.fx?.takeIf { it.type != "off" } != null) overrides[inst.fxAmountKey] = part.fxAmount
             }
             val cp = when (ls.cp88.mode) {
                 "select" -> Cp88Action("select", page = ls.cp88.page, set = ls.cp88.set)
@@ -224,27 +276,30 @@ data class RackSong(
 
         /** Reads a rack song back; null if [song] is not rack-shaped. */
         fun fromObjects(store: Store, song: Song): RackSong? {
-            val slots = LinkedHashMap<RackEngine, RackSlot>()
+            val instances = ArrayList<RackInstance>()
             for ((name, node) in song.nodes) {
-                val e = RackEngine.ofKey(name) ?: continue
-                if (node.kind != e.nodeType) return null
+                if ('.' in name || name in PORTS) continue
+                // Any other top-level node must be an engine, or the song is not rack-shaped.
+                val e = RackEngine.ofNodeType(node.kind) ?: return null
                 val patch = node.patch?.let { store.getTyped<Patch>(it.toRef().digest) }
-                val fx = song.nodes["${e.key}.fx"]?.let { RackFx(it.kind.removePrefix("fx."), it.params) }
-                slots[e] = RackSlot(patch?.preset, patch?.program, node.params["Level"] ?: 0.8,
-                    patch?.params ?: emptyMap(), fx, node.patchEntry?.let { Digest.parse(it) })
+                val fx = song.nodes["$name.fx"]?.let { RackFx(it.kind.removePrefix("fx."), it.params) }
+                instances += RackInstance(name, e, RackSlot(patch?.preset, patch?.program, node.params["Level"] ?: 0.8,
+                    patch?.params ?: emptyMap(), fx, node.patchEntry?.let { Digest.parse(it) }), node.label)
             }
+            // Engine order, then the order they were added ("sfizz", "sfizz-2", "sfizz-10").
+            instances.sortWith(compareBy({ it.engine.ordinal }, { it.id.substringAfter('-', "1").toIntOrNull() ?: 0 }))
             val liveSets = song.liveSets.map { r ->
                 val ls = store.getTyped<LiveSet>(r.toRef().digest)
-                val parts = LinkedHashMap<RackEngine, RackPart>()
-                for (e in slots.keys) {
-                    parts[e] = RackPart(
-                        plays = ls.wires[e.midiWire]?.on ?: true,
-                        level = ls.overrides[e.levelKey],
-                        keyLow = ls.overrides[e.zoneKey("keyLow")]?.toInt() ?: 0,
-                        keyHigh = ls.overrides[e.zoneKey("keyHigh")]?.toInt() ?: 127,
-                        transpose = ls.overrides[e.zoneKey("transpose")]?.toInt() ?: 0,
-                        channelIn = ls.overrides[e.zoneKey("channelIn")]?.toInt() ?: 0,
-                        fxAmount = ls.overrides[e.fxAmountKey] ?: 1.0,
+                val parts = LinkedHashMap<String, RackPart>()
+                for (inst in instances) {
+                    parts[inst.id] = RackPart(
+                        plays = ls.wires[inst.midiWire]?.on ?: true,
+                        level = ls.overrides[inst.levelKey],
+                        keyLow = ls.overrides[inst.zoneKey("keyLow")]?.toInt() ?: 0,
+                        keyHigh = ls.overrides[inst.zoneKey("keyHigh")]?.toInt() ?: 127,
+                        transpose = ls.overrides[inst.zoneKey("transpose")]?.toInt() ?: 0,
+                        channelIn = ls.overrides[inst.zoneKey("channelIn")]?.toInt() ?: 0,
+                        fxAmount = ls.overrides[inst.fxAmountKey] ?: 1.0,
                     )
                 }
                 val cp = ls.cp88?.let { a ->
@@ -253,15 +308,18 @@ data class RackSong(
                 } ?: RackCp88()
                 RackLiveSet(ls.name, parts, cp, ls.onSelect.firstNotNullOfOrNull { RackProgram.parse(it.hex) })
             }
-            return RackSong(slots, liveSets, song.tempo, song.leadSheet?.toRef()?.digest,
+            return RackSong(instances, liveSets, song.tempo, song.leadSheet?.toRef()?.digest,
                 song.nodes["mix"]?.params ?: emptyMap(),
                 song.nodes["mix.fx"]?.let { RackFx(it.kind.removePrefix("fx."), it.params) })
         }
 
-        /** A new song: one engine, one live set. */
+        /** The song graph's own nodes, which are not instances. */
+        private val PORTS = setOf("in", "mix", "out")
+
+        /** A new song: one instance, one live set. */
         fun starter(engine: RackEngine = RackEngine.SFIZZ, preset: String? = null) = RackSong(
-            slots = mapOf(engine to RackSlot(preset = preset)),
-            liveSets = listOf(RackLiveSet("Main", mapOf(engine to RackPart()))),
+            instances = listOf(RackInstance(engine.key, engine, RackSlot(preset = preset))),
+            liveSets = listOf(RackLiveSet("Main", mapOf(engine.key to RackPart()))),
         )
     }
 }

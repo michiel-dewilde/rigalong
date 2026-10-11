@@ -39,7 +39,7 @@ What you play from.
   fader to open its patch. Switching never cuts a note: a key you are
   holding keeps sounding until you release it, even if the new live set no
   longer uses that sound, and tails ring out naturally.
-* **Levels**: one fader per sound the song uses. Faders move only when you
+* **Levels**: one fader per sound the song uses (two pianos, two faders). Faders move only when you
   drag them, from where they are; touching one does nothing. "Store levels in
   this live set" (hold it) makes the current levels the live set's own.
 * **Master**: the overall volume, at the right. It belongs to the room, not
@@ -74,9 +74,12 @@ Where songs are made. On the left is the setlist that is on stage: change
 the order with ▲ ▼, remove a song with ✕, or add one. On the right is the
 song being edited:
 
-* **Engines**: which of the six sounds the song uses: Piano (SFZ sampler),
-  Organ (tonewheel), Synth (Surge XT), FM (DX7), Texture (Plaits) and SF2
-  (SoundFonts). For each, a patch from what is installed, and a level.
+* **Sounds**: what the song plays. Each sound is one of six engines -- Piano
+  (SFZ sampler), Organ (tonewheel), Synth (Surge XT), FM (DX7), Texture
+  (Plaits), SF2 (SoundFonts) -- with its own patch, level and effect. A song
+  can have several of one engine: **Add a sound** "+ Piano" twice gives two
+  pianos, each with its own instrument, split, transposition and fader. Tap a
+  sound's name to name it ("Bright piano"); ✕ removes it.
   * **Patch…** shows every setting of that sound (drawbars, models, sends,
     transposition) as sliders over their real ranges. What you change is
     heard at once and kept in the song.
@@ -101,7 +104,7 @@ song being edited:
   the default room.
 * **Master FX…**: one more effect on the whole mix, after the room, such as
   a Hall or a delay over everything.
-* **Live sets**: for each live set and each engine:
+* **Live sets**: for each live set and each sound:
   * whether it **plays**;
   * a **key range**, from low to high, which makes a split;
   * **transposition** in semitones;

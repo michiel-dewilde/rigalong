@@ -28,6 +28,8 @@ interface EngineHost {
     /** Installed SFZ instruments: id to display name. */
     fun instruments(): List<Pair<String, String>>
     fun selectInstrument(id: String)
+    /** The SFZ file of installed instrument [id], for an added piano instance; null if not installed. */
+    fun instrumentPath(id: String): String?
     fun currentInstrument(): String?
     fun showPrototype()
     /** One line on the state of the audio and MIDI path. */
@@ -80,9 +82,9 @@ class SongPlayer(private val lib: Library, private val host: EngineHost, private
     var rack: RackSong? by mutableStateOf(null); private set
     val liveSetNames = mutableStateListOf<String>()
     var liveSetIndex by mutableIntStateOf(-1); private set
-    /** Engine levels as they are now, for the stage faders. */
-    val levels = androidx.compose.runtime.mutableStateMapOf<RackEngine, Float>()
-    val playing = androidx.compose.runtime.mutableStateMapOf<RackEngine, Boolean>()
+    /** Instance levels as they are now, by instance id, for the stage faders. */
+    val levels = androidx.compose.runtime.mutableStateMapOf<String, Float>()
+    val playing = androidx.compose.runtime.mutableStateMapOf<String, Boolean>()
 
     /** The CP-88 page the app may write songs into (I3.4), and its MIDI channel. */
     var reservedPage: Int
@@ -100,9 +102,10 @@ class SongPlayer(private val lib: Library, private val host: EngineHost, private
 
     private var songs: List<Song> = emptyList()
     private var switcher: LiveSetSwitcher? = null
-    private val midiOn = BooleanArray(RackEngine.entries.size) { true }
-    private val audioOn = BooleanArray(RackEngine.entries.size) { true }
-    private val gain = FloatArray(RackEngine.entries.size) { 1f }
+    // Per ENGINE instance (AudioEngine::kMaxInstances).
+    private val midiOn = BooleanArray(MAX_INSTANCES) { true }
+    private val audioOn = BooleanArray(MAX_INSTANCES) { true }
+    private val gain = FloatArray(MAX_INSTANCES) { 1f }
 
     fun resume() {
         val id = prefs.getString("stage.setlist", null)?.let { runCatching { Digest(it) }.getOrNull() }
@@ -144,7 +147,7 @@ class SongPlayer(private val lib: Library, private val host: EngineHost, private
         liveSetNames.addAll(liveSets.map { it.name })
         switcher = LiveSetSwitcher(s, liveSets)
         prefs.edit().putInt("stage.song", index).apply()
-        note("song ${index + 1} '${songNames.getOrNull(index)}': engines ${rack?.slots?.keys?.map { it.key }}, " +
+        note("song ${index + 1} '${songNames.getOrNull(index)}': instances ${rack?.instances?.map { it.id }}, " +
                 "live sets ${liveSets.map { it.name }}")
         // The tempo before the engines: a synced effect is created at the song's
         // tempo, instead of gliding to it from the last song's over seconds.
@@ -156,7 +159,7 @@ class SongPlayer(private val lib: Library, private val host: EngineHost, private
         }
         applyMidiClock()
         setUpEngines()
-        if (rack?.slots?.containsKey(RackEngine.HAMMOND) == true) refreshOrgan()
+        if (rack?.instances?.any { it.engine == RackEngine.HAMMOND } == true) refreshOrgan()
         sheetPage = 0
         sheetPages = 0
         sheetFile = s.leadSheet?.toRef()?.digest?.let { java.io.File(lib.store.root, "blobs/sha256/${it.hex}") }
@@ -365,9 +368,9 @@ class SongPlayer(private val lib: Library, private val host: EngineHost, private
         val i = liveSetIndex.takeIf { it in r.liveSets.indices } ?: return
         val ls = r.liveSets[i]
         val parts = ls.parts.toMutableMap()
-        for (e in r.slots.keys) {
-            val v = levels[e] ?: continue
-            parts[e] = (parts[e] ?: be.mdw.bagosynths.model.RackPart(plays = false)).copy(level = v.toDouble())
+        for (inst in r.instances) {
+            val v = levels[inst.id] ?: continue
+            parts[inst.id] = (parts[inst.id] ?: be.mdw.bagosynths.model.RackPart(plays = false)).copy(level = v.toDouble())
         }
         val name = songNames.getOrNull(songIndex) ?: return
         lib.saveSong(id, name, r.copy(liveSets = r.liveSets.toMutableList().also { it[i] = ls.copy(parts = parts) }))
@@ -451,7 +454,8 @@ class SongPlayer(private val lib: Library, private val host: EngineHost, private
                 val (sound, name) = importCurrentCp88Sound()
                 Log.i(TAG, "selftest: imported '$name' ${sound.short}")
                 val draft = RackSong(
-                    slots = mapOf(RackEngine.SFIZZ to be.mdw.bagosynths.model.RackSlot(level = 0.0)),
+                    instances = listOf(be.mdw.bagosynths.model.RackInstance("sfizz", RackEngine.SFIZZ,
+                        be.mdw.bagosynths.model.RackSlot(level = 0.0))),
                     liveSets = listOf(
                         be.mdw.bagosynths.model.RackLiveSet("Own", cp88 = be.mdw.bagosynths.model.RackCp88("own", sound = sound, soundName = name)),
                         be.mdw.bagosynths.model.RackLiveSet("Select 1:1", cp88 = be.mdw.bagosynths.model.RackCp88("select", 1, 1)),
@@ -473,16 +477,16 @@ class SongPlayer(private val lib: Library, private val host: EngineHost, private
 
     // ------------------------------------------------------------ quick edit
 
-    /** What the stage asked to edit: a song, and in it a live set or an engine's patch. */
-    data class EditRequest(val song: Digest, val liveSet: Int? = null, val engine: RackEngine? = null)
+    /** What the stage asked to edit: a song, and in it a live set or an instance's patch. */
+    data class EditRequest(val song: Digest, val liveSet: Int? = null, val instance: String? = null)
     var editRequest by mutableStateOf<EditRequest?>(null)
     /** Set by the UI: shows the Songs screen. */
     var showSongs: (() -> Unit)? = null
 
     /** From the stage, one long press: the current song in the editor, at [liveSet] or [engine]'s patch. */
-    fun requestEdit(liveSet: Int? = null, engine: RackEngine? = null) {
+    fun requestEdit(liveSet: Int? = null, instance: String? = null) {
         val id = songEntries.getOrNull(songIndex) ?: return
-        editRequest = EditRequest(id, liveSet, engine)
+        editRequest = EditRequest(id, liveSet, instance)
         showSongs?.invoke()
     }
 
@@ -651,41 +655,87 @@ class SongPlayer(private val lib: Library, private val host: EngineHost, private
         organ[index] = v
     }
 
+    // ------------------------------------------------------------- instances
+
+    /**
+     * The engine instance each of [song]'s instances plays on: the k-th of an
+     * engine in the song on the k-th engine instance of that type (the one of
+     * the default patch first), more added when the song has more. The same
+     * song always gets the same ones, so the stage and the editor agree.
+     */
+    private fun assignment(song: RackSong?): Map<String, Int> {
+        if (song == null) return emptyMap()
+        val count = runCatching { NativeBridge.nativeInstanceCount() }.getOrDefault(0)
+        val byType = HashMap<Int, MutableList<Int>>()
+        for (i in 0 until count) byType.getOrPut(NativeBridge.nativeInstanceType(i)) { mutableListOf() } += i
+        val seen = HashMap<RackEngine, Int>()
+        val out = LinkedHashMap<String, Int>()
+        for (inst in song.instances) {
+            val k = seen.merge(inst.engine, 1, Int::plus)!! - 1
+            val pool = byType.getOrPut(inst.engine.ordinal) { mutableListOf() }
+            while (pool.size <= k) {
+                val n = NativeBridge.nativeAddInstance(inst.engine.ordinal)
+                if (n < 0) break
+                pool += n
+                note("instance $n added for ${inst.engine.label}")
+            }
+            pool.getOrNull(k)?.let { out[inst.id] = it }
+        }
+        return out
+    }
+
+    /** The stage song's instances on the engine's. */
+    private var onEngine: Map<String, Int> = emptyMap()
+
+    private val nodeCache = HashMap<Int, Int>()
+    private fun nodeOf(i: Int): Int? = nodeCache[i] ?: NativeBridge.nativeInstanceNode(i).takeIf { it >= 0 }
+        ?.also { nodeCache[i] = it }
+
+    private fun paramIndex(node: Int, name: String): Int? = (0 until NativeBridge.nativeNodeParamCount(node))
+        .firstOrNull { NativeBridge.nativeNodeParamName(node, it) == name }
+
+    private fun setParamAt(i: Int, param: String, v: Float) {
+        val node = nodeOf(i) ?: return
+        paramIndex(node, param)?.let { NativeBridge.nativeSetNodeParam(node, it, v) }
+    }
+
     /** One parameter of an engine, as the patch editor shows it (PLAN.md D6). */
     data class ParamDesc(val name: String, val min: Float, val max: Float, val integer: Boolean, val value: Float)
 
-    /** Every parameter of engine [e] but its level, with its range and current value. */
-    fun engineParams(e: RackEngine): List<ParamDesc> {
-        val node = nodeIndex(e) ?: return emptyList()
-        return (0 until NativeBridge.nativeNodeParamCount(node)).mapNotNull { p ->
+    private fun paramsOf(node: Int, from: Int = 0, skip: Set<String> = emptySet()): List<ParamDesc> =
+        (from until NativeBridge.nativeNodeParamCount(node)).mapNotNull { p ->
             val name = NativeBridge.nativeNodeParamName(node, p)
-            if (name.isEmpty() || name == "Level") return@mapNotNull null
+            if (name.isEmpty() || name in skip) return@mapNotNull null
             val r = NativeBridge.nativeNodeParamRange(node, p)
             ParamDesc(name, r[0], r[1], r[2] > 0.5f, NativeBridge.nativeGetNodeParam(node, p))
         }
+
+    /** Every parameter of [song]'s instance [id] but its level, with its range and current value. */
+    fun engineParams(song: RackSong, id: String): List<ParamDesc> {
+        val node = assignment(song)[id]?.let { nodeOf(it) } ?: return emptyList()
+        return paramsOf(node, skip = setOf("Level"))
     }
 
     /**
-     * Puts a slot's preset and parameters on its engine, so the patch editor
-     * shows -- and the keys play -- this song's patch, not whatever was last
-     * on stage. [reload] puts the stage's song back.
+     * Puts [song]'s instance [id] with [slot] on its engine instance, so the
+     * patch editor shows -- and the keys play -- this song's patch, not
+     * whatever was on stage. [reload] puts the stage's song back.
      */
-    fun previewSlot(e: RackEngine, slot: be.mdw.bagosynths.model.RackSlot) {
-        loadPreset(e, slot.preset, slot.program)
-        applyFx(e.ordinal, slot.fx)
-        for ((name, v) in slot.params) setNodeParam(e, name, v.toFloat())
+    fun previewSlot(song: RackSong, id: String, slot: be.mdw.bagosynths.model.RackSlot) {
+        val inst = song.instance(id) ?: return
+        val i = assignment(song)[id] ?: return
+        loadPresetAt(i, inst.engine, slot.preset, slot.program)
+        applyFxAt(fxNodeOf(i), slot.fx)
+        for ((name, v) in slot.params) setParamAt(i, name, v.toFloat())
+    }
+
+    /** Audition one parameter while editing a patch. */
+    fun auditionParam(song: RackSong, id: String, name: String, v: Float) {
+        assignment(song)[id]?.let { setParamAt(it, name, v) }
     }
 
     /** The reverb's parameters, with their ranges and current values. */
-    fun reverbParams(): List<ParamDesc> {
-        val node = reverbIndex() ?: return emptyList()
-        return (0 until NativeBridge.nativeNodeParamCount(node)).mapNotNull { p ->
-            val name = NativeBridge.nativeNodeParamName(node, p)
-            if (name.isEmpty()) return@mapNotNull null
-            val r = NativeBridge.nativeNodeParamRange(node, p)
-            ParamDesc(name, r[0], r[1], r[2] > 0.5f, NativeBridge.nativeGetNodeParam(node, p))
-        }
-    }
+    fun reverbParams(): List<ParamDesc> = reverbIndex()?.let { paramsOf(it) } ?: emptyList()
 
     /** Puts a song's reverb on the engine: its own values over the defaults. */
     fun previewReverb(values: Map<String, Double>) {
@@ -694,9 +744,7 @@ class SongPlayer(private val lib: Library, private val host: EngineHost, private
 
     fun auditionReverb(name: String, v: Float) {
         val node = reverbIndex() ?: return
-        val p = (0 until NativeBridge.nativeNodeParamCount(node))
-            .firstOrNull { NativeBridge.nativeNodeParamName(node, it) == name } ?: return
-        NativeBridge.nativeSetNodeParam(node, p, v)
+        paramIndex(node, name)?.let { NativeBridge.nativeSetNodeParam(node, it, v) }
     }
 
     private var reverbNode: Int? = null
@@ -705,63 +753,60 @@ class SongPlayer(private val lib: Library, private val host: EngineHost, private
 
     // ---------------------------------------------------------- insert effects
 
-    /**
-     * Effect slot [slot]'s node: the rack adds one per engine, in rack order,
-     * then [MASTER_FX] on the whole mix.
-     */
-    private val fxNodes = HashMap<Int, Int>()
-    private fun fxIndex(slot: Int): Int? = fxNodes[slot] ?: (0 until NativeBridge.nativeNodeCount())
-        .filter { NativeBridge.nativeNodeType(it) == "Fx" }.getOrNull(slot)?.also { fxNodes[slot] = it }
+    private val fxCache = HashMap<Int, Int>()
+    private fun fxNodeOf(i: Int): Int? = fxCache[i] ?: NativeBridge.nativeInstanceFxNode(i).takeIf { it >= 0 }
+        ?.also { fxCache[i] = it }
 
-    private fun fxParamIndex(node: Int, name: String): Int? = (0 until NativeBridge.nativeNodeParamCount(node))
-        .firstOrNull { NativeBridge.nativeNodeParamName(node, it) == name }
+    /** The effect on the whole mix: the Fx node that is no instance's. */
+    private var masterFxNode: Int? = null
+    private fun masterFx(): Int? = masterFxNode ?: run {
+        val mine = (0 until NativeBridge.nativeInstanceCount()).mapNotNull { fxNodeOf(it) }.toSet()
+        (0 until NativeBridge.nativeNodeCount()).firstOrNull { NativeBridge.nativeNodeType(it) == "Fx" && it !in mine }
+    }?.also { masterFxNode = it }
+
+    /** The effect node of [song]'s instance [id], or of the whole mix for null. */
+    private fun fxTarget(song: RackSong?, id: String?): Int? =
+        if (id == null) masterFx() else assignment(song)[id]?.let { fxNodeOf(it) }
 
     /**
-     * Puts [fx] in effect slot [slot]: a fresh effect that starts at the song's
+     * Puts [fx] on an effect node: a fresh effect that starts at the song's
      * values (FxNode::configure), so nothing comes from the last song and no
      * delay glides in from its default time.
      */
-    fun applyFx(slot: Int, fx: be.mdw.bagosynths.model.RackFx?) {
-        val node = fxIndex(slot) ?: return
+    private fun applyFxAt(node: Int?, fx: be.mdw.bagosynths.model.RackFx?) {
+        node ?: return
         val type = be.mdw.bagosynths.model.RackFx.TYPES.indexOf(fx?.type ?: "off").coerceAtLeast(0)
         val params = fx?.params.orEmpty()
         NativeBridge.nativeFxConfigure(node, type, params.keys.toTypedArray(),
             params.values.map { it.toFloat() }.toFloatArray())
         // Fully on until a live set says otherwise: an amount left at 0 by the
         // previous song would make a new effect silent.
-        fxParamIndex(node, "Amount")?.let { NativeBridge.nativeSetNodeParam(node, it, 1f) }
+        paramIndex(node, "Amount")?.let { NativeBridge.nativeSetNodeParam(node, it, 1f) }
     }
 
-    /** The effect's parameters as they are in slot [slot] now (the type excluded). */
-    fun fxParams(slot: Int): List<ParamDesc> {
-        val node = fxIndex(slot) ?: return emptyList()
-        return (1 until NativeBridge.nativeNodeParamCount(node)).mapNotNull { p ->
-            val name = NativeBridge.nativeNodeParamName(node, p)
-            if (name.isEmpty()) return@mapNotNull null
-            val r = NativeBridge.nativeNodeParamRange(node, p)
-            ParamDesc(name, r[0], r[1], r[2] > 0.5f, NativeBridge.nativeGetNodeParam(node, p))
-        }
-    }
+    /** [fx] on [song]'s instance [id], or on the whole mix for null (the effect editor). */
+    fun applyFx(song: RackSong?, id: String?, fx: be.mdw.bagosynths.model.RackFx?) = applyFxAt(fxTarget(song, id), fx)
 
-    fun auditionFx(slot: Int, name: String, v: Float) {
-        val node = fxIndex(slot) ?: return
-        fxParamIndex(node, name)?.let { NativeBridge.nativeSetNodeParam(node, it, v) }
+    /** The effect's parameters as they are now (the type excluded). */
+    fun fxParams(song: RackSong?, id: String?): List<ParamDesc> =
+        fxTarget(song, id)?.let { paramsOf(it, from = 1) } ?: emptyList()
+
+    fun auditionFx(song: RackSong?, id: String?, name: String, v: Float) {
+        val node = fxTarget(song, id) ?: return
+        paramIndex(node, name)?.let { NativeBridge.nativeSetNodeParam(node, it, v) }
     }
 
     /** [v] of the effect's parameter [name] as the player reads it, or null. */
-    fun fxDisplay(slot: Int, name: String, v: Float): String? {
-        val node = fxIndex(slot) ?: return null
-        return fxParamIndex(node, name)?.let { NativeBridge.nativeNodeParamDisplay(node, it, v) }
+    fun fxDisplay(song: RackSong?, id: String?, name: String, v: Float): String? {
+        val node = fxTarget(song, id) ?: return null
+        return paramIndex(node, name)?.let { NativeBridge.nativeNodeParamDisplay(node, it, v) }
     }
 
-    /** Audition one parameter while editing a patch. */
-    fun auditionParam(e: RackEngine, name: String, v: Float) = setNodeParam(e, name, v)
-
     /** A stage fader moved. */
-    fun setLevel(e: RackEngine, v: Float) {
-        setNodeParam(e, "Level", v)
-        levels[e] = v
-        switcher?.noteValue(e.levelKey, v.toDouble())
+    fun setLevel(id: String, v: Float) {
+        onEngine[id]?.let { setParamAt(it, "Level", v) }
+        levels[id] = v
+        rack?.instance(id)?.let { switcher?.noteValue(it.levelKey, v.toDouble()) }
     }
 
     fun panic() = NativeBridge.nativePanic()
@@ -772,50 +817,70 @@ class SongPlayer(private val lib: Library, private val host: EngineHost, private
      * they always did. [reload] takes it back.
      */
     fun releaseRack() {
-        for (e in RackEngine.entries) {
-            midiOn[e.rackIndex] = true; audioOn[e.rackIndex] = true; gain[e.rackIndex] = 1f
-            NativeBridge.nativeRackWire(e.rackIndex, true, true, 1f)
-            NativeBridge.nativeZoneParam(e.rackIndex, ZONE_PARAMS.indexOf("keyLow"), 0f)
-            NativeBridge.nativeZoneParam(e.rackIndex, ZONE_PARAMS.indexOf("keyHigh"), 127f)
-            NativeBridge.nativeZoneParam(e.rackIndex, ZONE_PARAMS.indexOf("transpose"), 0f)
-            NativeBridge.nativeZoneParam(e.rackIndex, ZONE_PARAMS.indexOf("channelIn"), 0f)
+        for (i in 0 until NativeBridge.nativeInstanceCount()) {
+            midiOn[i] = true; audioOn[i] = true; gain[i] = 1f
+            NativeBridge.nativeRackWire(i, true, true, 1f)
+            NativeBridge.nativeZoneParam(i, ZONE_PARAMS.indexOf("keyLow"), 0f)
+            NativeBridge.nativeZoneParam(i, ZONE_PARAMS.indexOf("keyHigh"), 127f)
+            NativeBridge.nativeZoneParam(i, ZONE_PARAMS.indexOf("transpose"), 0f)
+            NativeBridge.nativeZoneParam(i, ZONE_PARAMS.indexOf("channelIn"), 0f)
         }
     }
 
     // ------------------------------------------------------------- applying
 
-    /** The song's engines and patches; engines it does not use are silenced and parked. */
+    /** The song's instances on the engine's, with their patches; engine instances it does not use are silenced and parked. */
     private fun setUpEngines() {
         val r = rack
         // Every song sets the whole reverb, so one song's room never stays
         // with the next.
         previewReverb(r?.reverb.orEmpty())
-        applyFx(MASTER_FX, r?.masterFx)
-        for (e in RackEngine.entries) {
-            val slot = r?.slots?.get(e)
-            applyFx(e.ordinal, slot?.fx)
-            if (slot == null) {
-                // Not in this song: no new notes, and level 0 lets the engine park.
-                setWire(e, midi = false)
-                setNodeParam(e, "Level", 0f)
-                levels.remove(e)
-                playing.remove(e)
-                continue
-            }
-            loadPreset(e, slot.preset, slot.program)
+        applyFxAt(masterFx(), r?.masterFx)
+        onEngine = assignment(r)
+        val used = onEngine.values.toSet()
+        levels.keys.retainAll(onEngine.keys)
+        playing.keys.retainAll(onEngine.keys)
+        for (i in 0 until NativeBridge.nativeInstanceCount()) {
+            if (i in used) continue
+            // Not in this song: no new notes, no effect, and level 0 lets the engine park.
+            applyFxAt(fxNodeOf(i), null)
+            setWireAt(i, midi = false)
+            setParamAt(i, "Level", 0f)
+        }
+        for (inst in r?.instances.orEmpty()) {
+            val i = onEngine[inst.id] ?: continue
+            applyFxAt(fxNodeOf(i), inst.slot.fx)
+            loadPresetAt(i, inst.engine, inst.slot.preset, inst.slot.program)
             // The patch's own parameters, over its preset (M8).
-            for ((name, v) in slot.params) setNodeParam(e, name, v.toFloat())
+            for ((name, v) in inst.slot.params) setParamAt(i, name, v.toFloat())
         }
     }
 
-    private fun loadPreset(e: RackEngine, preset: String?, program: Int?) {
+    private fun loadPresetAt(i: Int, e: RackEngine, wanted: String?, program: Int?) {
+        // "As loaded" on an added instance means what the first of its engine
+        // has: a new instance starts empty, and an empty piano is a silent one.
+        val preset = wanted?.takeIf { it.isNotEmpty() } ?: if (i == e.ordinal) null else runCatching {
+            when (e) {
+                RackEngine.SFIZZ -> host.currentInstrument()
+                RackEngine.SURGE -> NativeBridge.nativeSurgeCurrentPatchName()
+                RackEngine.FLUID -> NativeBridge.nativeFluidCurrentFont()
+                else -> null
+            }
+        }.getOrNull()?.takeIf { it.isNotEmpty() }
         if (preset.isNullOrEmpty()) return
         runCatching {
+            if (i != e.ordinal) {
+                // An added instance: by name, its own loader (AudioEngine::loadInstancePreset).
+                if (NativeBridge.nativeInstancePreset(i) == preset && program == null) return
+                val path = if (e == RackEngine.SFIZZ) host.instrumentPath(preset) else null
+                NativeBridge.nativeInstanceLoadPreset(i, preset, program ?: -1, path)
+                return
+            }
             when (e) {
                 RackEngine.SFIZZ -> if (host.currentInstrument() != preset) host.selectInstrument(preset)
                 RackEngine.HAMMOND -> {
-                    val i = NativeBridge.nativeOrganPresetNames().indexOf(preset)
-                    if (i >= 0) NativeBridge.nativeOrganPreset(i, 0)
+                    val k = NativeBridge.nativeOrganPresetNames().indexOf(preset)
+                    if (k >= 0) NativeBridge.nativeOrganPreset(k, 0)
                 }
                 RackEngine.SURGE ->
                     if (NativeBridge.nativeSurgeReady() && NativeBridge.nativeSurgeCurrentPatchName() != preset) {
@@ -825,7 +890,7 @@ class SongPlayer(private val lib: Library, private val host: EngineHost, private
                 RackEngine.FLUID -> if (NativeBridge.nativeFluidReady()) {
                     if (NativeBridge.nativeFluidCurrentFont() != preset) NativeBridge.nativeFluidLoadFontNamed(preset)
                     if (program != null) Thread {
-                        for (i in 0 until 200) {
+                        for (k in 0 until 200) {
                             if (!NativeBridge.nativeFluidBusy()) break
                             Thread.sleep(50)
                         }
@@ -833,11 +898,11 @@ class SongPlayer(private val lib: Library, private val host: EngineHost, private
                     }.start()
                 }
                 RackEngine.PLAITS -> {
-                    val i = NativeBridge.nativePlaitsEngineNames().indexOf(preset)
-                    if (i >= 0) NativeBridge.nativeSetPlaitsParam(1, i.toFloat())
+                    val k = NativeBridge.nativePlaitsEngineNames().indexOf(preset)
+                    if (k >= 0) NativeBridge.nativeSetPlaitsParam(1, k.toFloat())
                 }
             }
-        }.onFailure { Log.e("bos-ui", "preset $preset for ${e.key}: $it") }
+        }.onFailure { Log.e("bos-ui", "preset $preset for instance $i (${e.key}): $it") }
     }
 
     private fun apply(changes: List<Change>) {
@@ -845,10 +910,10 @@ class SongPlayer(private val lib: Library, private val host: EngineHost, private
             is Change.Param -> applyParam(c.key, c.value.toFloat())
             is Change.WireSet -> {
                 val dot = c.wire.lastIndexOf('.')
-                val e = RackEngine.ofKey(c.wire.substring(0, dot)) ?: continue
+                val i = onEngine[c.wire.substring(0, dot)] ?: continue
                 when (c.wire.substring(dot + 1)) {
-                    "midi" -> setWire(e, midi = c.on)
-                    "audio" -> setWire(e, audio = c.on, g = c.gain.toFloat())
+                    "midi" -> setWireAt(i, midi = c.on)
+                    "audio" -> setWireAt(i, audio = c.on, g = c.gain.toFloat())
                 }
             }
             is Change.Cp88 -> when (c.action.mode) {
@@ -864,49 +929,42 @@ class SongPlayer(private val lib: Library, private val host: EngineHost, private
             }
             is Change.Enable -> Unit   // not in the rack slice yet
         }
-        for (e in RackEngine.entries) if (rack?.slots?.containsKey(e) == true) playing[e] = midiOn[e.rackIndex]
+        for ((id, i) in onEngine) playing[id] = midiOn[i]
     }
 
+    /** A song key ("sfizz-2.zone.keyLow", "hammond.Level") on the engine instance its song instance plays on. */
     private fun applyParam(key: String, v: Float) {
         val first = key.indexOf('.')
-        val e = RackEngine.ofKey(key.substring(0, first)) ?: return
+        if (first < 0) return
+        val id = key.substring(0, first)
+        val i = onEngine[id] ?: return
         val rest = key.substring(first + 1)
         if (rest.startsWith("zone.")) {
-            val i = ZONE_PARAMS.indexOf(rest.removePrefix("zone."))
-            if (i >= 0) NativeBridge.nativeZoneParam(e.rackIndex, i, v)
+            val z = ZONE_PARAMS.indexOf(rest.removePrefix("zone."))
+            if (z >= 0) NativeBridge.nativeZoneParam(i, z, v)
         } else if (rest.startsWith("fx.")) {
-            auditionFx(e.ordinal, rest.removePrefix("fx."), v)
+            val node = fxNodeOf(i) ?: return
+            paramIndex(node, rest.removePrefix("fx."))?.let { NativeBridge.nativeSetNodeParam(node, it, v) }
         } else {
-            setNodeParam(e, rest, v)
-            if (rest == "Level") levels[e] = v
+            setParamAt(i, rest, v)
+            if (rest == "Level") levels[id] = v
         }
     }
 
-    private fun setWire(e: RackEngine, midi: Boolean? = null, audio: Boolean? = null, g: Float? = null) {
-        val i = e.rackIndex
+    private fun setWireAt(i: Int, midi: Boolean? = null, audio: Boolean? = null, g: Float? = null) {
+        if (i !in 0 until MAX_INSTANCES) return
         midi?.let { midiOn[i] = it }
         audio?.let { audioOn[i] = it }
         g?.let { gain[i] = it }
         NativeBridge.nativeRackWire(i, midiOn[i], audioOn[i], gain[i])
     }
 
-    private fun setNodeParam(e: RackEngine, param: String, v: Float) {
-        val node = nodeIndex(e) ?: return
-        val p = (0 until NativeBridge.nativeNodeParamCount(node))
-            .firstOrNull { NativeBridge.nativeNodeParamName(node, it) == param } ?: return
-        NativeBridge.nativeSetNodeParam(node, p, v)
-    }
-
-    private val nodeIndexCache = HashMap<RackEngine, Int>()
-    private fun nodeIndex(e: RackEngine): Int? = nodeIndexCache[e] ?: (0 until NativeBridge.nativeNodeCount())
-        .firstOrNull { NativeBridge.nativeNodeType(it) == e.nodeType }?.also { nodeIndexCache[e] = it }
-
     companion object {
         private const val TAG = "bos-stage"
         /** What a switching controller can be taught (I10.4, I12.3). */
         val CONTROLLER_ACTIONS = listOf("next", "previous", "tap", "click")
-        /** The effect slot on the whole mix; 0-5 are the engines'. */
-        const val MASTER_FX = 6
+        /** AudioEngine::kMaxInstances. */
+        const val MAX_INSTANCES = 24
         /** ReverbNode's own defaults (graph/Nodes.h), for a song that sets none. */
         val REVERB_DEFAULTS = mapOf("Room size" to 0.72, "Damping" to 0.35, "Width" to 1.0, "Mix" to 0.25)
         const val ORGAN_LESLIE = 37

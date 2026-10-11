@@ -18,8 +18,8 @@ class LibraryPatchTest {
     private val rhodes = Patch(engine = "sfizz", preset = "rhodes", params = mapOf("Tone" to 0.4))
 
     private fun songWith(patch: Patch, link: Digest? = null) = RackSong(
-        slots = mapOf(RackEngine.SFIZZ to RackSlot().withPatch(patch, link)),
-        liveSets = listOf(RackLiveSet("Main", mapOf(RackEngine.SFIZZ to RackPart()))),
+        instances = listOf(RackInstance("sfizz", RackEngine.SFIZZ, RackSlot().withPatch(patch, link))),
+        liveSets = listOf(RackLiveSet("Main", mapOf("sfizz" to RackPart()))),
     )
 
     private fun target(id: Digest) = lib.store.entry(id)!!.version.target!!.digest

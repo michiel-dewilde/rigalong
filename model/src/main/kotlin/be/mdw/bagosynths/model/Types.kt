@@ -84,6 +84,8 @@ data class Node(
     val patchEntry: String? = null,
     /** Song values of this node's parameters, on top of the patch. */
     val params: Map<String, Double> = emptyMap(),
+    /** What the player named this node (an instance: "Pad", "Bass"); null for none. */
+    val label: String? = null,
     /** Render with this port's island when the environment allows (I3.21). */
     val island: String? = null,
 )

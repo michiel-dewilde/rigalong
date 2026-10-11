@@ -88,7 +88,7 @@
     <string name="song">Song</string>
     <string name="save">Save</string>
     <string name="save_unsaved">Save •</string>
-    <string name="engines">Engines</string>
+    <string name="engines">Sounds</string>
     <string name="as_loaded_paren">(as loaded)</string>
     <string name="level">level</string>
     <string name="live_sets">Live sets</string>
@@ -150,6 +150,8 @@
     <string name="delete_hold">Delete (hold)</string>
     <string name="name">Name</string>
     <string name="rename">Rename</string>
+    <string name="add_sound">Add a sound:</string>
+    <string name="sound_name">Name of this sound</string>
     <string name="entry_id">Entry %1$s</string>
     <string name="diverged">Changed elsewhere too</string>
     <string name="use_this">Use this one</string>

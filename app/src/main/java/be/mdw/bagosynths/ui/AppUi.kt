@@ -265,29 +265,32 @@ private fun StageControls(player: SongPlayer, host: EngineHost, modifier: Modifi
             Text(stringResource(R.string.levels), color = Dim, fontSize = 14.sp, modifier = Modifier.weight(1f))
             Tab(stringResource(R.string.store_levels), false, longPressOnly = true) { player.storeLevels() }
         }
-        val engines = player.rack?.slots?.keys?.sorted().orEmpty()
+        val rackNow = player.rack
+        val sounds = rackNow?.instances.orEmpty()
         Row(Modifier.fillMaxWidth().weight(1f)) {
         // Scrolls sideways when the panels do not fit (a phone, portrait: S18.4, S20.2).
         Row(horizontalArrangement = Arrangement.spacedBy(16.dp),
             modifier = Modifier.weight(1f).fillMaxHeight().horizontalScroll(rememberScrollState())) {
             // The levels first: where the row is narrower than its panels (beside
             // a lead sheet), the organ's drawbars scroll into view, not the faders.
-            for (e in engines) {
-                val plays = player.playing[e] ?: false
+            // One fader per sound, two pianos being two faders.
+            for (inst in sounds) {
+                val plays = player.playing[inst.id] ?: false
                 Column(Modifier.width(140.dp).fillMaxHeight().background(Panel, RoundedCornerShape(10.dp)).padding(10.dp),
                     horizontalAlignment = Alignment.CenterHorizontally) {
                     // A long press on its name opens its patch in the editor.
-                    Text(engineLabel(e), fontWeight = FontWeight.SemiBold, color = if (plays) Accent else Dim,
-                        modifier = Modifier.combinedClickable(onClick = {}, onLongClick = { player.requestEdit(engine = e) }))
+                    Text(rackNow!!.displayName(inst), fontWeight = FontWeight.SemiBold, color = if (plays) Accent else Dim,
+                        maxLines = 1, overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.combinedClickable(onClick = {}, onLongClick = { player.requestEdit(instance = inst.id) }))
                     Text(stringResource(if (plays) R.string.engine_playing else R.string.engine_silent), fontSize = 12.sp, color = Dim)
                     Spacer(Modifier.height(8.dp))
-                    val level = player.levels[e] ?: 0f
+                    val level = player.levels[inst.id] ?: 0f
                     Text("%.0f %%".format(level * 100), fontSize = 18.sp)
                     // Moves only by dragging, never by a touch (S17.4).
-                    RelativeFader(level, { player.setLevel(e, it) }, Modifier.weight(1f).fillMaxWidth())
+                    RelativeFader(level, { player.setLevel(inst.id, it) }, Modifier.weight(1f).fillMaxWidth())
                 }
             }
-            if (RackEngine.HAMMOND in engines) OrganPanel(player)
+            if (sounds.any { it.engine == RackEngine.HAMMOND }) OrganPanel(player)
         }
         Spacer(Modifier.width(16.dp))
         MasterFader(host)
@@ -461,7 +464,9 @@ private fun SongsScreen(player: SongPlayer, lib: Library, host: EngineHost) {
                 decisions = emptyList()
                 // "Only in this song": the slot lets go of the library patch and keeps its own.
                 if (only.isNotEmpty()) editing = editing?.let { (id, r) ->
-                    id to r.copy(slots = r.slots.mapValues { (_, sl) -> if (sl.libraryPatch in only) sl.copy(libraryPatch = null) else sl })
+                    id to r.copy(instances = r.instances.map {
+                        if (it.slot.libraryPatch in only) it.copy(slot = it.slot.copy(libraryPatch = null)) else it
+                    })
                 }
                 save(moves)
             },
@@ -523,15 +528,18 @@ private fun move(lib: Library, setlistId: Digest, ids: List<Digest>, i: Int, by:
     lib.saveSetlist(setlistId, lib.store.entry(setlistId)?.version?.name ?: "Setlist", m)
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun SongEditor(song: RackSong, name: String, host: EngineHost, player: SongPlayer, lib: Library,
                        focus: SongPlayer.EditRequest?, unsaved: Boolean, onName: (String) -> Unit,
                        onChange: (RackSong) -> Unit, onSave: () -> Unit) {
-    var picker by remember { mutableStateOf<RackEngine?>(null) }
-    var patchEditor by remember { mutableStateOf<RackEngine?>(null) }
-    LaunchedEffect(focus) { focus?.engine?.let { if (song.slots.containsKey(it)) patchEditor = it } }
+    // Instance ids: which sound's preset list, patch or effect is open.
+    var picker by remember { mutableStateOf<String?>(null) }
+    var patchEditor by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(focus) { focus?.instance?.let { if (song.instance(it) != null) patchEditor = it } }
     var reverbEditor by remember { mutableStateOf(false) }
-    var fxEditor by remember { mutableStateOf<RackEngine?>(null) }
+    var fxEditor by remember { mutableStateOf<String?>(null) }
+    var renaming by remember { mutableStateOf<String?>(null) }
     var masterFxEditor by remember { mutableStateOf(false) }
     Column(Modifier.fillMaxSize().background(Panel, RoundedCornerShape(10.dp)).padding(12.dp)
         .verticalScroll(rememberScrollState())) {
@@ -574,36 +582,36 @@ private fun SongEditor(song: RackSong, name: String, host: EngineHost, player: S
             }
         }
         Spacer(Modifier.height(12.dp))
+        // The song's sounds: instances, first class -- several of one engine if it wants (two pianos).
         Text(stringResource(R.string.engines), fontWeight = FontWeight.SemiBold)
-        for (e in RackEngine.entries) {
-            val slot = song.slots[e]
+        for (inst in song.instances) {
+            val slot = inst.slot
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Checkbox(checked = slot != null, onCheckedChange = { on ->
-                    val slots = song.slots.toMutableMap()
-                    if (on) slots[e] = RackSlot() else slots.remove(e)
-                    onChange(song.copy(slots = slots, liveSets = song.liveSets.map { ls ->
-                        val parts = ls.parts.toMutableMap()
-                        if (on) parts.putIfAbsent(e, RackPart()) else parts.remove(e)
-                        ls.copy(parts = parts)
-                    }))
-                })
-                Text(engineLabel(e), modifier = Modifier.width(80.dp))
-                if (slot != null) {
-                    OutlinedButton(onClick = { picker = e }, modifier = Modifier.weight(1f)) {
-                        Text(slot.preset ?: stringResource(R.string.as_loaded_paren), maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    }
-                    TextButton(onClick = { patchEditor = e }) {
-                        Text(stringResource(R.string.edit_patch) + if (slot.params.isNotEmpty()) " ●" else "")
-                    }
-                    TextButton(onClick = { fxEditor = e }) {
-                        Text(slot.fx?.let { stringResource(fxLabel(it.type)) } ?: stringResource(R.string.fx_button))
-                    }
-                    Spacer(Modifier.width(8.dp))
-                    Text(stringResource(R.string.level), color = Dim)
-                    Slider(value = slot.level.toFloat(), onValueChange = { v ->
-                        onChange(song.copy(slots = song.slots + (e to slot.copy(level = v.toDouble()))))
-                    }, modifier = Modifier.width(180.dp))
+                // Its name: tap to rename ("Bright piano", "Pad").
+                Text(song.displayName(inst), color = if (inst.label != null) Accent else Color.White, maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.width(120.dp).clickable { renaming = inst.id }.padding(vertical = 8.dp))
+                OutlinedButton(onClick = { picker = inst.id }, modifier = Modifier.weight(1f)) {
+                    Text(slot.preset ?: stringResource(R.string.as_loaded_paren), maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
+                TextButton(onClick = { patchEditor = inst.id }) {
+                    Text(stringResource(R.string.edit_patch) + if (slot.params.isNotEmpty()) " ●" else "")
+                }
+                TextButton(onClick = { fxEditor = inst.id }) {
+                    Text(slot.fx?.let { stringResource(fxLabel(it.type)) } ?: stringResource(R.string.fx_button))
+                }
+                Text(stringResource(R.string.level), color = Dim)
+                Slider(value = slot.level.toFloat(), onValueChange = { v ->
+                    onChange(song.withSlot(inst.id, slot.copy(level = v.toDouble())))
+                }, modifier = Modifier.width(160.dp))
+                TextButton(onClick = { onChange(song.minus(inst.id)) }) { Text("✕", color = Danger) }
+            }
+        }
+        // Another sound, of any engine -- a second piano is a second instance.
+        androidx.compose.foundation.layout.FlowRow(verticalArrangement = Arrangement.Center) {
+            Text(stringResource(R.string.add_sound), color = Dim, modifier = Modifier.padding(top = 12.dp, end = 8.dp))
+            for (e in RackEngine.entries) {
+                TextButton(onClick = { onChange(song.plus(e)) }) { Text("+ " + engineLabel(e)) }
             }
         }
         Spacer(Modifier.height(12.dp))
@@ -611,7 +619,7 @@ private fun SongEditor(song: RackSong, name: String, host: EngineHost, player: S
             Text(stringResource(R.string.live_sets), fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
             val nextName = stringResource(R.string.live_set_n, song.liveSets.size + 1)
             OutlinedButton(onClick = {
-                val parts = song.slots.keys.associateWith { RackPart() }
+                val parts = song.instances.associate { it.id to RackPart() }
                 onChange(song.copy(liveSets = song.liveSets + RackLiveSet(nextName, parts)))
             }) { Text(stringResource(R.string.add_live_set)) }
         }
@@ -619,41 +627,51 @@ private fun SongEditor(song: RackSong, name: String, host: EngineHost, player: S
             LiveSetCard(song, i, ls, player, focused = focus?.liveSet == i, onChange)
         }
     }
-    fxEditor?.let { e ->
-        song.slots[e]?.let { slot ->
-            FxEditor(stringResource(R.string.fx_of, engineLabel(e)), e.ordinal, slot.fx, player, onChange = { f ->
-                onChange(song.copy(slots = song.slots + (e to (song.slots[e] ?: slot).copy(fx = f))))
+    fxEditor?.let { id ->
+        song.instance(id)?.let { inst ->
+            FxEditor(stringResource(R.string.fx_of, song.displayName(inst)), song, id, inst.slot.fx, player, onChange = { f ->
+                onChange(song.withSlot(id, (song.instance(id)?.slot ?: inst.slot).copy(fx = f)))
             }, onDismiss = { fxEditor = null })
         }
     }
     if (masterFxEditor) {
-        FxEditor(stringResource(R.string.master_fx_title), SongPlayer.MASTER_FX, song.masterFx, player,
+        FxEditor(stringResource(R.string.master_fx_title), song, null, song.masterFx, player,
             onChange = { onChange(song.copy(masterFx = it)) }, onDismiss = { masterFxEditor = false })
+    }
+    renaming?.let { id ->
+        song.instance(id)?.let { inst ->
+            RenameDialog(song.displayName(inst), onRename = { name ->
+                onChange(song.copy(instances = song.instances.map {
+                    if (it.id == id) it.copy(label = name.trim().ifEmpty { null }) else it
+                }))
+                renaming = null
+            }, onDismiss = { renaming = null })
+        }
     }
     if (reverbEditor) {
         ReverbEditor(song, player, onChange = { onChange(song.copy(reverb = it)) },
             onDismiss = { reverbEditor = false })
     }
-    patchEditor?.let { e ->
-        song.slots[e]?.let { slot ->
-            PatchEditor(e, slot, player, lib, onChange = { params ->
-                onChange(song.copy(slots = song.slots + (e to slot.copy(params = params))))
+    patchEditor?.let { id ->
+        song.instance(id)?.let { inst ->
+            PatchEditor(song, inst, player, lib, onChange = { params ->
+                onChange(song.withSlot(id, inst.slot.copy(params = params)))
             }, onReplace = { p, link ->
-                onChange(song.copy(slots = song.slots + (e to slot.withPatch(p, link))))
+                onChange(song.withSlot(id, inst.slot.withPatch(p, link)))
             }, onDismiss = { patchEditor = null })
         }
     }
-    picker?.let { e ->
-        PresetPicker(e, host, lib, onPick = { preset, program ->
-            val slot = song.slots[e] ?: RackSlot()
-            // Still linked: a linked patch given another sound is a change to it, asked about at Save.
-            onChange(song.copy(slots = song.slots + (e to slot.copy(preset = preset, program = program))))
-            picker = null
-        }, onPatch = { entry, p ->
-            val slot = song.slots[e] ?: RackSlot()
-            onChange(song.copy(slots = song.slots + (e to slot.withPatch(p, entry))))
-            picker = null
-        }, onDismiss = { picker = null })
+    picker?.let { id ->
+        song.instance(id)?.let { inst ->
+            PresetPicker(inst.engine, host, lib, onPick = { preset, program ->
+                // Still linked: a linked patch given another sound is a change to it, asked about at Save.
+                onChange(song.withSlot(id, inst.slot.copy(preset = preset, program = program)))
+                picker = null
+            }, onPatch = { entry, p ->
+                onChange(song.withSlot(id, inst.slot.withPatch(p, entry)))
+                picker = null
+            }, onDismiss = { picker = null })
+        }
     }
 }
 
@@ -685,18 +703,18 @@ private fun LiveSetCard(song: RackSong, i: Int, ls: RackLiveSet, player: SongPla
                 onChange(song.copy(liveSets = song.liveSets.toMutableList().also { it.removeAt(i) }))
             }) { Text("✕", color = Danger) }
         }
-        for (e in song.slots.keys.sorted()) {
-            val p = ls.parts[e] ?: RackPart(plays = false)
-            fun putPart(np: RackPart) = put(ls.copy(parts = ls.parts + (e to np)))
+        for (inst in song.instances) {
+            val p = ls.parts[inst.id] ?: RackPart(plays = false)
+            fun putPart(np: RackPart) = put(ls.copy(parts = ls.parts + (inst.id to np)))
             Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.horizontalScroll(rememberScrollState())) {
                 Checkbox(checked = p.plays, onCheckedChange = { putPart(p.copy(plays = it)) })
-                Text(engineLabel(e), modifier = Modifier.width(80.dp))
+                Text(song.displayName(inst), modifier = Modifier.width(100.dp), maxLines = 1, overflow = TextOverflow.Ellipsis)
                 NumberField(stringResource(R.string.key_low), p.keyLow, 0..127, noteName = true) { putPart(p.copy(keyLow = it)) }
                 NumberField(stringResource(R.string.key_high), p.keyHigh, 0..127, noteName = true) { putPart(p.copy(keyHigh = it)) }
                 NumberField(stringResource(R.string.transpose_short), p.transpose, -48..48) { putPart(p.copy(transpose = it)) }
                 NumberField(stringResource(R.string.channel_in_short), p.channelIn, 0..16) { putPart(p.copy(channelIn = it)) }
                 Checkbox(checked = p.level != null, onCheckedChange = { on ->
-                    putPart(p.copy(level = if (on) song.slots[e]?.level ?: 0.8 else null))
+                    putPart(p.copy(level = if (on) inst.slot.level else null))
                 })
                 Text(stringResource(R.string.own_level), color = Dim, fontSize = 12.sp)
                 p.level?.let { lv ->
@@ -704,7 +722,7 @@ private fun LiveSetCard(song: RackSong, i: Int, ls: RackLiveSet, player: SongPla
                         modifier = Modifier.width(140.dp))
                 }
                 // The engine's effect in this live set: on, or off with its tail ringing out.
-                if (song.slots[e]?.fx != null) {
+                if (inst.slot.fx != null) {
                     Spacer(Modifier.width(8.dp))
                     androidx.compose.material3.Switch(checked = p.fxAmount > 0.5,
                         onCheckedChange = { putPart(p.copy(fxAmount = if (it) 1.0 else 0.0)) })
@@ -819,14 +837,25 @@ private fun TempoBox(player: SongPlayer) {
  * the prototype's panels, for instance; "Clear" goes back to the plain preset.
  */
 @Composable
-private fun PatchEditor(e: RackEngine, slot: RackSlot, player: SongPlayer, lib: Library,
+private fun PatchEditor(song: RackSong, inst: be.mdw.bagosynths.model.RackInstance, player: SongPlayer, lib: Library,
                         onChange: (Map<String, Double>) -> Unit,
                         onReplace: (be.mdw.bagosynths.model.Patch, Digest?) -> Unit,
                         onDismiss: () -> Unit) =
-    ParamEditor(stringResource(R.string.patch_of, engineLabel(e)), e, slot.params, player,
-        load = { player.previewSlot(e, slot); player.engineParams(e) },
-        audition = { name, v -> player.auditionParam(e, name, v) }, onChange = onChange, onDismiss = onDismiss,
-        header = { values -> LibraryPatchLine(e, slot, values, lib, onReplace) })
+    ParamEditor(stringResource(R.string.patch_of, song.displayName(inst)), inst.id, inst.slot.params, player,
+        load = { player.previewSlot(song, inst.id, inst.slot); player.engineParams(song, inst.id) },
+        audition = { name, v -> player.auditionParam(song, inst.id, name, v) }, onChange = onChange, onDismiss = onDismiss,
+        header = { values -> LibraryPatchLine(inst.engine, inst.slot, values, lib, onReplace) })
+
+/** A sound's name. */
+@Composable
+private fun RenameDialog(current: String, onRename: (String) -> Unit, onDismiss: () -> Unit) {
+    var name by remember { mutableStateOf(current) }
+    AlertDialog(onDismissRequest = onDismiss,
+        confirmButton = { TextButton(onClick = { onRename(name) }) { Text(stringResource(R.string.rename)) } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text(stringResource(R.string.cancel)) } },
+        title = { Text(stringResource(R.string.sound_name)) },
+        text = { OutlinedTextField(value = name, onValueChange = { name = it }, singleLine = true) })
+}
 
 /**
  * Where the patch stands in the library (M9), by the slot's link: a library
@@ -877,20 +906,22 @@ private fun LibraryPatchLine(e: RackEngine, slot: RackSlot, values: Map<String, 
 }
 
 /** A library patch the song being saved changed, and what to do about the other songs using it. */
-private data class PatchDecision(val engine: RackEngine, val patch: Entry, val newContent: be.mdw.bagosynths.model.Patch,
+private data class PatchDecision(val sound: String, val patch: Entry, val newContent: be.mdw.bagosynths.model.Patch,
                                  val others: List<Entry>)
 
 /** The library patches [now] changed (still linked, content edited), each with the other songs on its latest version. */
 private fun patchDecisions(lib: Library, before: RackSong?, now: RackSong, songId: Digest?): List<PatchDecision> {
     if (before == null) return emptyList()
-    return now.slots.mapNotNull { (e, slot) ->
-        val was = before.slots[e] ?: return@mapNotNull null
+    return now.instances.mapNotNull { inst ->
+        val e = inst.engine
+        val slot = inst.slot
+        val was = before.instance(inst.id)?.slot ?: return@mapNotNull null
         val id = slot.libraryPatch ?: return@mapNotNull null
         if (was.libraryPatch != id || was.patch(e) == slot.patch(e)) return@mapNotNull null
         val link = lib.patchLink(id, was.patch(e)) ?: return@mapNotNull null
         if (!link.latest) return@mapNotNull null
         val others = lib.songsUsingPatch(id).filter { it.latest && it.song.id != songId }.map { it.song }
-        PatchDecision(e, link.entry, slot.patch(e), others)
+        PatchDecision(now.displayName(inst), link.entry, slot.patch(e), others)
     }.distinctBy { it.patch.id }
 }
 
@@ -922,7 +953,7 @@ private fun PatchSaveDialog(decisions: List<PatchDecision>,
                 items(decisions.size) { k ->
                     val d = decisions[k]
                     val id = d.patch.id
-                    Text(stringResource(R.string.patch_save_question, d.patch.version.name, engineLabel(d.engine)) + " " +
+                    Text(stringResource(R.string.patch_save_question, d.patch.version.name, d.sound) + " " +
                         pluralStringResource(R.plurals.other_songs_use, d.others.size, d.others.size),
                         fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(top = 8.dp))
                     val mode = when {
@@ -1033,15 +1064,16 @@ private fun ParamRow(p: SongPlayer.ParamDesc, v: Float, set: Boolean, display: (
 /** An engine's insert effect (M6): which one, and its parameters, heard as they move. */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun FxEditor(title: String, e: Int, current: be.mdw.bagosynths.model.RackFx?, player: SongPlayer,
-                     onChange: (be.mdw.bagosynths.model.RackFx?) -> Unit, onDismiss: () -> Unit) {
-    var fx by remember(e) { mutableStateOf(current ?: be.mdw.bagosynths.model.RackFx("off")) }
-    val params = remember(e, fx.type) { player.applyFx(e, fx); player.fxParams(e) }
+private fun FxEditor(title: String, song: RackSong, target: String?, current: be.mdw.bagosynths.model.RackFx?,
+                     player: SongPlayer, onChange: (be.mdw.bagosynths.model.RackFx?) -> Unit, onDismiss: () -> Unit) {
+    val key = target ?: "mix"
+    var fx by remember(key) { mutableStateOf(current ?: be.mdw.bagosynths.model.RackFx("off")) }
+    val params = remember(key, fx.type) { player.applyFx(song, target, fx); player.fxParams(song, target) }
     fun put(f: be.mdw.bagosynths.model.RackFx) { fx = f; onChange(f.takeIf { it.type != "off" }) }
     AlertDialog(onDismissRequest = onDismiss, modifier = WideDialog, properties = WideDialogProperties,
         confirmButton = { TextButton(onClick = { player.reload(); onDismiss() }) { Text(stringResource(R.string.done)) } },
         dismissButton = {
-            TextButton(onClick = { put(fx.copy(params = emptyMap())); player.applyFx(e, fx) }) {
+            TextButton(onClick = { put(fx.copy(params = emptyMap())); player.applyFx(song, target, fx) }) {
                 Text(stringResource(R.string.clear))
             }
         },
@@ -1059,8 +1091,8 @@ private fun FxEditor(title: String, e: Int, current: be.mdw.bagosynths.model.Rac
                 LazyColumn(Modifier.height(420.dp)) {
                     itemsIndexed(params, key = { _, p -> fx.type + p.name }) { _, p ->
                         ParamRow(p, fx.params[p.name]?.toFloat() ?: p.value, fx.params.containsKey(p.name),
-                            display = { player.fxDisplay(e, p.name, it) }) { x ->
-                            player.auditionFx(e, p.name, x)
+                            display = { player.fxDisplay(song, target, p.name, it) }) { x ->
+                            player.auditionFx(song, target, p.name, x)
                             put(fx.copy(params = fx.params + (p.name to x.toDouble())))
                         }
                     }

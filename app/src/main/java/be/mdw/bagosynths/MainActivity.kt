@@ -2680,6 +2680,7 @@ class MainActivity : androidx.activity.ComponentActivity() {
         override fun selectInstrument(id: String) {
             library.firstOrNull { it.id == id }?.let { selectInstrument(it) }
         }
+        override fun instrumentPath(id: String): String? = library.firstOrNull { it.id == id }?.sfz?.absolutePath
         override fun currentInstrument() = currentInstrument?.id
         override fun showPrototype() = showNewUi(false)
         override fun healthLine(): String {

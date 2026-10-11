@@ -386,36 +386,36 @@ class Library(dir: File, private val author: String) {
         if (setlists().isNotEmpty()) return
         val organ = organRegistrations.firstOrNull { it.contains("JIMMY", true) } ?: organRegistrations.firstOrNull()
         val piano = saveSong(null, "Piano", RackSong(
-            slots = mapOf(RackEngine.SFIZZ to RackSlot(level = 0.8)),
-            liveSets = listOf(RackLiveSet("Piano", mapOf(RackEngine.SFIZZ to RackPart()))),
+            instances = listOf(RackInstance(RackEngine.SFIZZ.key, RackEngine.SFIZZ, RackSlot(level = 0.8))),
+            liveSets = listOf(RackLiveSet("Piano", mapOf(RackEngine.SFIZZ.key to RackPart()))),
         ))
         val organAndPiano = saveSong(null, "Organ and piano", RackSong(
-            slots = mapOf(
-                RackEngine.HAMMOND to RackSlot(preset = organ, level = 0.7),
-                RackEngine.SFIZZ to RackSlot(level = 0.8),
+            instances = listOf(
+                RackInstance(RackEngine.HAMMOND.key, RackEngine.HAMMOND, RackSlot(preset = organ, level = 0.7)),
+                RackInstance(RackEngine.SFIZZ.key, RackEngine.SFIZZ, RackSlot(level = 0.8)),
             ),
             liveSets = listOf(
-                RackLiveSet("Organ", mapOf(RackEngine.HAMMOND to RackPart(), RackEngine.SFIZZ to RackPart(plays = false))),
-                RackLiveSet("Piano", mapOf(RackEngine.HAMMOND to RackPart(plays = false), RackEngine.SFIZZ to RackPart())),
+                RackLiveSet("Organ", mapOf(RackEngine.HAMMOND.key to RackPart(), RackEngine.SFIZZ.key to RackPart(plays = false))),
+                RackLiveSet("Piano", mapOf(RackEngine.HAMMOND.key to RackPart(plays = false), RackEngine.SFIZZ.key to RackPart())),
                 RackLiveSet("Split", mapOf(
-                    RackEngine.HAMMOND to RackPart(keyHigh = 59),
-                    RackEngine.SFIZZ to RackPart(keyLow = 60))),
+                    RackEngine.HAMMOND.key to RackPart(keyHigh = 59),
+                    RackEngine.SFIZZ.key to RackPart(keyLow = 60))),
                 RackLiveSet("Layer", mapOf(
-                    RackEngine.HAMMOND to RackPart(level = 0.5),
-                    RackEngine.SFIZZ to RackPart())),
+                    RackEngine.HAMMOND.key to RackPart(level = 0.5),
+                    RackEngine.SFIZZ.key to RackPart())),
             ),
         ))
         val pad = saveSong(null, "Pad and piano", RackSong(
-            slots = mapOf(
-                RackEngine.SURGE to RackSlot(level = 0.6),
-                RackEngine.SFIZZ to RackSlot(level = 0.8),
+            instances = listOf(
+                RackInstance(RackEngine.SURGE.key, RackEngine.SURGE, RackSlot(level = 0.6)),
+                RackInstance(RackEngine.SFIZZ.key, RackEngine.SFIZZ, RackSlot(level = 0.8)),
             ),
             liveSets = listOf(
-                RackLiveSet("Pad", mapOf(RackEngine.SURGE to RackPart(), RackEngine.SFIZZ to RackPart(plays = false))),
-                RackLiveSet("Pad and piano", mapOf(RackEngine.SURGE to RackPart(), RackEngine.SFIZZ to RackPart())),
+                RackLiveSet("Pad", mapOf(RackEngine.SURGE.key to RackPart(), RackEngine.SFIZZ.key to RackPart(plays = false))),
+                RackLiveSet("Pad and piano", mapOf(RackEngine.SURGE.key to RackPart(), RackEngine.SFIZZ.key to RackPart())),
                 RackLiveSet("Piano up an octave", mapOf(
-                    RackEngine.SURGE to RackPart(plays = false),
-                    RackEngine.SFIZZ to RackPart(transpose = 12))),
+                    RackEngine.SURGE.key to RackPart(plays = false),
+                    RackEngine.SFIZZ.key to RackPart(transpose = 12))),
             ),
         ))
         saveSetlist(null, "My set", listOf(piano, organAndPiano, pad))

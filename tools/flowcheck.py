@@ -260,6 +260,29 @@ def flow_undo_all(f):
         raise AssertionError(f"{PATCH} still in the library after four Undos")
 
 
+def flow_second_piano(f):
+    # A sound is an instance: a second piano in a song is a second piano on stage.
+    to_songs()
+    f.tap("1. Piano")
+    logcat_clear()
+    f.tap("+ Piano")
+    f.see("Piano 2")
+    f.tap("Save •")
+    to_stage()
+    broadcast("STAGE", "--ei song 1 --ei liveset 1")
+    time.sleep(1.5)
+    if not (wait_for("Piano 1") and wait_for("Piano 2")):
+        raise AssertionError("the stage does not show both pianos")
+    if not logcat_has(r"instance \d+ added for Piano", timeout=3):
+        raise AssertionError("no second piano instance on the engine")
+    # Leave the library as it was.
+    to_library()
+    for n in find_all("Undo", exact=False):
+        shell(f"input tap {n.x} {n.y}")
+        break
+    time.sleep(1.0)
+
+
 FLOWS = [
     # name, budget (taps), function
     ("select-live-set", 1, flow_select_live_set),
@@ -271,6 +294,7 @@ FLOWS = [
     ("reuse-patch", 4, flow_reuse_patch),
     ("update-everywhere", 5, flow_update_everywhere),
     ("undo-all", 4, flow_undo_all),
+    ("second-piano", 3, flow_second_piano),
 ]
 
 
