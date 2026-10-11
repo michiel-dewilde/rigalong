@@ -622,6 +622,64 @@ Java_be_mdw_bagosynths_NativeBridge_nativeNodeParamName(JNIEnv* env, jobject, ji
     return env->NewStringUTF(n ? n->paramName(param) : "");
 }
 
+// --- instances (AudioEngine.h): a song's sounds, several of one engine if it wants
+
+namespace {
+// The graph ordinal of `n`, which is how every other node call addresses it.
+int ordinalOf(const bagosynths::Node* n) {
+    const bagosynths::Graph& g = engine().graph();
+    for (int k = 0; k < g.nodeCount(); ++k) if (g.nodeAt(k) == n) return k;
+    return -1;
+}
+}  // namespace
+
+JNIEXPORT jint JNICALL
+Java_be_mdw_bagosynths_NativeBridge_nativeAddInstance(JNIEnv*, jobject, jint type) {
+    return engine().addInstance(type);
+}
+
+JNIEXPORT jint JNICALL
+Java_be_mdw_bagosynths_NativeBridge_nativeInstanceCount(JNIEnv*, jobject) {
+    return engine().instanceCount();
+}
+
+JNIEXPORT jint JNICALL
+Java_be_mdw_bagosynths_NativeBridge_nativeInstanceType(JNIEnv*, jobject, jint i) {
+    return engine().instanceType(i);
+}
+
+JNIEXPORT jint JNICALL
+Java_be_mdw_bagosynths_NativeBridge_nativeInstanceNode(JNIEnv*, jobject, jint i) {
+    const bagosynths::Node* n = engine().instanceNode(i);
+    return n ? ordinalOf(n) : -1;
+}
+
+JNIEXPORT jint JNICALL
+Java_be_mdw_bagosynths_NativeBridge_nativeInstanceFxNode(JNIEnv*, jobject, jint i) {
+    const bagosynths::Node* n = engine().instanceFx(i);
+    return n ? ordinalOf(n) : -1;
+}
+
+JNIEXPORT void JNICALL
+Java_be_mdw_bagosynths_NativeBridge_nativeInstanceLoadPreset(JNIEnv* env, jobject, jint i, jstring name,
+                                                            jint program, jstring path) {
+    const char* n = env->GetStringUTFChars(name, nullptr);
+    const char* p = path ? env->GetStringUTFChars(path, nullptr) : nullptr;
+    engine().loadInstancePreset(i, n ? n : "", program, p ? p : "");
+    if (n) env->ReleaseStringUTFChars(name, n);
+    if (p) env->ReleaseStringUTFChars(path, p);
+}
+
+JNIEXPORT jboolean JNICALL
+Java_be_mdw_bagosynths_NativeBridge_nativeInstanceBusy(JNIEnv*, jobject, jint i) {
+    return engine().instanceBusy(i) ? JNI_TRUE : JNI_FALSE;
+}
+
+JNIEXPORT jstring JNICALL
+Java_be_mdw_bagosynths_NativeBridge_nativeInstancePreset(JNIEnv* env, jobject, jint i) {
+    return env->NewStringUTF(engine().instancePreset(i).c_str());
+}
+
 // A song's insert effect, whole (FxNode::configure): type, then named values.
 JNIEXPORT void JNICALL
 Java_be_mdw_bagosynths_NativeBridge_nativeFxConfigure(JNIEnv* env, jobject, jint index, jint type,

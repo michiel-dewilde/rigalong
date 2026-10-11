@@ -654,3 +654,43 @@ TEST(tempo_reaches_the_nodes) {
     sched->run(kFrames, 44100.0, 93.5);
     CHECK_NEAR(probe->seen, 93.5, 1e-9);
 }
+
+// A compile while audio runs prepares only what is new (Graph.h): the nodes
+// the render thread is inside are left alone.
+namespace {
+class PrepareCounter : public Node {
+public:
+    const char* typeName() const override { return "PrepareCounter"; }
+    int numOutputs() const override { return 1; }
+    PinSpec outputPin(int) const override { return {DataType::Audio, 1, "out"}; }
+    void prepare(double, int) override { ++prepared; }
+    void process(const ProcessArgs& a) override { std::fill_n(a.audioOut[0].channel(0), a.numFrames, 0.0f); }
+    int prepared = 0;
+};
+}  // namespace
+
+TEST(compile_can_prepare_only_the_new_nodes) {
+    Graph g;
+    auto a = std::make_unique<PrepareCounter>();
+    PrepareCounter* first = a.get();
+    NodeId ida = g.addNode(std::move(a));
+    g.setAudioExit(ida);
+    std::string err;
+    CHECK(g.compile(44100.0, kFrames, &err) != nullptr);
+    CHECK_EQ(first->prepared, 1);
+
+    auto b = std::make_unique<PrepareCounter>();
+    PrepareCounter* second = b.get();
+    g.addNode(std::move(b));
+    CHECK(g.compile(44100.0, kFrames, &err, /*prepareAll=*/false) != nullptr);
+    CHECK_EQ(first->prepared, 1);     // running: untouched
+    CHECK_EQ(second->prepared, 1);    // new: prepared
+
+    // A new rate prepares everything again, even so.
+    CHECK(g.compile(48000.0, kFrames, &err, false) != nullptr);
+    CHECK_EQ(first->prepared, 2);
+    CHECK_EQ(second->prepared, 2);
+    // And the default still prepares all, as at a stream start.
+    CHECK(g.compile(48000.0, kFrames, &err) != nullptr);
+    CHECK_EQ(first->prepared, 3);
+}

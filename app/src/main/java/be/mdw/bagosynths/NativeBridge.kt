@@ -181,6 +181,20 @@ object NativeBridge {
     external fun nativeNodeParamCount(index: Int): Int
     external fun nativeNodeParamName(index: Int, param: Int): String
     external fun nativeGetNodeParam(index: Int, param: Int): Float
+    // --- instances: a song's sounds, several of one engine if it wants (AudioEngine.h)
+    /** A new instance of engine [type] (RackEngine order), added while audio runs; its index, or -1. */
+    external fun nativeAddInstance(type: Int): Int
+    external fun nativeInstanceCount(): Int
+    /** Its engine (RackEngine order), or -1. */
+    external fun nativeInstanceType(i: Int): Int
+    /** The graph ordinal of its engine node, for the node calls. */
+    external fun nativeInstanceNode(i: Int): Int
+    /** The graph ordinal of its insert effect. */
+    external fun nativeInstanceFxNode(i: Int): Int
+    /** Gives it a preset by name ([path] for an SFZ instrument, [program] for a SoundFont; -1 if none). */
+    external fun nativeInstanceLoadPreset(i: Int, name: String, program: Int, path: String?)
+    external fun nativeInstanceBusy(i: Int): Boolean
+    external fun nativeInstancePreset(i: Int): String
     /** A song's insert effect, whole: a fresh effect of [type] that starts at these values. */
     external fun nativeFxConfigure(index: Int, type: Int, names: Array<String>, values: FloatArray)
     /** A value as the player reads it ("250 ms", "1/8"), or null. */

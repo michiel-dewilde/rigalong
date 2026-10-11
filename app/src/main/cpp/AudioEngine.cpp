@@ -824,23 +824,21 @@ oboe::DataCallbackResult AudioEngine::onAudioReady(oboe::AudioStream* stream,
 // part is switched, which is a human action and not a per-block one.
 void AudioEngine::updateInstrumentGates(int frames) {
     struct Gate { bagosynths::Node* node; float level; };
-    const Gate gates[] = {
-        {mSfizz,   mSfizz   ? mSfizz->getParam(bagosynths::SfizzNode::kLevel)     : 0.0f},
-        {mHammond, mHammond ? mHammond->getParam(bagosynths::HammondNode::kLevel) : 0.0f},
-        {mSurge,   mSurge   ? mSurge->getParam(bagosynths::SurgeNode::kLevel)     : 0.0f},
-        {mDexed,   mDexed   ? mDexed->getParam(bagosynths::DexedNode::kLevel)     : 0.0f},
-        {mPlaits,  mPlaits  ? mPlaits->getParam(bagosynths::PlaitsNode::kLevel)   : 0.0f},
-        {mFluid,   mFluid   ? mFluid->getParam(bagosynths::FluidNode::kLevel)     : 0.0f},
-    };
+    // Every instance, the added ones too: read up to the published count only.
+    const int count = mInstanceCount.load(std::memory_order_acquire);
+    Gate gates[kMaxInstances];
+    for (int k = 0; k < count; ++k) {
+        bagosynths::Node* n = mInstanceNode[k];
+        gates[k] = {n, n ? n->getParam(mInstanceLevelParam[k]) : 0.0f};
+    }
     const int quietFrames = static_cast<int>(currentRate() * kQuietSeconds);
     // Twice the gain ramp, so the level is provably at zero before any voice is
     // cut. Cheap insurance against an off-by-one-block.
     const int fadeFrames =
         static_cast<int>(currentRate() * bagosynths::SmoothedGain::kRampSeconds * 2.0) + 1;
     const int ceilingFrames = static_cast<int>(currentRate() * kQuietCeilingSeconds);
-    int index = 0;
-    for (const Gate& g : gates) {
-        const int i = index++;
+    for (int i = 0; i < count; ++i) {
+        const Gate& g = gates[i];
         if (g.node == nullptr) continue;
 
         // Loudness, held. The on-screen meter decays in 60 ms, which makes it
@@ -1799,6 +1797,8 @@ bool AudioEngine::rebuildGraph(std::string* error) {
         // saved patches, which address nodes by ordinal, still line up.
         const bagosynths::NodeId engines[kRackSize] = {idSfizz, idHammond, idSurge,
                                                        idDexed, idPlaits, idFluid};
+        mIdMidiIn = idMidi;
+        mIdReverb = idReverb;
         for (int i = 0; i < kRackSize; ++i) {
             auto z = std::make_unique<bagosynths::MidiZoneNode>();
             mZone[i] = z.get();
@@ -1817,6 +1817,17 @@ bool AudioEngine::rebuildGraph(std::string* error) {
             mGraph.connect(engines[i], 0, idFx, 0);
             mRackAudio[i] = mGraph.connectSwitchable(idFx, 0, idReverb, 0);
         }
+        // The six are instances 0-5.
+        bagosynths::Node* nodes[kRackSize] = {mSfizz, mHammond, mSurge, mDexed, mPlaits, mFluid};
+        const int levels[kRackSize] = {bagosynths::SfizzNode::kLevel, bagosynths::HammondNode::kLevel,
+                                       bagosynths::SurgeNode::kLevel, bagosynths::DexedNode::kLevel,
+                                       bagosynths::PlaitsNode::kLevel, bagosynths::FluidNode::kLevel};
+        for (int i = 0; i < kRackSize; ++i) {
+            mInstanceType[i] = i;
+            mInstanceNode[i] = nodes[i];
+            mInstanceLevelParam[i] = levels[i];
+        }
+        mInstanceCount.store(kRackSize, std::memory_order_release);
         // And one on the whole mix, after the room: a song's hall or delay over
         // everything. The seventh Fx node, so the UI finds it by order.
         auto masterFx = std::make_unique<bagosynths::FxNode>();
@@ -1836,10 +1847,14 @@ bool AudioEngine::rebuildGraph(std::string* error) {
         mFluid->setParam(bagosynths::FluidNode::kLevel, 0.0f);
     }
 
+    return compileAndPublish(true, error);
+}
+
+bool AudioEngine::compileAndPublish(bool prepareAll, std::string* error) {
     const double rate = currentRate();
     const int frames = mScratchFrames > 0 ? mScratchFrames : 2048;
 
-    auto compiled = mGraph.compile(rate, frames, error);
+    auto compiled = mGraph.compile(rate, frames, error, prepareAll);
     if (!compiled) return false;
 
     bagosynths::Schedule* fresh = compiled.get();
@@ -1949,6 +1964,8 @@ bool runOnBigStack(Fn&& fn) {
 }  // namespace
 
 void AudioEngine::initSurgeAsync(const std::string& dataPath, const std::string& homePath) {
+    mSurgeDataPath = dataPath;
+    mSurgeHomePath = homePath;
     if (mSurge == nullptr || mSurge->ready()) return;
     if (mSurgeBusy.exchange(true, std::memory_order_acq_rel)) return;   // already going
 
@@ -2002,6 +2019,7 @@ void AudioEngine::loadSurgePatchNamedAsync(const std::string& name) {
 // Init and the scan are one task rather than two, because a scan that finishes
 // before the synth exists has nothing to load into.
 void AudioEngine::initFluidAsync(const std::vector<std::string>& dirs) {
+    mFluidDirs = dirs;
     if (mFluid == nullptr) return;
     if (mFluidBusy.exchange(true, std::memory_order_acq_rel)) return;
 
@@ -2051,6 +2069,7 @@ void AudioEngine::loadSoundFontNamedAsync(const std::string& name) {
 }
 
 void AudioEngine::loadDexedBanksAsync(const std::vector<std::string>& dirs) {
+    mDexedDirs = dirs;
     if (mDexed == nullptr) return;
     if (mDexedBusy.exchange(true, std::memory_order_acq_rel)) return;
     if (!runOnBigStack([this, dirs] {
@@ -2190,11 +2209,9 @@ void AudioEngine::logProfile() {
     // since the last reset: play the same note on each engine in turn and the
     // numbers say what "much quieter" is worth in decibels.
     {
-        static const char* kNames[6] = {"sfizz", "Hammond", "Surge XT",
-                                        "Dexed", "Plaits", "FluidSynth"};
-        for (int i = 0; i < 6; ++i) {
-            if (mNodePeakHold[i] <= 0.0f) continue;
-            LOGI("PROFILE %-12s peak %.4f (%.1f dBFS, pre-level)", kNames[i],
+        for (int i = 0; i < instanceCount(); ++i) {
+            if (mNodePeakHold[i] <= 0.0f || mInstanceNode[i] == nullptr) continue;
+            LOGI("PROFILE %-12s #%d peak %.4f (%.1f dBFS, pre-level)", mInstanceNode[i]->typeName(), i,
                  static_cast<double>(mNodePeakHold[i]),
                  20.0 * std::log10(static_cast<double>(mNodePeakHold[i])));
         }
@@ -2353,6 +2370,169 @@ void AudioEngine::concealBytes(uint8_t* dst, uint32_t take, uint32_t missing, ui
                 v = static_cast<float>(loadSample(last + c * sub, sub)) * (1.0f - w) + v * w;
             }
             storeSample(out + c * sub, sub, static_cast<int32_t>(v));
+        }
+    }
+}
+
+// ------------------------------------------------------------------ instances
+
+int AudioEngine::addInstance(int type) {
+    std::lock_guard<std::mutex> lock(mStreamLock);
+    const int i = mInstanceCount.load(std::memory_order_acquire);
+    if (i >= kMaxInstances || mIdMidiIn < 0 || type < 0 || type >= kRackSize) return -1;
+
+    std::unique_ptr<bagosynths::Node> node;
+    int level = 0;
+    switch (type) {
+        case kRackSfizz:   node = std::make_unique<bagosynths::SfizzNode>();   level = bagosynths::SfizzNode::kLevel; break;
+        case kRackHammond: node = std::make_unique<bagosynths::HammondNode>(); level = bagosynths::HammondNode::kLevel; break;
+        case kRackSurge:   node = std::make_unique<bagosynths::SurgeNode>();   level = bagosynths::SurgeNode::kLevel; break;
+        case kRackDexed:   node = std::make_unique<bagosynths::DexedNode>();   level = bagosynths::DexedNode::kLevel; break;
+        case kRackPlaits:  node = std::make_unique<bagosynths::PlaitsNode>();  level = bagosynths::PlaitsNode::kLevel; break;
+        default:           node = std::make_unique<bagosynths::FluidNode>();   level = bagosynths::FluidNode::kLevel; break;
+    }
+    node->setParam(level, 0.0f);   // silent until the song gives it a level
+    bagosynths::Node* raw = node.get();
+    const bagosynths::NodeId idNode = mGraph.addNode(std::move(node));
+    wireInstance(i, type, raw, idNode, level);
+
+    std::string error;
+    if (!compileAndPublish(/*prepareAll=*/false, &error)) {
+        LOGE("instance %d: compile failed: %s", i, error.c_str());
+        return -1;
+    }
+    // Its library, as the first one of its kind got it -- in the background.
+    mInstanceBusy[i].store(true, std::memory_order_release);
+    const double rate = currentRate();
+    auto done = [this, i] { mInstanceBusy[i].store(false, std::memory_order_release); };
+    bool started = true;
+    switch (type) {
+        case kRackSurge: {
+            auto* s = static_cast<bagosynths::SurgeNode*>(raw);
+            started = runOnBigStack([s, this, done] { s->init(mSurgeDataPath, mSurgeHomePath); done(); });
+            break;
+        }
+        case kRackFluid: {
+            auto* f = static_cast<bagosynths::FluidNode*>(raw);
+            started = runOnBigStack([f, this, rate, done] {
+                if (f->init(rate)) { f->scanSoundFonts(mFluidDirs); f->applyRequestedSoundFont(); }
+                done();
+            });
+            break;
+        }
+        case kRackDexed: {
+            auto* d = static_cast<bagosynths::DexedNode*>(raw);
+            started = runOnBigStack([d, this, done] { d->loadBanks(mDexedDirs); done(); });
+            break;
+        }
+        default:
+            done();
+    }
+    if (!started) done();
+    LOGI("instance %d added: %s", i, raw->typeName());
+    return i;
+}
+
+void AudioEngine::wireInstance(int i, int type, bagosynths::Node* node, bagosynths::NodeId idNode, int levelParam) {
+    auto z = std::make_unique<bagosynths::MidiZoneNode>();
+    mZone[i] = z.get();
+    const bagosynths::NodeId idZone = mGraph.addNode(std::move(z));
+    mGraph.connect(mIdMidiIn, 0, idZone, 0);
+    mRackMidi[i] = mGraph.connectSwitchable(idZone, 0, idNode, 0);
+    auto fx = std::make_unique<bagosynths::FxNode>();
+    mFx[i] = fx.get();
+    const bagosynths::NodeId idFx = mGraph.addNode(std::move(fx));
+    mGraph.connect(idNode, 0, idFx, 0);
+    mRackAudio[i] = mGraph.connectSwitchable(idFx, 0, mIdReverb, 0);
+    mInstanceType[i] = type;
+    mInstanceNode[i] = node;
+    mInstanceLevelParam[i] = levelParam;
+    // Last: the render thread reads entries only below the published count.
+    mInstanceCount.store(i + 1, std::memory_order_release);
+}
+
+bool AudioEngine::instanceBusy(int i) const {
+    if (i < 0 || i >= instanceCount()) return false;
+    if (i < kRackSize) {
+        switch (i) {
+            case kRackSurge: return isSurgeBusy() || (mSurge && !mSurge->ready());
+            case kRackFluid: return isFluidBusy();
+            case kRackDexed: return isDexedBusy();
+            case kRackSfizz: return isLoading();
+            default: return false;
+        }
+    }
+    return mInstanceBusy[i].load(std::memory_order_acquire);
+}
+
+std::string AudioEngine::instancePreset(int i) const {
+    bagosynths::Node* n = instanceNode(i);
+    if (n == nullptr) return {};
+    switch (mInstanceType[i]) {
+        case kRackSfizz: return static_cast<bagosynths::SfizzNode*>(n)->instrumentId();
+        case kRackSurge: return static_cast<bagosynths::SurgeNode*>(n)->currentPatchName();
+        case kRackFluid: return static_cast<bagosynths::FluidNode*>(n)->currentSoundFontName();
+        default: return {};
+    }
+}
+
+void AudioEngine::loadInstancePreset(int i, const std::string& name, int program, const std::string& path) {
+    bagosynths::Node* n = instanceNode(i);
+    if (n == nullptr || name.empty()) return;
+    // The first six keep their own loaders and flags, which the prototype's
+    // panels share; the rest load on their own background threads.
+    switch (mInstanceType[i]) {
+        case kRackSfizz: {
+            auto* s = static_cast<bagosynths::SfizzNode*>(n);
+            if (i == kRackSfizz) { loadInstrumentAsync(name, path); return; }
+            if (s->instrumentId() == name || path.empty()) return;
+            mInstanceBusy[i].store(true, std::memory_order_release);
+            if (!runOnBigStack([this, s, i, name, path] {
+                    s->loadFile(name, path);
+                    mInstanceBusy[i].store(false, std::memory_order_release);
+                })) mInstanceBusy[i].store(false, std::memory_order_release);
+            return;
+        }
+        case kRackHammond: {
+            auto* h = static_cast<bagosynths::HammondNode*>(n);
+            for (int k = 0; k < bagosynths::HammondNode::presetCount(); ++k) {
+                if (name == bagosynths::HammondNode::presetName(k)) { h->applyPreset(k, 0); return; }
+            }
+            return;
+        }
+        case kRackSurge: {
+            if (i == kRackSurge) { loadSurgePatchNamedAsync(name); return; }
+            auto* s = static_cast<bagosynths::SurgeNode*>(n);
+            s->requestPatchNamed(name);   // honoured by init() if it is not up yet
+            if (!s->ready() || mInstanceBusy[i].exchange(true, std::memory_order_acq_rel)) return;
+            if (!runOnBigStack([this, s, i] {
+                    s->applyRequestedPatch();
+                    mInstanceBusy[i].store(false, std::memory_order_release);
+                })) mInstanceBusy[i].store(false, std::memory_order_release);
+            return;
+        }
+        case kRackDexed:
+            static_cast<bagosynths::DexedNode*>(n)->selectVoiceNamed(name);   // remembered until the banks are in
+            return;
+        case kRackPlaits: {
+            for (int k = 0; k < bagosynths::PlaitsNode::kNumEngines; ++k) {
+                if (name == bagosynths::PlaitsNode::engineName(k)) {
+                    n->setParam(bagosynths::PlaitsNode::kEngine, static_cast<float>(k));
+                    return;
+                }
+            }
+            return;
+        }
+        default: {
+            auto* f = static_cast<bagosynths::FluidNode*>(n);
+            f->requestSoundFontNamed(name);
+            if (!f->ready() || mInstanceBusy[i].exchange(true, std::memory_order_acq_rel)) return;
+            if (!runOnBigStack([this, f, i, program] {
+                    f->applyRequestedSoundFont();
+                    if (program >= 0) f->selectPreset(program);
+                    mInstanceBusy[i].store(false, std::memory_order_release);
+                })) mInstanceBusy[i].store(false, std::memory_order_release);
+            return;
         }
     }
 }

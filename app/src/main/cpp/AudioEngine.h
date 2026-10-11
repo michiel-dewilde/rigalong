@@ -106,6 +106,33 @@ public:
     // Recompiles and publishes a new schedule. Off the audio thread only.
     bool rebuildGraph(std::string* error = nullptr);
 
+    // --- instances -----------------------------------------------------------
+    // An INSTANCE is one engine node with its own zone, insert effect and the
+    // two switchable wires around it -- what a song calls a sound. The six of
+    // the default patch are instances 0-5 (kRack* order); a song that wants a
+    // second piano or a third synth gets more, added while audio runs.
+    static constexpr int kMaxInstances = 24;
+    int instanceCount() const { return mInstanceCount.load(std::memory_order_acquire); }
+    // Its engine (kRack*), or -1.
+    int instanceType(int i) const { return i >= 0 && i < instanceCount() ? mInstanceType[i] : -1; }
+    bagosynths::Node* instanceNode(int i) const { return i >= 0 && i < instanceCount() ? mInstanceNode[i] : nullptr; }
+    bagosynths::FxNode* instanceFx(int i) const { return i >= 0 && i < instanceCount() ? mFx[i] : nullptr; }
+
+    // A new instance of engine `type` (kRack*): built, wired, compiled in
+    // without touching what is playing (only the new nodes are prepared), and
+    // its library loading started in the background as the first one's was.
+    // Returns its index, or -1. Off the audio thread.
+    int addInstance(int type);
+
+    // Gives instance `i` the preset `name` (an SFZ id with its `path`, an organ
+    // registration, a Surge "Category/Name", a DX7 voice, a SoundFont file and
+    // `program`, a Plaits model). Slow loads run in the background; a request
+    // made before the instance's library is up is honoured once it is.
+    void loadInstancePreset(int i, const std::string& name, int program, const std::string& path);
+    bool instanceBusy(int i) const;
+    // The preset it has now, by the same name, or "".
+    std::string instancePreset(int i) const;
+
     // The instruments in the default patch. All are always present and all
     // always receive MIDI; which one is heard is a question of level, so that
     // layering an organ under a piano costs nothing but a fader move.
@@ -438,16 +465,30 @@ private:
     // THE RACK (PLAN.md M2, first slice): one zone and two switchable wires per
     // engine, so a song's live sets can split, layer, transpose and route the
     // fixed set of engines without a recompile. Index: kRack* below.
-    bagosynths::MidiZoneNode* mZone[6] = {};
-    bagosynths::FxNode* mFx[6] = {};
-    std::shared_ptr<bagosynths::WireControl> mRackMidi[6];
-    std::shared_ptr<bagosynths::WireControl> mRackAudio[6];
+    // Per instance (see instances, above); entries are written before
+    // mInstanceCount moves past them, so the render thread never sees half of one.
+    bagosynths::MidiZoneNode* mZone[kMaxInstances] = {};
+    bagosynths::FxNode* mFx[kMaxInstances] = {};
+    std::shared_ptr<bagosynths::WireControl> mRackMidi[kMaxInstances];
+    std::shared_ptr<bagosynths::WireControl> mRackAudio[kMaxInstances];
+    int mInstanceType[kMaxInstances] = {};
+    bagosynths::Node* mInstanceNode[kMaxInstances] = {};
+    int mInstanceLevelParam[kMaxInstances] = {};
+    std::atomic<int> mInstanceCount{0};
+    std::atomic<bool> mInstanceBusy[kMaxInstances] = {};
+    bagosynths::NodeId mIdMidiIn = -1;
+    bagosynths::NodeId mIdReverb = -1;
+    // What the first instances were brought up with, for the ones added later.
+    std::string mSurgeDataPath, mSurgeHomePath;
+    std::vector<std::string> mFluidDirs, mDexedDirs;
+    void wireInstance(int i, int type, bagosynths::Node* node, bagosynths::NodeId idNode, int levelParam);
+    bool compileAndPublish(bool prepareAll, std::string* error);
 public:
     // Rack positions, in the order the engines were always built.
     enum { kRackSfizz, kRackHammond, kRackSurge, kRackDexed, kRackPlaits, kRackFluid, kRackSize };
-    bagosynths::MidiZoneNode* zone(int i) const { return i >= 0 && i < kRackSize ? mZone[i] : nullptr; }
+    bagosynths::MidiZoneNode* zone(int i) const { return i >= 0 && i < instanceCount() ? mZone[i] : nullptr; }
     void setRackWire(int i, bool midiOn, bool audioOn, float gain) {
-        if (i < 0 || i >= kRackSize || !mRackMidi[i]) return;
+        if (i < 0 || i >= instanceCount() || !mRackMidi[i]) return;
         mRackMidi[i]->setOn(midiOn);
         mRackAudio[i]->setOn(audioOn);
         mRackAudio[i]->setGain(gain);
@@ -862,12 +903,12 @@ private:
     // Held peak of each instrument's own output, before its level. Render
     // thread writes, logProfile() reads and resetPeaks() clears. See
     // updateInstrumentGates.
-    float mNodePeakHold[6] = {0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f};
+    float mNodePeakHold[kMaxInstances] = {};
 
-    bool mGateFlushing[6] = {false, false, false, false, false, false};
-    int mGateFade[6] = {0, 0, 0, 0, 0, 0};    // frames left of the level ramp
-    int mGateQuiet[6] = {0, 0, 0, 0, 0, 0};   // frames of continuous silence
-    int mGateFlush[6] = {0, 0, 0, 0, 0, 0};   // frames spent flushing in total
+    bool mGateFlushing[kMaxInstances] = {};
+    int mGateFade[kMaxInstances] = {};    // frames left of the level ramp
+    int mGateQuiet[kMaxInstances] = {};   // frames of continuous silence
+    int mGateFlush[kMaxInstances] = {};   // frames spent flushing in total
 
     // Highest sfizz voice count seen. Mutable because stats() is const and is
     // the only place the count is sampled. See stats().

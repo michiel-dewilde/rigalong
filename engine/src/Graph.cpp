@@ -206,7 +206,7 @@ void Graph::disconnect(const Edge& edge) {
 }
 
 std::unique_ptr<Schedule> Graph::compile(double sampleRate, int maxFrames,
-                                         std::string* error) const {
+                                         std::string* error, bool prepareAll) const {
     const int n = static_cast<int>(mNodes.size());
     if (n == 0) {
         if (error) *error = "empty graph";
@@ -454,8 +454,14 @@ std::unique_ptr<Schedule> Graph::compile(double sampleRate, int maxFrames,
         }
     }
 
-    // Prepare every node now, off the audio thread.
-    for (const Slot& s : mNodes) s.node->prepare(sampleRate, maxFrames);
+    // Prepare the nodes now, off the audio thread: all of them, or only those
+    // not yet prepared for this rate and block size (see Graph.h).
+    for (const Slot& s : mNodes) {
+        if (!prepareAll && s.preparedRate == sampleRate && s.preparedFrames == maxFrames) continue;
+        s.node->prepare(sampleRate, maxFrames);
+        s.preparedRate = sampleRate;
+        s.preparedFrames = maxFrames;
+    }
 
     // Enough empty-MIDI pointers for the hungriest step, so a muted node can be
     // handed them without allocating on the audio thread.

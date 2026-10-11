@@ -259,6 +259,7 @@ class MainActivity : androidx.activity.ComponentActivity() {
         filter.addAction("be.mdw.bagosynths.SYSEX")
         filter.addAction("be.mdw.bagosynths.USBSTALL")
         filter.addAction("be.mdw.bagosynths.STAGE")
+        filter.addAction("be.mdw.bagosynths.INSTANCE")
         filter.addAction("be.mdw.bagosynths.CP88SELFTEST")
         if (Build.VERSION.SDK_INT >= 33) {
             registerReceiver(debugReceiver, filter, Context.RECEIVER_EXPORTED)
@@ -1895,6 +1896,28 @@ class MainActivity : androidx.activity.ComponentActivity() {
                 // TEST: one stall of the USB reap loop (a starved IN queue):
                 //   adb shell am broadcast -a be.mdw.bagosynths.USBSTALL --ei ms 600
                 "be.mdw.bagosynths.USBSTALL" -> NativeBridge.nativeUsbTestStall(intent.getIntExtra("ms", 600))
+                // TEST (PROVISIONAL.md): engine instances without a song.
+                //   ... INSTANCE --ei add 2                      a new Surge instance
+                //   ... INSTANCE --ei i 6 --es preset NAME --ef level 0.8
+                "be.mdw.bagosynths.INSTANCE" -> {
+                    if (intent.hasExtra("add")) {
+                        val i = NativeBridge.nativeAddInstance(intent.getIntExtra("add", 0))
+                        android.util.Log.i("bos-ui", "instance added: $i of ${NativeBridge.nativeInstanceCount()}")
+                    }
+                    val i = intent.getIntExtra("i", -1)
+                    if (i >= 0) {
+                        intent.getStringExtra("preset")?.let { NativeBridge.nativeInstanceLoadPreset(i, it, -1, null) }
+                        if (intent.hasExtra("level")) {
+                            val node = NativeBridge.nativeInstanceNode(i)
+                            val p = (0 until NativeBridge.nativeNodeParamCount(node))
+                                .firstOrNull { NativeBridge.nativeNodeParamName(node, it) == "Level" }
+                            if (p != null) NativeBridge.nativeSetNodeParam(node, p, intent.getFloatExtra("level", 0f))
+                        }
+                        android.util.Log.i("bos-ui", "instance $i: type ${NativeBridge.nativeInstanceType(i)}, node " +
+                            "${NativeBridge.nativeInstanceNode(i)}, busy ${NativeBridge.nativeInstanceBusy(i)}, " +
+                            "preset '${NativeBridge.nativeInstancePreset(i)}'")
+                    }
+                }
                 // The stage, without the screen (1-based):
                 //   adb shell am broadcast -a be.mdw.bagosynths.STAGE --ei song 2 --ei liveset 3
                 "be.mdw.bagosynths.STAGE" -> {

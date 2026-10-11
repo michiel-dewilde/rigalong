@@ -341,8 +341,13 @@ public:
 
     // Builds a Schedule. Off the audio thread. Returns null and fills `error` if
     // the graph is invalid -- a cycle without a delay, or a width mismatch.
+    //
+    // `prepareAll` false prepares only the nodes not yet prepared at this rate
+    // and block size: the ones just added. That is the compile to use while
+    // audio runs -- prepare() may allocate (Plaits rebuilds its voices, sfizz
+    // resets its rate), and a node the render thread is inside must not be.
     std::unique_ptr<Schedule> compile(double sampleRate, int maxFrames,
-                                      std::string* error = nullptr) const;
+                                      std::string* error = nullptr, bool prepareAll = true) const;
 
     void setMidiEntry(NodeId id) { mMidiEntry = id; }
     void setAudioExit(NodeId id) { mAudioExit = id; }
@@ -351,6 +356,10 @@ private:
     struct Slot {
         NodeId id = -1;
         std::unique_ptr<Node> node;
+        // What it was last prepared for; compile(prepareAll = false) skips a
+        // node already prepared at the rate and block size asked for.
+        mutable double preparedRate = 0.0;
+        mutable int preparedFrames = 0;
     };
 
     std::vector<Slot> mNodes;
