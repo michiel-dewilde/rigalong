@@ -140,6 +140,7 @@ FxNode::FxNode() = default;
 FxNode::~FxNode() { delete mEffect.load(); }
 
 void FxNode::prepare(double sampleRate, int maxFrames) {
+    mAmountStep = static_cast<float>(1.0 / std::max(1.0, sampleRate * 0.015));
     if (sampleRate == mRate) return;
     mRate = sampleRate;
     // Off the render thread (the graph compiles there): an effect built for the
@@ -195,12 +196,17 @@ void FxNode::setParam(int index, float value) {
         setType(static_cast<int>(std::lround(value)));
         return;
     }
+    if (index == kAmount) {
+        mAmountTarget.store(std::clamp(value, 0.0f, 1.0f), std::memory_order_relaxed);
+        return;
+    }
     // Tagged with the type now in force: drained only into that effect.
     mQueue.push(mType.load() * kTagStride + index, value);
 }
 
 float FxNode::getParam(int index) const {
     if (index == 0) return static_cast<float>(mType.load());
+    if (index == kAmount) return mAmountTarget.load(std::memory_order_relaxed);
     const Effect* e = mEffect.load();
     if (e == nullptr) return 0.f;
     if (index >= kSyncBase) return e->sync(index - kSyncBase) ? 1.f : 0.f;
@@ -209,6 +215,7 @@ float FxNode::getParam(int index) const {
 
 const char* FxNode::paramName(int index) const {
     if (index == 0) return "Type";
+    if (index == kAmount) return "Amount";
     const Effect* e = mEffect.load();
     if (e == nullptr) return "";
     if (index >= kSyncBase) {
@@ -220,6 +227,7 @@ const char* FxNode::paramName(int index) const {
 
 ParamRange FxNode::paramRange(int index) const {
     if (index == 0) return {0.f, static_cast<float>(kNumTypes - 1), true};
+    if (index == kAmount) return {};
     if (index >= kSyncBase) return {0.f, 1.f, true};
     const Effect* e = mEffect.load();
     return e ? e->range(index - 1) : ParamRange{};
@@ -229,6 +237,10 @@ bool FxNode::paramDisplay(int index, float value, char* out, int capacity) const
     if (index == 0) {
         std::snprintf(out, static_cast<size_t>(capacity), "%s",
                       kTypeNames[std::clamp(static_cast<int>(std::lround(value)), 0, kNumTypes - 1)]);
+        return true;
+    }
+    if (index == kAmount) {
+        std::snprintf(out, static_cast<size_t>(capacity), "%.0f %%", value * 100.0f);
         return true;
     }
     if (index >= kSyncBase) {
@@ -259,16 +271,26 @@ void FxNode::process(const ProcessArgs& args) {
     float* outL = out.channel(0);
     float* outR = out.width > 1 ? out.channel(1) : nullptr;
 
+    const float target = mAmountTarget.load(std::memory_order_relaxed);
     for (int i = 0; i < args.numFrames; ++i) {
+        if (mAmount != target) {
+            mAmount = mAmount < target ? std::min(target, mAmount + mAmountStep)
+                                       : std::max(target, mAmount - mAmountStep);
+        }
         const float l = inL[i], r = inR[i];
-        outL[i] = mOutL[mPos];
-        if (outR) outR[i] = mOutR[mPos];
-        mInL[mPos] = l;
-        mInR[mPos] = r;
+        // What went in 16 frames ago, through the effect and around it.
+        outL[i] = mOutL[mPos] + mDryL[mPos];
+        if (outR) outR[i] = mOutR[mPos] + mDryR[mPos];
+        mInL[mPos] = l * mAmount;
+        mInR[mPos] = r * mAmount;
+        mDryInL[mPos] = l * (1.0f - mAmount);
+        mDryInR[mPos] = r * (1.0f - mAmount);
         if (++mPos == kBlock) {
             mPos = 0;
             std::memcpy(mOutL, mInL, sizeof(mOutL));
             std::memcpy(mOutR, mInR, sizeof(mOutR));
+            std::memcpy(mDryL, mDryInL, sizeof(mDryL));
+            std::memcpy(mDryR, mDryInR, sizeof(mDryR));
             if (e) e->processBlock(mOutL, mOutR);
         }
     }

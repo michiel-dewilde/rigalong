@@ -93,7 +93,10 @@ song being edited:
   * a **key range**, from low to high, which makes a split;
   * **transposition** in semitones;
   * the MIDI **channel** it listens to (0 means any);
-  * optionally its **own level**.
+  * optionally its **own level**;
+  * when the sound has an effect, whether the **effect** is on in this live
+    set. Turned off, it stops taking new sound and lets its echoes and tail
+    ring out.
 
   Copy a live set to make the next one quickly.
 * **CP-88**, per live set:

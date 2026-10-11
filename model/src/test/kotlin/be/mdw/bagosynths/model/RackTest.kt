@@ -100,6 +100,27 @@ class RackTest {
     }
 
     @Test
+    fun eachLiveSetSaysHowMuchGoesThroughTheEffect() {
+        val fx = RackFx("delay")
+        val withFx = draft.copy(
+            slots = draft.slots + (RackEngine.SFIZZ to draft.slots[RackEngine.SFIZZ]!!.copy(fx = fx)),
+            liveSets = listOf(
+                draft.liveSets[0],
+                draft.liveSets[1].copy(parts = draft.liveSets[1].parts +
+                    (RackEngine.SFIZZ to draft.liveSets[1].parts[RackEngine.SFIZZ]!!.copy(fxAmount = 0.0)))),
+        )
+        val song = withFx.toObjects(store)
+        val sets = song.liveSets.map { store.getTyped<LiveSet>(it.toRef().digest) }
+        // Every live set carries the amount, so switching always recalls it.
+        assertEquals(listOf(1.0, 0.0), sets.map { it.overrides[RackEngine.SFIZZ.fxAmountKey] })
+        val back = assertNotNull(RackSong.fromObjects(store, song))
+        assertEquals(0.0, back.liveSets[1].parts[RackEngine.SFIZZ]?.fxAmount)
+        // No effect, no amount.
+        val plain = draft.toObjects(store).liveSets.map { store.getTyped<LiveSet>(it.toRef().digest) }
+        assertTrue(plain.none { RackEngine.SFIZZ.fxAmountKey in it.overrides })
+    }
+
+    @Test
     fun aMasterEffectSitsBetweenTheMixAndTheOutput() {
         val hall = RackFx("reverb", mapOf("Mix" to 0.25))
         val song = draft.copy(masterFx = hall).toObjects(store)

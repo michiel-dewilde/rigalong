@@ -704,6 +704,9 @@ class SongPlayer(private val lib: Library, private val host: EngineHost, private
         val node = fxIndex(slot) ?: return
         val type = be.mdw.bagosynths.model.RackFx.TYPES.indexOf(fx?.type ?: "off").coerceAtLeast(0)
         NativeBridge.nativeSetNodeParam(node, 0, type.toFloat())
+        // Fully on until a live set says otherwise: an amount left at 0 by the
+        // previous song would make a new effect silent.
+        fxParamIndex(node, "Amount")?.let { NativeBridge.nativeSetNodeParam(node, it, 1f) }
         val params = fx?.params.orEmpty()
         for ((name, v) in params.filterKeys { it.endsWith(" sync") } + params.filterKeys { !it.endsWith(" sync") }) {
             fxParamIndex(node, name)?.let { NativeBridge.nativeSetNodeParam(node, it, v.toFloat()) }
@@ -845,6 +848,8 @@ class SongPlayer(private val lib: Library, private val host: EngineHost, private
         if (rest.startsWith("zone.")) {
             val i = ZONE_PARAMS.indexOf(rest.removePrefix("zone."))
             if (i >= 0) NativeBridge.nativeZoneParam(e.rackIndex, i, v)
+        } else if (rest.startsWith("fx.")) {
+            auditionFx(e.ordinal, rest.removePrefix("fx."), v)
         } else {
             setNodeParam(e, rest, v)
             if (rest == "Level") levels[e] = v

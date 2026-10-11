@@ -621,6 +621,14 @@ private fun LiveSetCard(song: RackSong, i: Int, ls: RackLiveSet, player: SongPla
                     Slider(value = lv.toFloat(), onValueChange = { putPart(p.copy(level = it.toDouble())) },
                         modifier = Modifier.width(140.dp))
                 }
+                // The engine's effect in this live set: on, or off with its tail ringing out.
+                if (song.slots[e]?.fx != null) {
+                    Spacer(Modifier.width(8.dp))
+                    androidx.compose.material3.Switch(checked = p.fxAmount > 0.5,
+                        onCheckedChange = { putPart(p.copy(fxAmount = if (it) 1.0 else 0.0)) })
+                    Text(stringResource(R.string.fx_in_live_set), color = Dim, fontSize = 12.sp,
+                        modifier = Modifier.padding(start = 6.dp))
+                }
             }
         }
         // The CP-88 (I4.7): leave it, select one of its sounds, or own one.

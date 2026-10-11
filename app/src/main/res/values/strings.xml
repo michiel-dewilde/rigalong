@@ -39,6 +39,7 @@
     <string name="save_tempo">save</string>
     <string name="reverb">Reverb</string>
     <string name="fx_button">FX…</string>
+    <string name="fx_in_live_set">effect</string>
     <string name="master_fx_button">Master FX…</string>
     <string name="master_fx_is">Master: %1$s</string>
     <string name="master_fx_title">Effect on the whole mix</string>

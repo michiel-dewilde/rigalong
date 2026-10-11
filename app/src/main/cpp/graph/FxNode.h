@@ -26,6 +26,11 @@ namespace bagosynths {
 // a queue tagged with the type they were meant for, so a value sent to the old
 // effect never lands on the new one.
 //
+// AMOUNT (index kAmount) is a send, not a mix: the effect is fed the signal
+// times the amount, and the rest passes dry. Taken to 0 -- a live set without
+// the effect -- it stops feeding the delay or the hall and lets what is in it
+// ring out, instead of cutting it off. Ramped over 15 ms.
+//
 // LATENCY. sst-effects process 16 frames at a time; the node runs them
 // through a 16-frame delay line so any block size works, and keeps that delay
 // when off as well, so switching an effect in never jumps the signal in time.
@@ -35,6 +40,7 @@ public:
     static constexpr int kMaxParams = 20;
     static constexpr int kSyncBase = 1 + kMaxParams;
     static constexpr int kBlock = 16;
+    static constexpr int kAmount = kSyncBase + kMaxParams;
 
     FxNode();
     ~FxNode() override;
@@ -49,7 +55,7 @@ public:
     void prepare(double sampleRate, int maxFrames) override;
     void process(const ProcessArgs& args) override;
 
-    int numParams() const override { return kSyncBase + kMaxParams; }
+    int numParams() const override { return kAmount + 1; }
     void setParam(int index, float value) override;
     float getParam(int index) const override;
     const char* paramName(int index) const override;
@@ -85,6 +91,11 @@ private:
     ParamQueue<256> mQueue;
 
     float mInL[kBlock] = {}, mInR[kBlock] = {};
+    float mDryInL[kBlock] = {}, mDryInR[kBlock] = {};
+    float mDryL[kBlock] = {}, mDryR[kBlock] = {};
+    std::atomic<float> mAmountTarget{1.0f};
+    float mAmount = 1.0f;
+    float mAmountStep = 1.0f / 661.0f;
     alignas(16) float mOutL[kBlock] = {};
     alignas(16) float mOutR[kBlock] = {};
     int mPos = 0;

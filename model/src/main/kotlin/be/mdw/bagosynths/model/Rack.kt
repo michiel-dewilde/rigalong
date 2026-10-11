@@ -34,6 +34,7 @@ enum class RackEngine(val key: String, val nodeType: String, val label: String) 
     fun zoneKey(param: String) = "$key.zone.$param"
     val midiWire: String get() = "$key.midi"
     val audioWire: String get() = "$key.audio"
+    val fxAmountKey: String get() = "$key.fx.Amount"
 
     companion object {
         fun ofKey(k: String): RackEngine? = entries.firstOrNull { it.key == k }
@@ -70,6 +71,8 @@ data class RackPart(
     val keyHigh: Int = 127,
     val transpose: Int = 0,
     val channelIn: Int = 0,              // 0: any
+    /** How much of the engine goes through its insert effect here, 0-1 (a send: tails ring on at 0). */
+    val fxAmount: Double = 1.0,
 )
 
 /**
@@ -148,6 +151,8 @@ data class RackSong(
                 overrides[e.zoneKey("keyHigh")] = part.keyHigh.toDouble()
                 overrides[e.zoneKey("transpose")] = part.transpose.toDouble()
                 overrides[e.zoneKey("channelIn")] = part.channelIn.toDouble()
+                // Written in every live set while the engine has an effect, like the zones.
+                if (slots[e]?.fx?.takeIf { it.type != "off" } != null) overrides[e.fxAmountKey] = part.fxAmount
             }
             val cp = when (ls.cp88.mode) {
                 "select" -> Cp88Action("select", page = ls.cp88.page, set = ls.cp88.set)
@@ -186,6 +191,7 @@ data class RackSong(
                         keyHigh = ls.overrides[e.zoneKey("keyHigh")]?.toInt() ?: 127,
                         transpose = ls.overrides[e.zoneKey("transpose")]?.toInt() ?: 0,
                         channelIn = ls.overrides[e.zoneKey("channelIn")]?.toInt() ?: 0,
+                        fxAmount = ls.overrides[e.fxAmountKey] ?: 1.0,
                     )
                 }
                 val cp = ls.cp88?.let { a ->
