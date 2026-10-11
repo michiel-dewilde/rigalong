@@ -50,12 +50,15 @@ data class RackSlot(
     val params: Map<String, Double> = emptyMap(),
     /** Its insert effect, or null. */
     val fx: RackFx? = null,
+    /** The library patch this slot uses (picked or saved by the player), or null. */
+    val libraryPatch: Digest? = null,
 ) {
-    /** The patch object this slot is stored as; equal content, equal hash, so a library patch is recognised. */
+    /** The patch object this slot is stored as. */
     fun patch(e: RackEngine) = Patch(engine = e.key, preset = preset, program = program, params = params)
 
-    /** This slot taking [p]'s sound: its preset, program and values. */
-    fun withPatch(p: Patch) = copy(preset = p.preset, program = p.program, params = p.params)
+    /** This slot taking [p]'s sound -- its preset, program and values -- and its link to library patch [entry]. */
+    fun withPatch(p: Patch, entry: Digest? = null) =
+        copy(preset = p.preset, program = p.program, params = p.params, libraryPatch = entry)
 }
 
 /**
@@ -174,7 +177,7 @@ data class RackSong(
         for ((e, slot) in slots.toSortedMap()) {
             val patch = store.putTyped(slot.patch(e))
             nodes[e.key] = Node(kind = e.nodeType, patch = RefJ.of(patch, Patch.TYPE),
-                params = mapOf("Level" to slot.level))
+                patchEntry = slot.libraryPatch?.toString(), params = mapOf("Level" to slot.level))
             nodes["${e.key}.zone"] = Node(kind = "midi.zone")
             wires["${e.key}.in"] = Wire("in:midi", "${e.key}.zone:midi")
             wires[e.midiWire] = Wire("${e.key}.zone:midi", "${e.key}:midi")
@@ -228,7 +231,7 @@ data class RackSong(
                 val patch = node.patch?.let { store.getTyped<Patch>(it.toRef().digest) }
                 val fx = song.nodes["${e.key}.fx"]?.let { RackFx(it.kind.removePrefix("fx."), it.params) }
                 slots[e] = RackSlot(patch?.preset, patch?.program, node.params["Level"] ?: 0.8,
-                    patch?.params ?: emptyMap(), fx)
+                    patch?.params ?: emptyMap(), fx, node.patchEntry?.let { Digest.parse(it) })
             }
             val liveSets = song.liveSets.map { r ->
                 val ls = store.getTyped<LiveSet>(r.toRef().digest)

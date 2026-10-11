@@ -82,6 +82,15 @@ song being edited:
     heard at once and kept in the song.
   * "Take current" keeps what the engine has now; "Clear" goes back to the
     plain patch.
+  * **Library patches** share a sound between songs. "Save as library
+    patch…" in the patch dialog shares it, and the patch list shows library
+    patches first. The dialog says which library patch a sound uses and how
+    many songs use it.
+  * When you save a song whose library patch you changed, it asks: **update
+    it everywhere** (every song using it moves, and their setlists with
+    them), **only in this song** (this song keeps its own copy), or **in the
+    songs you choose**. A song left on an older version shows it, with "Use
+    the latest version".
   * **FX…** puts an effect after that sound: Delay, Phaser, Flanger, Rotary
     or Hall, from Surge XT. Times and rates can **sync** to the song's tempo,
     in note values (1/4, 1/8 dotted…).
@@ -121,7 +130,10 @@ song being edited:
   sound of its own holds a **silent** sound. Pressing a button on the
   keyboard then never brings in its own instruments by accident.
 
-**Save** stores the song. Earlier versions are kept in the library. The keys
+**Save** stores the song (it reads "Save •" while there is something to
+save). Earlier versions are kept in the library. **Undo** above the song
+takes back the last action whole: a save that moved a patch, three songs and
+two setlists is one Undo. The keys
 at the bottom play the current live set without a keyboard attached.
 
 ### Library
@@ -146,6 +158,12 @@ Every setlist and song, with its history.
     version keeps it until you press **Update to the latest version**;
   * versions **changed elsewhere too**, after an import: use one of them, or
     keep this tablet's.
+* **Patches**: the library patches, with Details: the songs using each one
+  (and "Update to the latest version" for a song left behind), where it was
+  forked from, its history.
+* **Forget history (hold)** in an entry's Details keeps what it is now and
+  stops carrying its earlier versions along in exports. It cannot be undone.
+* **Undo** at the top takes back the last action.
 * **Install instrument (zip)…** adds an SFZ sample library from a zip file.
   It then appears in every Piano patch list.
 

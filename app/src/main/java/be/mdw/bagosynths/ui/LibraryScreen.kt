@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
@@ -63,6 +64,8 @@ fun LibraryScreen(player: SongPlayer, lib: Library, host: EngineHost, onOpened: 
     var newName by remember { mutableStateOf("") }
     val setlists = remember(revision) { lib.setlists() }
     val songs = remember(revision) { lib.songs() }
+    val patches = remember(revision) { lib.patches() }
+    val last = remember(revision) { lib.lastChange() }
     var exportIds by remember { mutableStateOf<List<Digest>>(emptyList()) }
     var detail by remember { mutableStateOf<Digest?>(null) }
 
@@ -110,6 +113,10 @@ fun LibraryScreen(player: SongPlayer, lib: Library, host: EngineHost, onOpened: 
                 exportIds = listOf(sl) + lib.songsOf(sl).mapNotNull { it.first?.id }
                 exporter.launch("${player.setlistName}.bagosynths.tar")
             }) { Text(stringResource(R.string.export_setlist)) }
+            // The last action, whole: a save that moved patches, songs and setlists is one Undo.
+            if (last != null) TextButton(onClick = { lib.undo(); revision++; player.reload() }) {
+                Text(stringResource(R.string.undo_named, last.name))
+            }
             Text(message, color = DimColor, fontSize = 13.sp)
         }
         Spacer(Modifier.height(10.dp))
@@ -138,7 +145,7 @@ fun LibraryScreen(player: SongPlayer, lib: Library, host: EngineHost, onOpened: 
         }, second = { m ->
             Column(m.background(PanelColor, RoundedCornerShape(10.dp)).padding(10.dp)) {
                 Text(stringResource(R.string.all_songs), fontWeight = FontWeight.SemiBold)
-                LazyColumn {
+                LazyColumn(Modifier.weight(1f)) {
                     items(songs) { s ->
                         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()
                             .padding(vertical = 4.dp)) {
@@ -153,6 +160,19 @@ fun LibraryScreen(player: SongPlayer, lib: Library, host: EngineHost, onOpened: 
                                 lib.saveSetlist(sl, player.setlistName, ids)
                                 player.reload(); revision++
                             }) { Text(stringResource(R.string.add_to_setlist)) }
+                        }
+                    }
+                }
+                // Library patches, shared between songs (M9).
+                if (patches.isNotEmpty()) {
+                    Text(stringResource(R.string.patches), fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(top = 8.dp))
+                    LazyColumn(Modifier.heightIn(max = 220.dp)) {
+                        items(patches) { (e, p) ->
+                            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                                Text(e.version.name, modifier = Modifier.weight(1f))
+                                Text(p.engine, color = DimColor, fontSize = 12.sp)
+                                TextButton(onClick = { detail = e.id }) { Text(stringResource(R.string.details)) }
+                            }
                         }
                     }
                 }
@@ -177,6 +197,9 @@ private fun EntryDialog(id: Digest, lib: Library, player: SongPlayer, onChanged:
     val history = remember(revision) { lib.history(id) }
     val isSong = entry.version.target?.type == be.mdw.bagosynths.model.Song.TYPE
     val uses = remember(revision) { if (isSong) lib.usedBy(id) else emptyList() }
+    val isPatch = entry.version.target?.type == be.mdw.bagosynths.model.Patch.TYPE
+    val patchUses = remember(revision) { if (isPatch) lib.songsUsingPatch(id) else emptyList() }
+    val origin = remember(revision) { lib.origin(id) }
     val diverged = remember(revision) { lib.divergences(id) }
     var name by remember(revision) { mutableStateOf(entry.version.name) }
     fun changed() {
@@ -202,6 +225,7 @@ private fun EntryDialog(id: Digest, lib: Library, player: SongPlayer, onChanged:
                             onClick = { lib.rename(id, name.trim()); changed() }) { Text(stringResource(R.string.rename)) }
                     }
                     Text(stringResource(R.string.entry_id, id.short), color = DimColor, fontSize = 12.sp)
+                    origin?.let { Text(stringResource(R.string.forked_from, it.first.version.name), color = DimColor, fontSize = 12.sp) }
                 }
                 if (diverged.isNotEmpty()) {
                     item { Section(stringResource(R.string.diverged)) }
@@ -228,10 +252,30 @@ private fun EntryDialog(id: Digest, lib: Library, player: SongPlayer, onChanged:
                         }
                     }
                 }
+                if (isPatch) {
+                    item { Section(stringResource(R.string.used_by)) }
+                    if (patchUses.isEmpty()) item { Text(stringResource(R.string.used_by_no_song), color = DimColor, fontSize = 13.sp) }
+                    items(patchUses) { u ->
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(u.song.version.name, modifier = Modifier.weight(1f))
+                            if (u.latest) Text(stringResource(R.string.latest_version), color = DimColor, fontSize = 12.sp)
+                            else TextButton(onClick = { lib.updatePatchReference(u.song.id, id); changed() }) {
+                                Text(stringResource(R.string.update_reference))
+                            }
+                        }
+                    }
+                }
                 item { Section(stringResource(R.string.history)) }
                 items(history.size) { i ->
                     val (d, v) = history[i]
                     VersionRow(v, if (i == 0) null else stringResource(R.string.restore)) { lib.restore(id, d); changed() }
+                }
+                // Stop dragging the history along (exports, sync): held, and not undoable.
+                if (history.size > 1) item {
+                    Text(stringResource(R.string.forget_history_hold), color = Color(0xFFE5534B),
+                        modifier = Modifier.padding(top = 10.dp)
+                            .combinedClickable(onClick = {}, onLongClick = { lib.forgetHistory(id); changed() }))
+                    Text(stringResource(R.string.forget_history_note), color = DimColor, fontSize = 12.sp)
                 }
             }
         })

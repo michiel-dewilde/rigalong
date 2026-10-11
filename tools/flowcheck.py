@@ -30,6 +30,8 @@ if not os.path.exists(ADB):
 def adb(*args, capture=True):
     r = subprocess.run([ADB, *args], capture_output=capture, timeout=60,
                        env={**os.environ, "MSYS_NO_PATHCONV": "1"})
+    if capture and b"more than one device" in r.stderr:
+        sys.exit("adb sees more than one device: set ANDROID_SERIAL")
     return r.stdout.decode("utf-8", "replace") if capture else ""
 
 
@@ -52,7 +54,7 @@ class Node:
 
 def screen():
     """Every node with a text or a description, read from the live UI."""
-    for _ in range(5):
+    for _ in range(10):
         xml = adb("exec-out", "uiautomator", "dump", "/dev/tty")
         start = xml.find("<?xml")
         end = xml.rfind("</hierarchy>")
@@ -60,7 +62,7 @@ def screen():
             root = ET.fromstring(xml[start:end + len("</hierarchy>")])
             return [Node(n.get("text", ""), n.get("content-desc", ""), n.get("bounds"))
                     for n in root.iter("node") if n.get("text") or n.get("content-desc")]
-        time.sleep(0.5)   # "could not get idle state": the beat light was blinking
+        time.sleep(1.0)   # "could not get idle state", or uiautomator still busy with the last dump
     raise RuntimeError("no UI dump")
 
 
@@ -172,6 +174,92 @@ def flow_count_in(f):
     assert logcat_has(r"click: 4 beats"), "no count-in"
 
 
+def type_text(text):
+    shell("input text " + text.replace(" ", "%s"))
+    time.sleep(0.4)
+
+
+def to_songs():
+    """The Songs screen: from the stage, where it opens on a long press (not counted)."""
+    to_stage()
+    for n in find_all("Songs"):
+        shell(f"input swipe {n.x} {n.y} {n.x} {n.y} 900")
+        break
+    time.sleep(1.0)
+
+
+def to_library():
+    """The Library screen: from the stage, where it opens on a long press (not counted)."""
+    to_stage()
+    for n in find_all("Library"):
+        shell(f"input swipe {n.x} {n.y} {n.x} {n.y} 900")
+        break
+    time.sleep(1.0)
+
+
+# The shared-patch round trip: share the piano's patch, use it in a second
+# song, change it in the first and update it everywhere, check both songs
+# follow -- then three Undos leave the library as it was.
+PATCH = "FlowPiano"
+
+
+def flow_share_patch(f):
+    to_songs()
+    f.tap("1. Piano")
+    f.tap("Patch…")
+    f.tap("Save as library patch…")
+    f.tap("Patch name")
+    shell("input keyevent KEYCODE_MOVE_END")
+    for _ in range(12):
+        shell("input keyevent KEYCODE_DEL")
+    type_text(PATCH)
+    f.tap("Save")
+    f.see(f"Library patch “{PATCH}”", exact=False)
+    f.tap("Done")
+    f.tap("Save •")                    # the song keeps the link once it is saved
+
+
+def flow_reuse_patch(f):
+    to_songs()
+    f.tap("3. Pad and piano")
+    f.tap("(as loaded)")
+    f.tap(PATCH)
+    f.tap("Save •")
+
+
+def flow_update_everywhere(f):
+    to_songs()
+    f.tap("1. Piano")
+    f.tap("(as loaded)")
+    f.tap("Salamander Grand (tightened)", exact=False)
+    f.tap("Save •")
+    f.see("A library patch changed")
+    f.see("1 other song uses it.", exact=False)
+    f.tap("Save")
+    # Both songs on the new version (checked in the Library, not counted).
+    to_library()
+    details = find_all("Details")
+    if not details:
+        raise AssertionError("no Details")
+    n = details[-1]                    # the patches list comes last
+    shell(f"input tap {n.x} {n.y}")
+    time.sleep(1.0)
+    if len(find_all("latest version")) != 2:
+        raise AssertionError("expected two songs on the latest version")
+    for d in find_all("Done"):
+        shell(f"input tap {d.x} {d.y}")
+
+
+def flow_undo_all(f):
+    # Four actions to undo: the patch shared, the song saved with it, the
+    # second song, and the update everywhere.
+    to_library()
+    for _ in range(4):
+        f.tap("Undo", exact=False)
+    if wait_for(PATCH, timeout=2):
+        raise AssertionError(f"{PATCH} still in the library after four Undos")
+
+
 FLOWS = [
     # name, budget (taps), function
     ("select-live-set", 1, flow_select_live_set),
@@ -179,6 +267,10 @@ FLOWS = [
     ("quick-edit-live-set", 1, flow_quick_edit_live_set),
     ("quick-edit-patch", 2, flow_quick_edit_patch),
     ("count-in", 5, flow_count_in),
+    ("share-patch", 8, flow_share_patch),
+    ("reuse-patch", 4, flow_reuse_patch),
+    ("update-everywhere", 5, flow_update_everywhere),
+    ("undo-all", 4, flow_undo_all),
 ]
 
 

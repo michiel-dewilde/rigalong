@@ -76,6 +76,12 @@ data class Node(
     /** For a port node: the environment port it stands for. */
     val port: String? = null,
     val patch: RefJ? = null,
+    /**
+     * The library patch [patch] comes from: a weak link ("sha256:<entry>"),
+     * set only when the player picks or saves one. Equal content alone is not
+     * use -- an untouched default is not "using" a patch saved from a default.
+     */
+    val patchEntry: String? = null,
     /** Song values of this node's parameters, on top of the patch. */
     val params: Map<String, Double> = emptyMap(),
     /** Render with this port's island when the environment allows (I3.21). */

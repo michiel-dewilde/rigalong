@@ -19,6 +19,10 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.widthIn
+import be.mdw.bagosynths.model.Entry
+import be.mdw.bagosynths.model.getTyped
+import androidx.compose.ui.res.pluralStringResource
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.relocation.bringIntoViewRequester
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -377,13 +381,34 @@ private fun SongsScreen(player: SongPlayer, lib: Library, host: EngineHost) {
     var editing by remember { mutableStateOf<Pair<Digest?, RackSong>?>(null) }
     var editName by remember { mutableStateOf("") }
     var focus by remember { mutableStateOf<SongPlayer.EditRequest?>(null) }
+    // The song as it was opened: what its slots' library patches were before editing.
+    var original by remember { mutableStateOf<RackSong?>(null) }
+    var originalName by remember { mutableStateOf("") }
+    var decisions by remember { mutableStateOf<List<PatchDecision>>(emptyList()) }
     val newSongName = stringResource(R.string.new_song)
     fun open(id: Digest) {
         selected = id
         val e = lib.store.entry(id)
         val song = lib.songs().firstOrNull { it.entry.id == id }?.song
         val rack = song?.let { lib.rackSong(it) }
-        if (e != null && rack != null) { editing = id to rack; editName = e.version.name }
+        if (e != null && rack != null) { editing = id to rack; editName = e.version.name; original = rack; originalName = editName }
+    }
+    fun save(moves: Map<Digest, Pair<be.mdw.bagosynths.model.Patch, Collection<Digest>>>) {
+        val ed = editing ?: return
+        val id = lib.inOneChange("song", editName) {
+            val id = lib.saveSongAndPatches(ed.first, editName, ed.second, moves)
+            if (ed.first == null && setlistId != null) {
+                val ids = lib.songsOf(setlistId).mapNotNull { it.first?.id } + id
+                lib.saveSetlist(setlistId, player.setlistName, ids)
+            }
+            id
+        }
+        editing = id to ed.second
+        original = ed.second
+        originalName = editName
+        selected = id
+        revision++
+        player.reload()
     }
     // Quick edit from the stage: the song, scrolled to its live set or with its patch open.
     LaunchedEffect(player.editRequest) {
@@ -397,6 +422,7 @@ private fun SongsScreen(player: SongPlayer, lib: Library, host: EngineHost) {
                 onSelect = { id -> focus = null; open(id) },
                 onNew = {
                     editing = null to RackSong.starter(preset = host.currentInstrument())
+                    original = null
                     editName = newSongName
                     selected = null
                 },
@@ -407,21 +433,39 @@ private fun SongsScreen(player: SongPlayer, lib: Library, host: EngineHost) {
             if (ed == null) {
                 Text(stringResource(R.string.pick_song), color = Dim, modifier = Modifier.padding(24.dp))
             } else {
-                SongEditor(ed.second, editName, host, player, focus?.takeIf { it.song == ed.first },
-                    onName = { editName = it },
-                    onChange = { editing = ed.first to it },
-                    onSave = {
-                        val id = lib.saveSong(ed.first, editName, ed.second)
-                        if (ed.first == null && setlistId != null) {
-                            val ids = lib.songsOf(setlistId).mapNotNull { it.first?.id } + id
-                            lib.saveSetlist(setlistId, player.setlistName, ids)
-                        }
-                        editing = id to ed.second
-                        selected = id
-                        revision++
-                        player.reload()
-                    })
+                Column(Modifier.fillMaxSize()) {
+                    // Undo: the last action, whole (a save that moved patches, songs and setlists).
+                    val last = remember(revision) { lib.lastChange() }
+                    if (last != null) {
+                        TextButton(onClick = {
+                            lib.undo()
+                            revision++
+                            ed.first?.let { open(it) }
+                            player.reload()
+                        }) { Text(stringResource(R.string.undo_named, last.name)) }
+                    }
+                    SongEditor(ed.second, editName, host, player, lib, focus?.takeIf { it.song == ed.first },
+                        unsaved = ed.first == null || ed.second != original || editName != originalName,
+                        onName = { editName = it },
+                        onChange = { editing = ed.first to it },
+                        onSave = {
+                            // A changed library patch: everywhere, only here, or chosen songs (I8.5, I8.13).
+                            val d = patchDecisions(lib, original, ed.second, ed.first)
+                            if (d.isEmpty()) save(emptyMap()) else decisions = d
+                        })
+                }
             }
+        }
+        if (decisions.isNotEmpty()) {
+            PatchSaveDialog(decisions, onSave = { moves, only ->
+                decisions = emptyList()
+                // "Only in this song": the slot lets go of the library patch and keeps its own.
+                if (only.isNotEmpty()) editing = editing?.let { (id, r) ->
+                    id to r.copy(slots = r.slots.mapValues { (_, sl) -> if (sl.libraryPatch in only) sl.copy(libraryPatch = null) else sl })
+                }
+                save(moves)
+            },
+                onDismiss = { decisions = emptyList() })
         }
         if (wide) {
             Row(Modifier.fillMaxSize()) {
@@ -480,8 +524,8 @@ private fun move(lib: Library, setlistId: Digest, ids: List<Digest>, i: Int, by:
 }
 
 @Composable
-private fun SongEditor(song: RackSong, name: String, host: EngineHost, player: SongPlayer,
-                       focus: SongPlayer.EditRequest?, onName: (String) -> Unit,
+private fun SongEditor(song: RackSong, name: String, host: EngineHost, player: SongPlayer, lib: Library,
+                       focus: SongPlayer.EditRequest?, unsaved: Boolean, onName: (String) -> Unit,
                        onChange: (RackSong) -> Unit, onSave: () -> Unit) {
     var picker by remember { mutableStateOf<RackEngine?>(null) }
     var patchEditor by remember { mutableStateOf<RackEngine?>(null) }
@@ -506,7 +550,11 @@ private fun SongEditor(song: RackSong, name: String, host: EngineHost, player: S
                     ?: stringResource(R.string.master_fx_button), color = if (song.masterFx == null) Color.White else Accent)
             }
             Spacer(Modifier.width(12.dp))
-            Button(onClick = onSave, modifier = Modifier.height(56.dp)) { Text(stringResource(R.string.save)) }
+            // "Save •" while there is something to save: a library patch picked or
+            // saved in a dialog belongs to the song only once the song is saved.
+            Button(onClick = onSave, modifier = Modifier.height(56.dp)) {
+                Text(stringResource(if (unsaved) R.string.save_unsaved else R.string.save))
+            }
         }
         Row(verticalAlignment = Alignment.CenterVertically) {
             androidx.compose.material3.Checkbox(checked = song.tempo != null, onCheckedChange = { on ->
@@ -588,15 +636,22 @@ private fun SongEditor(song: RackSong, name: String, host: EngineHost, player: S
     }
     patchEditor?.let { e ->
         song.slots[e]?.let { slot ->
-            PatchEditor(e, slot, player, onChange = { params ->
+            PatchEditor(e, slot, player, lib, onChange = { params ->
                 onChange(song.copy(slots = song.slots + (e to slot.copy(params = params))))
+            }, onReplace = { p, link ->
+                onChange(song.copy(slots = song.slots + (e to slot.withPatch(p, link))))
             }, onDismiss = { patchEditor = null })
         }
     }
     picker?.let { e ->
-        PresetPicker(e, host, onPick = { preset, program ->
+        PresetPicker(e, host, lib, onPick = { preset, program ->
             val slot = song.slots[e] ?: RackSlot()
+            // Still linked: a linked patch given another sound is a change to it, asked about at Save.
             onChange(song.copy(slots = song.slots + (e to slot.copy(preset = preset, program = program))))
+            picker = null
+        }, onPatch = { entry, p ->
+            val slot = song.slots[e] ?: RackSlot()
+            onChange(song.copy(slots = song.slots + (e to slot.withPatch(p, entry))))
             picker = null
         }, onDismiss = { picker = null })
     }
@@ -764,11 +819,146 @@ private fun TempoBox(player: SongPlayer) {
  * the prototype's panels, for instance; "Clear" goes back to the plain preset.
  */
 @Composable
-private fun PatchEditor(e: RackEngine, slot: RackSlot, player: SongPlayer,
-                        onChange: (Map<String, Double>) -> Unit, onDismiss: () -> Unit) =
+private fun PatchEditor(e: RackEngine, slot: RackSlot, player: SongPlayer, lib: Library,
+                        onChange: (Map<String, Double>) -> Unit,
+                        onReplace: (be.mdw.bagosynths.model.Patch, Digest?) -> Unit,
+                        onDismiss: () -> Unit) =
     ParamEditor(stringResource(R.string.patch_of, engineLabel(e)), e, slot.params, player,
         load = { player.previewSlot(e, slot); player.engineParams(e) },
-        audition = { name, v -> player.auditionParam(e, name, v) }, onChange = onChange, onDismiss = onDismiss)
+        audition = { name, v -> player.auditionParam(e, name, v) }, onChange = onChange, onDismiss = onDismiss,
+        header = { values -> LibraryPatchLine(e, slot, values, lib, onReplace) })
+
+/**
+ * Where the patch stands in the library (M9), by the slot's link: a library
+ * patch and how many songs use it; an older version of one, the latest a tap
+ * away; changed from one (unsaved edits, decided at Save); or not in the
+ * library, with "Save as library patch" -- which links the slot to it.
+ */
+@Composable
+private fun LibraryPatchLine(e: RackEngine, slot: RackSlot, values: Map<String, Double>, lib: Library,
+                             onReplace: (be.mdw.bagosynths.model.Patch, Digest?) -> Unit) {
+    val now = slot.copy(params = values).patch(e)
+    val link = remember(now, slot.libraryPatch) { lib.patchLink(slot.libraryPatch, now) }
+    var naming by remember { mutableStateOf(false) }
+    var name by remember { mutableStateOf("") }
+    Column(Modifier.padding(bottom = 8.dp)) {
+        when {
+            link != null && link.latest -> {
+                val n = remember(link) { lib.songsUsingPatch(link.entry.id).size }
+                Text(stringResource(R.string.patch_is_library, link.entry.version.name) + "  ·  " +
+                    pluralStringResource(R.plurals.used_by_songs, n, n), color = Accent, fontSize = 14.sp)
+            }
+            link != null && link.known -> Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(stringResource(R.string.patch_older_version, link.entry.version.name), color = Warn, fontSize = 14.sp)
+                TextButton(onClick = {
+                    onReplace(lib.store.getTyped(link.entry.version.target!!.digest), link.entry.id)
+                }) { Text(stringResource(R.string.use_latest)) }
+            }
+            else -> {
+                if (link != null) {
+                    Text(stringResource(R.string.patch_changed_from, link.entry.version.name), color = Dim, fontSize = 13.sp)
+                }
+                if (!naming) {
+                    TextButton(onClick = { naming = true; name = link?.entry?.version?.name?.let { "$it 2" } ?: "" }) {
+                        Text(stringResource(if (link != null) R.string.save_as_new_library_patch else R.string.save_as_library_patch))
+                    }
+                } else Row(verticalAlignment = Alignment.CenterVertically) {
+                    OutlinedTextField(value = name, onValueChange = { name = it }, singleLine = true,
+                        label = { Text(stringResource(R.string.patch_name)) }, modifier = Modifier.weight(1f))
+                    TextButton(enabled = name.isNotBlank(), onClick = {
+                        val id = lib.savePatch(null, name.trim(), now, derivedFrom = link?.entry?.latest)
+                        naming = false
+                        onReplace(now, id)   // the slot now uses it
+                    }) { Text(stringResource(R.string.save)) }
+                }
+            }
+        }
+    }
+}
+
+/** A library patch the song being saved changed, and what to do about the other songs using it. */
+private data class PatchDecision(val engine: RackEngine, val patch: Entry, val newContent: be.mdw.bagosynths.model.Patch,
+                                 val others: List<Entry>)
+
+/** The library patches [now] changed (still linked, content edited), each with the other songs on its latest version. */
+private fun patchDecisions(lib: Library, before: RackSong?, now: RackSong, songId: Digest?): List<PatchDecision> {
+    if (before == null) return emptyList()
+    return now.slots.mapNotNull { (e, slot) ->
+        val was = before.slots[e] ?: return@mapNotNull null
+        val id = slot.libraryPatch ?: return@mapNotNull null
+        if (was.libraryPatch != id || was.patch(e) == slot.patch(e)) return@mapNotNull null
+        val link = lib.patchLink(id, was.patch(e)) ?: return@mapNotNull null
+        if (!link.latest) return@mapNotNull null
+        val others = lib.songsUsingPatch(id).filter { it.latest && it.song.id != songId }.map { it.song }
+        PatchDecision(e, link.entry, slot.patch(e), others)
+    }.distinctBy { it.patch.id }
+}
+
+/**
+ * Saving a song whose library patch changed: update it everywhere (the
+ * default), only in this song, or in the songs chosen -- the change rippling
+ * on to their setlists. One save, one Undo.
+ */
+@Composable
+private fun PatchSaveDialog(decisions: List<PatchDecision>,
+                            onSave: (Map<Digest, Pair<be.mdw.bagosynths.model.Patch, Collection<Digest>>>, Set<Digest>) -> Unit,
+                            onDismiss: () -> Unit) {
+    // Per patch: the songs that will move with it; all of them to begin with.
+    var chosen by remember { mutableStateOf(decisions.associate { d -> d.patch.id to d.others.map { it.id }.toSet() }) }
+    var only by remember { mutableStateOf(emptySet<Digest>()) }
+    var picking by remember { mutableStateOf(emptySet<Digest>()) }
+    AlertDialog(onDismissRequest = onDismiss, modifier = WideDialog, properties = WideDialogProperties,
+        confirmButton = {
+            Button(onClick = {
+                onSave(decisions.filter { it.patch.id !in only }.associate { d ->
+                    d.patch.id to (d.newContent to (chosen[d.patch.id] ?: emptySet()))
+                }, only)
+            }) { Text(stringResource(R.string.save)) }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text(stringResource(R.string.cancel)) } },
+        title = { Text(stringResource(R.string.patch_save_title)) },
+        text = {
+            LazyColumn(Modifier.heightIn(max = 460.dp)) {
+                items(decisions.size) { k ->
+                    val d = decisions[k]
+                    val id = d.patch.id
+                    Text(stringResource(R.string.patch_save_question, d.patch.version.name, engineLabel(d.engine)) + " " +
+                        pluralStringResource(R.plurals.other_songs_use, d.others.size, d.others.size),
+                        fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(top = 8.dp))
+                    val mode = when {
+                        id in only -> 1
+                        id in picking -> 2
+                        else -> 0
+                    }
+                    for ((m, label) in listOf(0 to stringResource(R.string.update_everywhere),
+                            1 to stringResource(R.string.only_this_song), 2 to stringResource(R.string.choose_songs))) {
+                        if (m == 2 && d.others.isEmpty()) continue
+                        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().clickable {
+                            only = if (m == 1) only + id else only - id
+                            picking = if (m == 2) picking + id else picking - id
+                            if (m == 0) chosen = chosen + (id to d.others.map { it.id }.toSet())
+                        }) {
+                            androidx.compose.material3.RadioButton(selected = mode == m, onClick = null)
+                            Text(label, modifier = Modifier.padding(start = 8.dp))
+                        }
+                    }
+                    if (mode == 2) {
+                        for (s in d.others) {
+                            val on = s.id in (chosen[id] ?: emptySet())
+                            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(start = 32.dp)
+                                .clickable {
+                                    val cur = chosen[id] ?: emptySet()
+                                    chosen = chosen + (id to (if (on) cur - s.id else cur + s.id))
+                                }) {
+                                Checkbox(checked = on, onCheckedChange = null)
+                                Text(s.version.name, modifier = Modifier.padding(start = 6.dp))
+                            }
+                        }
+                    }
+                }
+            }
+        })
+}
 
 /** The song's reverb, where its engines meet, edited like a patch. */
 @Composable
@@ -781,7 +971,8 @@ private fun ReverbEditor(song: RackSong, player: SongPlayer, onChange: (Map<Stri
 @Composable
 private fun ParamEditor(title: String, key: Any, current: Map<String, Double>, player: SongPlayer,
                         load: () -> List<SongPlayer.ParamDesc>, audition: (String, Float) -> Unit,
-                        onChange: (Map<String, Double>) -> Unit, onDismiss: () -> Unit) {
+                        onChange: (Map<String, Double>) -> Unit, onDismiss: () -> Unit,
+                        header: (@Composable (Map<String, Double>) -> Unit)? = null) {
     val params = remember(key) { load() }
     var values by remember(key) { mutableStateOf(current) }
     fun put(v: Map<String, Double>) { values = v; onChange(v) }
@@ -797,13 +988,16 @@ private fun ParamEditor(title: String, key: Any, current: Map<String, Double>, p
         },
         title = { Text(title) },
         text = {
-            LazyColumn(Modifier.height(480.dp)) {
+            Column {
+            header?.invoke(values)
+            LazyColumn(Modifier.height(440.dp)) {
                 itemsIndexed(params) { _, p ->
                     ParamRow(p, values[p.name]?.toFloat() ?: p.value, values.containsKey(p.name), display = { null }) { x ->
                         audition(p.name, x)
                         put(values + (p.name to x.toDouble()))
                     }
                 }
+            }
             }
         })
 }
@@ -929,8 +1123,10 @@ private fun NumberField(label: String, value: Int, range: IntRange, noteName: Bo
 }
 
 @Composable
-private fun PresetPicker(e: RackEngine, host: EngineHost, onPick: (String?, Int?) -> Unit, onDismiss: () -> Unit) {
+private fun PresetPicker(e: RackEngine, host: EngineHost, lib: Library, onPick: (String?, Int?) -> Unit,
+                         onPatch: (Digest, be.mdw.bagosynths.model.Patch) -> Unit, onDismiss: () -> Unit) {
     val choices = remember(e) { presetChoices(e, host) }
+    val shared = remember(e) { lib.patches(e.key) }
     var filter by remember { mutableStateOf("") }
     AlertDialog(onDismissRequest = onDismiss, confirmButton = {
         TextButton(onClick = { onPick(null, null) }) { Text(stringResource(R.string.as_loaded)) }
@@ -942,6 +1138,14 @@ private fun PresetPicker(e: RackEngine, host: EngineHost, onPick: (String?, Int?
                     label = { Text(stringResource(R.string.search)) }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Text))
                 val shown = choices.filter { filter.isEmpty() || it.second.contains(filter, true) }.take(300)
                 LazyColumn {
+                    // The library's own patches first: picking one links the slot to it (by content).
+                    val mine = shared.filter { filter.isEmpty() || it.first.version.name.contains(filter, true) }
+                    itemsIndexed(mine) { _, (entry, patch) ->
+                        Row(Modifier.fillMaxWidth().clickable { onPatch(entry.id, patch) }.padding(vertical = 10.dp)) {
+                            Text(entry.version.name, color = Accent, modifier = Modifier.weight(1f))
+                            Text(stringResource(R.string.library_tag), color = Dim, fontSize = 12.sp)
+                        }
+                    }
                     itemsIndexed(shown) { _, (value, label) ->
                         Text(label, modifier = Modifier.fillMaxWidth().clickable { onPick(value, null) }
                             .padding(vertical = 10.dp))

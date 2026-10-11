@@ -30,6 +30,9 @@ class Library(dir: File, private val author: String) {
     private var open: LinkedHashMap<Digest, Digest?>? = null
     private val changesFile = File(dir, "changes.txt")
 
+    /** Several library calls as one action, undone as one. */
+    fun <T> inOneChange(kind: String, name: String, body: () -> T): T = change(kind, name, body)
+
     private fun <T> change(kind: String, name: String, body: () -> T): T {
         if (open != null) return body()   // part of an action already under way
         val rec = LinkedHashMap<Digest, Digest?>()
@@ -294,24 +297,31 @@ class Library(dir: File, private val author: String) {
         writeChanges(readChanges().filter { id !in it.before })
     }
 
-    /** The library patch [patch] is a version of, and whether it is the latest; null if none. */
-    fun patchEntryOf(patch: Patch): Pair<Entry, Boolean>? {
+    /**
+     * Where a slot that links library patch [entryId] stands, with [patch] as
+     * its content now: on the latest version, on an older one, or changed
+     * from it (unsaved edits; [PatchLink.known] false). Null for no link, or
+     * a link to an entry this library does not have.
+     */
+    data class PatchLink(val entry: Entry, val latest: Boolean, val known: Boolean)
+
+    fun patchLink(entryId: Digest?, patch: Patch): PatchLink? {
+        val e = entryId?.let { store.entry(it) }?.takeIf { it.version.target?.type == Patch.TYPE } ?: return null
         val d = store.putTyped(patch)
-        val mine = patches(patch.engine)
-        mine.firstOrNull { it.first.version.target?.digest == d }?.let { return it.first to true }
-        mine.firstOrNull { (e, _) -> history(e.id).any { it.second.target?.digest == d } }?.let { return it.first to false }
-        return null
+        if (e.version.target!!.digest == d) return PatchLink(e, latest = true, known = true)
+        return PatchLink(e, latest = false, known = history(e.id).any { it.second.target?.digest == d })
     }
 
     /** A song using a library patch, and whether it uses the patch's latest version. */
     data class PatchUse(val song: Entry, val latest: Boolean)
 
+    /** The songs whose slots link library patch [patchId] (picked or saved there, never equal content alone). */
     fun songsUsingPatch(patchId: Digest): List<PatchUse> {
-        val versions = history(patchId).mapNotNull { it.second.target?.digest }.toSet()
+        val link = patchId.toString()
         val latest = store.entry(patchId)?.version?.target?.digest
         return songs().mapNotNull { s ->
-            val used = s.song.nodes.values.mapNotNull { it.patch?.toRef()?.digest }
-            if (used.none { it in versions }) null else PatchUse(s.entry, latest in used)
+            val nodes = s.song.nodes.values.filter { it.patchEntry == link }
+            if (nodes.isEmpty()) null else PatchUse(s.entry, nodes.all { it.patch?.toRef()?.digest == latest })
         }
     }
 
@@ -331,14 +341,36 @@ class Library(dir: File, private val author: String) {
                 val se = store.entry(sid) ?: continue
                 val before = se.version.target?.digest ?: continue
                 val song = store.getTyped<Song>(before)
-                if (song.nodes.values.none { it.patch?.toRef()?.digest == old }) continue
+                val link = patchId.toString()
+                fun mine(n: Node) = n.patchEntry == link && n.patch?.toRef()?.digest == old
+                if (song.nodes.values.none(::mine)) continue
                 val moved = song.copy(nodes = song.nodes.mapValues { (_, n) ->
-                    if (n.patch?.toRef()?.digest == old) n.copy(patch = RefJ.of(new, Patch.TYPE)) else n
+                    if (mine(n)) n.copy(patch = RefJ.of(new, Patch.TYPE)) else n
                 })
                 val after = store.putTyped(moved)
                 update(sid, author, now(), target = Ref(after, Song.TYPE))
                 rippleSetlists(before, after, sid)
             }
+        }
+    }
+
+    /** Moves song [songId] from older versions of library patch [patchId] to its latest (I8.5): a choice. */
+    fun updatePatchReference(songId: Digest, patchId: Digest) {
+        val latest = store.entry(patchId)?.version?.target?.digest ?: return
+        val older = history(patchId).mapNotNull { it.second.target?.digest }.toSet() - latest
+        val se = store.entry(songId) ?: return
+        val before = se.version.target?.digest ?: return
+        val song = store.getTyped<Song>(before)
+        val link = patchId.toString()
+        fun mine(n: Node) = n.patchEntry == link && n.patch?.toRef()?.digest in older
+        if (song.nodes.values.none(::mine)) return
+        change("update", se.version.name) {
+            val moved = song.copy(nodes = song.nodes.mapValues { (_, n) ->
+                if (mine(n)) n.copy(patch = RefJ.of(latest, Patch.TYPE)) else n
+            })
+            val after = store.putTyped(moved)
+            update(songId, author, now(), target = Ref(after, Song.TYPE))
+            rippleSetlists(before, after, songId)
         }
     }
 

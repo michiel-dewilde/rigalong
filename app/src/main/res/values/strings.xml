@@ -87,6 +87,7 @@
     <string name="removed_song">(removed)</string>
     <string name="song">Song</string>
     <string name="save">Save</string>
+    <string name="save_unsaved">Save •</string>
     <string name="engines">Engines</string>
     <string name="as_loaded_paren">(as loaded)</string>
     <string name="level">level</string>
@@ -119,6 +120,33 @@
     <string name="share_diagnostics">Share diagnostics…</string>
     <string name="share_diagnostics_note">The log of the audio path, the CP-88 and the heat, kept on this tablet. It leaves only when you send it, to whom you choose.</string>
     <string name="details">Details</string>
+    <string name="library_tag">library</string>
+    <string name="patch_is_library">Library patch “%1$s”</string>
+    <string name="patch_older_version">An older version of “%1$s”</string>
+    <string name="patch_changed_from">Changed from the library patch “%1$s”</string>
+    <string name="use_latest">Use the latest version</string>
+    <string name="save_as_library_patch">Save as library patch…</string>
+    <string name="save_as_new_library_patch">Save as a new library patch…</string>
+    <string name="patch_name">Patch name</string>
+    <string name="patch_save_title">A library patch changed</string>
+    <string name="patch_save_question">“%1$s” (%2$s) is a library patch.</string>
+    <string name="update_everywhere">Update it everywhere</string>
+    <string name="only_this_song">Only in this song</string>
+    <string name="choose_songs">In the songs I choose…</string>
+    <string name="undo_named">Undo “%1$s”</string>
+    <string name="patches">Patches</string>
+    <string name="forked_from">Forked from “%1$s”</string>
+    <string name="forget_history_hold">Forget history (hold)</string>
+    <string name="forget_history_note">Keeps what it is now; its earlier versions no longer travel with it in exports. Cannot be undone.</string>
+    <string name="used_by_no_song">No song uses this patch.</string>
+    <plurals name="used_by_songs">
+        <item quantity="one">used by %1$d song</item>
+        <item quantity="other">used by %1$d songs</item>
+    </plurals>
+    <plurals name="other_songs_use">
+        <item quantity="one">%1$d other song uses it.</item>
+        <item quantity="other">%1$d other songs use it.</item>
+    </plurals>
     <string name="delete_hold">Delete (hold)</string>
     <string name="name">Name</string>
     <string name="rename">Rename</string>
