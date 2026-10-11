@@ -306,3 +306,5 @@ next time this file is read, delete it.
 | `midi monitor` log line (`UsbMidiIn::drainMonitor`) | **Measurement**, the first piece of the MIDI monitor the plan wants (S20.5). | The MIDI monitor view replaces it. |
 | `usb/UsbMidiOut`, SysEx capture in `UsbMidiIn` | **Product code**, not provisional: MIDI out on the direct path is a requirement (R3.3). | -- |
 | `kHoldStarve` and the re-anchoring | **A fix that measurably fixed it**: 275 holds -> 1 after a 600 ms stall. | -- |
+| `STAGE` broadcast | **Test hook**: drives the new UI's stage without the screen (`tools/bosstress/stagecheck.py`). | The stage has UI tests. |
+| `CP88SELFTEST` broadcast (`SongPlayer.cp88SelfTest`) | **Test hook**: the CP-88 path end to end (import, write to the reserved page, select), checked with `tools/cp88sysex`. It does not touch the library: the test song is never saved. | The CP-88 edit page is checked by hand, or by UI tests. |

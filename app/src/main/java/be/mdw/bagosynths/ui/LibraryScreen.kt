@@ -37,6 +37,8 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.res.stringResource
+import be.mdw.bagosynths.R
 import be.mdw.bagosynths.model.Digest
 import be.mdw.bagosynths.model.Exchange
 import be.mdw.bagosynths.model.Store
@@ -63,7 +65,8 @@ fun LibraryScreen(player: SongPlayer, lib: AppLibrary, onOpened: () -> Unit) {
 
     val exporter = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/x-tar")) { uri ->
         if (uri != null) message = runCatching { exportTo(context, lib.store, exportIds, uri) }
-            .fold({ "Exported ${exportIds.size} entries." }, { "Export failed: ${it.message}" })
+            .fold({ context.getString(R.string.exported, exportIds.size) },
+                { context.getString(R.string.export_failed, it.message ?: "") })
     }
     val importer = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) {
@@ -71,31 +74,31 @@ fun LibraryScreen(player: SongPlayer, lib: AppLibrary, onOpened: () -> Unit) {
                 context.contentResolver.openInputStream(uri)!!.use { Exchange.import(lib.store, it) }
             }.fold({ r ->
                 val counts = r.results.values.groupingBy { it::class.simpleName }.eachCount()
-                "Imported ${r.objects} objects: $counts"
-            }, { "Import failed: ${it.message}" })
+                context.getString(R.string.imported, r.objects, counts.toString())
+            }, { context.getString(R.string.import_failed, it.message ?: "") })
             revision++
         }
     }
 
     Column(Modifier.fillMaxSize()) {
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
-            OutlinedButton(onClick = { importer.launch(arrayOf("*/*")) }) { Text("Import…") }
+            OutlinedButton(onClick = { importer.launch(arrayOf("*/*")) }) { Text(stringResource(R.string.import_archive)) }
             OutlinedButton(enabled = player.setlistId != null, onClick = {
                 val sl = player.setlistId ?: return@OutlinedButton
                 exportIds = listOf(sl) + lib.songsOf(sl).mapNotNull { it.first?.id }
                 exporter.launch("${player.setlistName}.bagosynths.tar")
-            }) { Text("Export this setlist…") }
+            }) { Text(stringResource(R.string.export_setlist)) }
             Text(message, color = DimColor, fontSize = 13.sp)
         }
         Spacer(Modifier.height(10.dp))
-        Row(Modifier.fillMaxSize()) {
-            Column(Modifier.width(380.dp).fillMaxHeight().background(PanelColor, RoundedCornerShape(10.dp)).padding(10.dp)) {
-                Text("Setlists", fontWeight = FontWeight.SemiBold)
+        AdaptivePair(380.dp, first = { m ->
+            Column(m.background(PanelColor, RoundedCornerShape(10.dp)).padding(10.dp)) {
+                Text(stringResource(R.string.setlists), fontWeight = FontWeight.SemiBold)
                 LazyColumn(Modifier.weight(1f)) {
                     items(setlists) { e ->
                         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()
                             .clickable { player.openSetlist(e.id); onOpened() }.padding(vertical = 8.dp)) {
-                            Text(e.version.name + if (e.id == player.setlistId) "   (on stage)" else "",
+                            Text(e.version.name + if (e.id == player.setlistId) stringResource(R.string.on_stage) else "",
                                 modifier = Modifier.weight(1f))
                             Text(e.id.short.take(7), color = DimColor, fontSize = 11.sp)
                         }
@@ -103,32 +106,33 @@ fun LibraryScreen(player: SongPlayer, lib: AppLibrary, onOpened: () -> Unit) {
                 }
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     OutlinedTextField(value = newName, onValueChange = { newName = it }, singleLine = true,
-                        label = { Text("New setlist") }, modifier = Modifier.weight(1f))
+                        label = { Text(stringResource(R.string.new_setlist)) }, modifier = Modifier.weight(1f))
                     Button(enabled = newName.isNotBlank(), onClick = {
                         lib.saveSetlist(null, newName.trim(), emptyList()); newName = ""; revision++
-                    }) { Text("Create") }
+                    }) { Text(stringResource(R.string.create)) }
                 }
             }
-            Spacer(Modifier.width(12.dp))
-            Column(Modifier.weight(1f).fillMaxHeight().background(PanelColor, RoundedCornerShape(10.dp)).padding(10.dp)) {
-                Text("All songs", fontWeight = FontWeight.SemiBold)
+        }, second = { m ->
+            Column(m.background(PanelColor, RoundedCornerShape(10.dp)).padding(10.dp)) {
+                Text(stringResource(R.string.all_songs), fontWeight = FontWeight.SemiBold)
                 LazyColumn {
                     items(songs) { s ->
                         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()
                             .padding(vertical = 4.dp)) {
                             Text(s.entry.version.name, modifier = Modifier.weight(1f))
-                            Text("${lib.store.history(s.entry.latest).size} versions", color = DimColor, fontSize = 12.sp)
+                            val n = lib.store.history(s.entry.latest).size
+                            Text(androidx.compose.ui.res.pluralStringResource(R.plurals.versions, n, n), color = DimColor, fontSize = 12.sp)
                             TextButton(enabled = player.setlistId != null, onClick = {
                                 val sl = player.setlistId ?: return@TextButton
                                 val ids = lib.songsOf(sl).mapNotNull { it.first?.id } + s.entry.id
                                 lib.saveSetlist(sl, player.setlistName, ids)
                                 player.reload(); revision++
-                            }) { Text("Add to setlist") }
+                            }) { Text(stringResource(R.string.add_to_setlist)) }
                         }
                     }
                 }
             }
-        }
+        })
     }
 }
 

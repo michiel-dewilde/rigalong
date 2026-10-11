@@ -71,6 +71,8 @@ data class RackSong(
     val slots: Map<RackEngine, RackSlot>,
     val liveSets: List<RackLiveSet>,
     val tempo: Tempo? = null,
+    /** The song's lead sheet, a PDF object (S9.3). */
+    val leadSheet: Digest? = null,
 ) {
     /** The song and its live sets as library objects. Live sets are put into [store]. */
     fun toObjects(store: Store): Song {
@@ -110,10 +112,13 @@ data class RackSong(
             RefJ.of(store.putTyped(LiveSet(name = ls.name, overrides = overrides, wires = wireStates, cp88 = cp)),
                 LiveSet.TYPE)
         }
-        return Song(nodes = nodes, wires = wires, liveSets = refs, tempo = tempo)
+        return Song(nodes = nodes, wires = wires, liveSets = refs, tempo = tempo,
+            leadSheet = leadSheet?.let { RefJ.of(it, LEAD_SHEET_TYPE) })
     }
 
     companion object {
+        const val LEAD_SHEET_TYPE = "application/pdf"
+
         /** Reads a rack song back; null if [song] is not rack-shaped. */
         fun fromObjects(store: Store, song: Song): RackSong? {
             val slots = LinkedHashMap<RackEngine, RackSlot>()
@@ -142,7 +147,7 @@ data class RackSong(
                 } ?: RackCp88()
                 RackLiveSet(ls.name, parts, cp)
             }
-            return RackSong(slots, liveSets, song.tempo)
+            return RackSong(slots, liveSets, song.tempo, song.leadSheet?.toRef()?.digest)
         }
 
         /** A new song: one engine, one live set. */

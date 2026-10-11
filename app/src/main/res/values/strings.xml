@@ -1,0 +1,132 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Every string of the new UI (REQUIREMENTS S19.1): English at release, and a
+  translation is a values-xx/strings.xml with no code change. Not here yet,
+  and going with the rest of M3: the prototype screen, the engine's status
+  lines, and the player's own status messages (SongPlayer.cp88Status).
+-->
+<resources>
+    <string name="app_name">Bag-O-Synths</string>
+
+    <!-- top bar -->
+    <string name="tab_stage">Stage</string>
+    <string name="tab_songs">Songs</string>
+    <string name="tab_library">Library</string>
+    <string name="tab_setup">Setup</string>
+    <string name="tab_prototype">Prototype</string>
+    <string name="hold_to_edit">hold to edit</string>
+    <string name="no_setlist">No setlist</string>
+    <string name="panic">PANIC</string>
+
+    <!-- stage -->
+    <string name="next_song">next: %1$s</string>
+    <string name="last_song">last song</string>
+    <string name="from_keys">"   ·   last from the keys: %1$s"</string>
+    <string name="levels">Levels</string>
+    <string name="store_levels">Store levels in this live set (hold)</string>
+    <string name="engine_playing">playing</string>
+    <string name="engine_silent">silent</string>
+    <string name="organ">Organ</string>
+    <string name="leslie_stop">Stop</string>
+    <string name="leslie_slow">Slow</string>
+    <string name="leslie_fast">Fast</string>
+    <string name="percussion">Perc</string>
+
+    <string name="bpm">%1$.0f BPM</string>
+    <string name="no_tempo">no tempo</string>
+    <string name="tap">TAP</string>
+    <string name="save_tempo">save</string>
+    <string name="tempo">Tempo</string>
+    <string name="bpm_short">BPM</string>
+
+    <!-- engines -->
+    <string name="engine_sfizz">Piano</string>
+    <string name="engine_hammond">Organ</string>
+    <string name="engine_surge">Synth</string>
+    <string name="engine_dexed">FM</string>
+    <string name="engine_plaits">Texture</string>
+    <string name="engine_fluid">SF2</string>
+
+    <!-- songs -->
+    <string name="new_song">New song</string>
+    <string name="pick_song">Pick a song, or add one.</string>
+    <string name="add_song">Add a song</string>
+    <string name="setlist_named">Setlist: %1$s</string>
+    <string name="removed_song">(removed)</string>
+    <string name="song">Song</string>
+    <string name="save">Save</string>
+    <string name="engines">Engines</string>
+    <string name="as_loaded_paren">(as loaded)</string>
+    <string name="level">level</string>
+    <string name="live_sets">Live sets</string>
+    <string name="add_live_set">Add live set</string>
+    <string name="live_set_n">Live set %1$d</string>
+    <string name="copy">Copy</string>
+    <string name="copy_of">%1$s copy</string>
+    <string name="key_low">low</string>
+    <string name="key_high">high</string>
+    <string name="transpose_short">transp.</string>
+    <string name="channel_in_short">ch in</string>
+    <string name="own_level">own level</string>
+    <string name="cp88">CP-88</string>
+    <string name="cp88_leave">Leave</string>
+    <string name="cp88_select">Select</string>
+    <string name="cp88_own">Own sound</string>
+    <string name="page">page</string>
+    <string name="set">set</string>
+    <string name="unnamed">(unnamed)</string>
+    <string name="no_sound_yet">no sound yet</string>
+    <string name="import_current_sound">Import current sound</string>
+    <string name="reading_cp88">reading the CP-88…</string>
+    <string name="as_loaded">As loaded</string>
+    <string name="cancel">Cancel</string>
+    <string name="patch_of">%1$s: patch</string>
+    <string name="search">Search</string>
+
+    <string name="attach_lead_sheet">Lead sheet…</string>
+    <string name="remove_lead_sheet">Remove lead sheet</string>
+
+    <!-- library -->
+    <string name="import_archive">Import…</string>
+    <string name="export_setlist">Export this setlist…</string>
+    <string name="setlists">Setlists</string>
+    <string name="on_stage">"   (on stage)"</string>
+    <string name="new_setlist">New setlist</string>
+    <string name="create">Create</string>
+    <string name="all_songs">All songs</string>
+    <plurals name="versions">
+        <item quantity="one">%1$d version</item>
+        <item quantity="other">%1$d versions</item>
+    </plurals>
+    <string name="add_to_setlist">Add to setlist</string>
+    <string name="exported">Exported %1$d entries.</string>
+    <string name="export_failed">Export failed: %1$s</string>
+    <string name="imported">Imported %1$d objects: %2$s</string>
+    <string name="import_failed">Import failed: %1$s</string>
+
+    <!-- setup -->
+    <string name="audio_out">Audio out</string>
+    <string name="next_device">Next device</string>
+    <string name="usb_buffer">USB buffer</string>
+    <string name="ms">%1$d ms</string>
+    <string name="usb_buffer_note">the queue on the wire in the direct modes</string>
+    <string name="midi_in_out">MIDI in and out</string>
+    <string name="usb_device_note">USB device mode owns the whole device; moving one use there moves both. MIDI out (CP-88 selection, sounds) works in the direct modes.</string>
+    <string name="reserved_page">Reserved page</string>
+    <string name="reserved_page_note">songs write their own sounds here</string>
+    <string name="midi_channel">MIDI channel</string>
+    <string name="keys_note">The CP-88\'s own live set buttons select the current song\'s live sets (set n, live set n). Page turners and footswitches: Page Down / right arrow next live set, Page Up / left previous.</string>
+    <string name="open_prototype">Open the prototype screen</string>
+    <string name="status">Status</string>
+    <string name="mode">Mode</string>
+    <string name="stage">Stage</string>
+    <string name="stage_dnd">Do Not Disturb while the app is in front (alarms and media still sound)</string>
+    <string name="lead_sheets">Lead sheets</string>
+    <string name="two_up">Two pages side by side (landscape)</string>
+    <string name="half_turn">Half turns: the right page moves to the left</string>
+    <string name="keys_turn_pages">Page-turner keys turn pages when a song has a lead sheet (otherwise: live sets)</string>
+    <string name="mode_alsa">ALSA</string>
+    <string name="mode_usb_interface">USB interface</string>
+    <string name="mode_usb_device">USB device</string>
+    <string name="mode_off">Off</string>
+</resources>

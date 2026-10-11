@@ -8,6 +8,7 @@ import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import be.mdw.bagosynths.NativeBridge
+import be.mdw.bagosynths.model.Cp88
 import be.mdw.bagosynths.model.Digest
 import be.mdw.bagosynths.model.LiveSet
 import be.mdw.bagosynths.model.LiveSetSwitcher
@@ -26,6 +27,18 @@ interface EngineHost {
     fun showPrototype()
     /** One line on the state of the audio and MIDI path. */
     fun healthLine(): String
+    /** Every status figure, for the setup view (S19.3). */
+    fun statusLines(): List<String>
+    fun routing(): Routing
+    fun cycleAudioDevice()
+    fun cycleMidiDevice()
+    /** An IoMode name: ALSA, USB_INTERFACE, USB_DEVICE, NONE. */
+    fun setAudioMode(mode: String)
+    fun setMidiMode(mode: String)
+    fun setUsbBufferMs(ms: Int)
+    /** Do Not Disturb while the app is in front (S17.2); asking for access first if needed. */
+    fun stageDnd(): Boolean
+    fun setStageDnd(on: Boolean)
 }
 
 /**
@@ -50,6 +63,20 @@ class SongPlayer(private val lib: AppLibrary, private val host: EngineHost, priv
     val levels = androidx.compose.runtime.mutableStateMapOf<RackEngine, Float>()
     val playing = androidx.compose.runtime.mutableStateMapOf<RackEngine, Boolean>()
 
+    /** The CP-88 page the app may write songs into (I3.4), and its MIDI channel. */
+    var reservedPage: Int
+        get() = prefs.getInt("cp88.reservedPage", 40)
+        set(v) { prefs.edit().putInt("cp88.reservedPage", v.coerceIn(1, 40)).apply() }
+    var cp88Channel: Int
+        get() = prefs.getInt("cp88.channel", 1)
+        set(v) { prefs.edit().putInt("cp88.channel", v.coerceIn(1, 16)).apply() }
+    /** One line on the last CP-88 action, for the stage view. */
+    var cp88Status by mutableStateOf(""); private set
+
+    /** Live set index -> the reserved slot its owned sound was written to. */
+    private val ownedSlots = HashMap<Int, Int>()
+    private var lastSent: Triple<Int, Int, Long>? = null
+
     private var songs: List<Song> = emptyList()
     private var switcher: LiveSetSwitcher? = null
     private val midiOn = BooleanArray(RackEngine.entries.size) { true }
@@ -70,6 +97,7 @@ class SongPlayer(private val lib: AppLibrary, private val host: EngineHost, priv
         songs = pairs.map { it.second }
         songNames.clear()
         songNames.addAll(pairs.map { it.first?.version?.name ?: "(removed song)" })
+        songEntries = pairs.map { it.first?.id }
         prefs.edit().putString("stage.setlist", id.hex).apply()
         if (songs.isNotEmpty()) selectSong(song.coerceIn(0, songs.size - 1), liveSet)
     }
@@ -94,6 +122,16 @@ class SongPlayer(private val lib: AppLibrary, private val host: EngineHost, priv
         Log.i(TAG, "song ${index + 1} '${songNames.getOrNull(index)}': engines ${rack?.slots?.keys?.map { it.key }}, " +
                 "live sets ${liveSets.map { it.name }}")
         setUpEngines()
+        if (rack?.slots?.containsKey(RackEngine.HAMMOND) == true) refreshOrgan()
+        sheetPage = 0
+        sheetPages = 0
+        bpm = s.tempo?.bpm
+        bpmTapped = false
+        beatOrigin = System.nanoTime()
+        taps.clear()
+        sheetFile = s.leadSheet?.toRef()?.digest?.let { java.io.File(lib.store.root, "blobs/sha256/${it.hex}") }
+            ?.takeIf { it.exists() }
+        writeOwnedSounds(liveSets)
         if (liveSets.isNotEmpty()) selectLiveSet(liveSet.coerceIn(0, liveSets.size - 1))
     }
 
@@ -101,6 +139,7 @@ class SongPlayer(private val lib: AppLibrary, private val host: EngineHost, priv
         val sw = switcher ?: return
         if (index !in liveSetNames.indices) return
         val changes = sw.select(index)
+        pendingLiveSet = index
         apply(changes)
         liveSetIndex = index
         Log.i(TAG, "live set ${index + 1} '${liveSetNames[index]}': ${changes.size} changes: " +
@@ -110,6 +149,190 @@ class SongPlayer(private val lib: AppLibrary, private val host: EngineHost, priv
                     else -> c.toString()
                 } })
         prefs.edit().putInt("stage.liveSet", index).apply()
+    }
+
+    private var pendingLiveSet = -1
+
+    // ------------------------------------------------------------ the CP-88
+
+    /**
+     * A song's owned sounds go into the reserved page when the song is
+     * selected (S5.3, S4.11), one set each in live set order, so a live set
+     * switch is only a Program Change. 7 ms a sound (V3), so done here.
+     */
+    private fun writeOwnedSounds(liveSets: List<LiveSet>) {
+        ownedSlots.clear()
+        var slot = 1
+        var written = 0
+        var failed = 0
+        for ((i, ls) in liveSets.withIndex()) {
+            val a = ls.cp88 ?: continue
+            if (a.mode != "own") continue
+            val d = a.sound?.toRef()?.digest ?: continue
+            val bytes = lib.store.get(d) ?: continue
+            if (slot > 8) { cp88Status = "more than 8 owned CP-88 sounds in this song: the rest are not written"; break }
+            val ok = Cp88.retarget(bytes, reservedPage, slot).all { NativeBridge.nativeUsbMidiSend(it) > 0 }
+            if (ok) { ownedSlots[i] = slot; written++ } else failed++
+            slot++
+        }
+        if (written + failed > 0) {
+            cp88Status = if (failed == 0) "CP-88: $written sound(s) written to page $reservedPage"
+            else "CP-88: could not write $failed sound(s) -- is it in a direct USB mode?"
+            Log.i(TAG, cp88Status)
+        }
+    }
+
+    private fun selectCp88(page: Int, set: Int) {
+        val r = NativeBridge.nativeUsbMidiSend(Cp88.selectMessages(page, set, cp88Channel))
+        lastSent = Triple(page, set, System.currentTimeMillis())
+        cp88Status = if (r > 0) "CP-88 -> $page:$set" else "CP-88 not reachable (MIDI out needs a direct USB mode)"
+    }
+
+    /**
+     * Reads the CP-88's current sound -- unsaved edits and panel state
+     * included (V2) -- into the library. Blocking, about 0,2 s: call off the
+     * UI thread. Returns the sound and its name, or throws with the reason.
+     */
+    fun importCurrentCp88Sound(): Pair<Digest, String> {
+        while (NativeBridge.nativeUsbSysexDrain() != null) { /* stale replies */ }
+        val r = NativeBridge.nativeUsbMidiSend(Cp88.dumpRequest())
+        check(r > 0) { "MIDI out failed ($r): the CP-88 must be in a direct USB mode" }
+        val got = ArrayList<ByteArray>()
+        val end = System.currentTimeMillis() + 2000
+        while (got.size < 19 && System.currentTimeMillis() < end) {
+            val m = NativeBridge.nativeUsbSysexDrain()
+            if (m == null) Thread.sleep(5) else if (Cp88.parse(m) != null) got += m
+        }
+        check(got.size == 19) { "the CP-88 answered with ${got.size} of 19 messages" }
+        val sound = Cp88.normalize(got)
+        return lib.store.put(sound) to Cp88.name(sound)
+    }
+
+    // ------------------------------------------------------------------ tempo
+
+    /** The song's tempo (S12.1); a tapped one holds for the session (I12.3). */
+    var bpm by mutableStateOf<Double?>(null); private set
+    /** When beat one of the visual beat fell, System.nanoTime(). */
+    var beatOrigin by mutableStateOf(0L); private set
+    var bpmTapped by mutableStateOf(false); private set
+    private val taps = ArrayDeque<Long>()
+    private var songEntries: List<Digest?> = emptyList()
+
+    /** One tap; four or more taps less than 2 s apart set the tempo. */
+    fun tap() {
+        val now = System.nanoTime()
+        if (taps.isNotEmpty() && now - taps.last() > 2_000_000_000L) taps.clear()
+        taps.addLast(now)
+        while (taps.size > 6) taps.removeFirst()
+        if (taps.size >= 4) {
+            val span = (taps.last() - taps.first()) / (taps.size - 1).toDouble()
+            bpm = Math.round(60e9 / span * 10) / 10.0
+            bpmTapped = true
+        }
+        beatOrigin = now
+    }
+
+    /**
+     * The levels as they sound now become the current live set's own levels
+     * (I6.9), saved as a new version of the song.
+     */
+    fun storeLevels() {
+        val id = songEntries.getOrNull(songIndex) ?: return
+        val r = rack ?: return
+        val i = liveSetIndex.takeIf { it in r.liveSets.indices } ?: return
+        val ls = r.liveSets[i]
+        val parts = ls.parts.toMutableMap()
+        for (e in r.slots.keys) {
+            val v = levels[e] ?: continue
+            parts[e] = (parts[e] ?: be.mdw.bagosynths.model.RackPart(plays = false)).copy(level = v.toDouble())
+        }
+        val name = songNames.getOrNull(songIndex) ?: return
+        lib.saveSong(id, name, r.copy(liveSets = r.liveSets.toMutableList().also { it[i] = ls.copy(parts = parts) }))
+        reload()
+        Log.i(TAG, "stored the levels into live set ${i + 1}")
+    }
+
+    /** Writes a tapped tempo into the song (I12.3): a new version of its entry. */
+    fun saveTempo() {
+        val id = songEntries.getOrNull(songIndex) ?: return
+        val r = rack ?: return
+        val b = bpm ?: return
+        val name = songNames.getOrNull(songIndex) ?: return
+        lib.saveSong(id, name, r.copy(tempo = be.mdw.bagosynths.model.Tempo(bpm = b)))
+        bpmTapped = false
+        reload()
+    }
+
+    // ------------------------------------------------------------ lead sheet
+
+    /** The current song's lead sheet as a file in the store, or null (S9.1). */
+    var sheetFile by mutableStateOf<java.io.File?>(null); private set
+    var sheetPage by mutableIntStateOf(0); private set
+    var sheetPages by mutableIntStateOf(0)
+    /** Settings of the environment (S9.2): 2-up, half turns, and what the page turner turns. */
+    var sheetTwoUp by mutableStateOf(prefs.getBoolean("sheet.twoUp", true))
+    var sheetHalfTurn by mutableStateOf(prefs.getBoolean("sheet.halfTurn", true))
+    var keysTurnPages by mutableStateOf(prefs.getBoolean("sheet.keysTurnPages", true))
+
+    /** A PDF into the library; returns its object. */
+    fun storePdf(bytes: ByteArray): Digest {
+        require(bytes.size > 4 && String(bytes, 0, 4, Charsets.US_ASCII) == "%PDF") { "not a PDF" }
+        return lib.store.put(bytes)
+    }
+
+    fun saveSheetSettings() {
+        prefs.edit().putBoolean("sheet.twoUp", sheetTwoUp).putBoolean("sheet.halfTurn", sheetHalfTurn)
+            .putBoolean("sheet.keysTurnPages", keysTurnPages).apply()
+    }
+
+    /** In 2-up a half turn moves one page, so the right page becomes the left (I9.3). */
+    private fun turnStep() = if (sheetTwoUp && !sheetHalfTurn) 2 else 1
+
+    fun pageForward() {
+        val last = (sheetPages - (if (sheetTwoUp) 2 else 1)).coerceAtLeast(0)
+        sheetPage = (sheetPage + turnStep()).coerceAtMost(last)
+    }
+
+    fun pageBack() { sheetPage = (sheetPage - turnStep()).coerceAtLeast(0) }
+
+    /** A page-turner key: pages when the song has a lead sheet and the setup says so, live sets otherwise. */
+    fun forwardKey() = if (keysTurnPages && sheetFile != null) pageForward() else nextLiveSet()
+    fun backKey() = if (keysTurnPages && sheetFile != null) pageBack() else previousLiveSet()
+
+    /** Whether the stage view is what is showing: page-turner keys act only there. */
+    @Volatile var onStage = true
+
+    /**
+     * TEST (PROVISIONAL.md): the CP-88 path end to end, without the screen.
+     * Imports the current sound, builds a song whose live set 1 owns it and
+     * whose live set 2 selects 1:1, opens it on the stage (which writes the
+     * sound into the reserved page) and selects live set [liveSet]. Logs what
+     * it did under bos-stage; tools/cp88sysex reads the CP-88 back.
+     */
+    fun cp88SelfTest(liveSet: Int) {
+        Thread {
+            runCatching {
+                val (sound, name) = importCurrentCp88Sound()
+                Log.i(TAG, "selftest: imported '$name' ${sound.short}")
+                val draft = RackSong(
+                    slots = mapOf(RackEngine.SFIZZ to be.mdw.bagosynths.model.RackSlot(level = 0.0)),
+                    liveSets = listOf(
+                        be.mdw.bagosynths.model.RackLiveSet("Own", cp88 = be.mdw.bagosynths.model.RackCp88("own", sound = sound, soundName = name)),
+                        be.mdw.bagosynths.model.RackLiveSet("Select 1:1", cp88 = be.mdw.bagosynths.model.RackCp88("select", 1, 1)),
+                    ))
+                val song = draft.toObjects(lib.store)
+                val liveSets = song.liveSets.map { lib.store.getTyped<LiveSet>(it.toRef().digest) }
+                android.os.Handler(android.os.Looper.getMainLooper()).post {
+                    this.song = song
+                    rack = draft
+                    switcher = LiveSetSwitcher(song, liveSets)
+                    liveSetNames.clear(); liveSetNames.addAll(liveSets.map { it.name })
+                    writeOwnedSounds(liveSets)
+                    selectLiveSet(liveSet - 1)
+                    Log.i(TAG, "selftest: live set $liveSet selected; $cp88Status")
+                }
+            }.onFailure { Log.e(TAG, "selftest failed: $it") }
+        }.start()
     }
 
     /** What the last external selection was, for the stage view. */
@@ -128,6 +351,10 @@ class SongPlayer(private val lib: AppLibrary, private val host: EngineHost, priv
             val lsb = (v shr 8) and 0x7F
             val pc = v and 0x7F
             if (msb == 63) {
+                // Our own selection coming back is not the player choosing.
+                val sent = lastSent
+                if (sent != null && sent.first == lsb + 1 && sent.second == pc + 1 &&
+                    System.currentTimeMillis() - sent.third < 2000) continue
                 lastSelection = "CP-88 ${lsb + 1}:${pc + 1}"
                 if (pc in liveSetNames.indices) selectLiveSet(pc)
             } else {
@@ -138,6 +365,18 @@ class SongPlayer(private val lib: AppLibrary, private val host: EngineHost, priv
 
     fun nextLiveSet() { if (liveSetIndex + 1 < liveSetNames.size) selectLiveSet(liveSetIndex + 1) }
     fun previousLiveSet() { if (liveSetIndex > 0) selectLiveSet(liveSetIndex - 1) }
+
+    /** The organ's stage controls (HammondNode.h `Param`): drawbars 0-8, Leslie 37, percussion 27. */
+    val organ = androidx.compose.runtime.mutableStateMapOf<Int, Float>()
+
+    fun refreshOrgan() {
+        for (i in ORGAN_STAGE_PARAMS) organ[i] = runCatching { NativeBridge.nativeGetOrganParam(i) }.getOrDefault(0f)
+    }
+
+    fun setOrgan(index: Int, v: Float) {
+        NativeBridge.nativeSetOrganParam(index, v)
+        organ[index] = v
+    }
 
     /** A stage fader moved. */
     fun setLevel(e: RackEngine, v: Float) {
@@ -226,7 +465,11 @@ class SongPlayer(private val lib: AppLibrary, private val host: EngineHost, priv
                     "audio" -> setWire(e, audio = c.on, g = c.gain.toFloat())
                 }
             }
-            is Change.Enable, is Change.Send, is Change.Cp88 -> Unit   // not in the rack slice yet
+            is Change.Cp88 -> when (c.action.mode) {
+                "select" -> selectCp88(c.action.page ?: 1, c.action.set ?: 1)
+                "own" -> ownedSlots[pendingLiveSet]?.let { selectCp88(reservedPage, it) }
+            }
+            is Change.Enable, is Change.Send -> Unit   // not in the rack slice yet
         }
         for (e in RackEngine.entries) if (rack?.slots?.containsKey(e) == true) playing[e] = midiOn[e.rackIndex]
     }
@@ -265,6 +508,9 @@ class SongPlayer(private val lib: AppLibrary, private val host: EngineHost, priv
 
     companion object {
         private const val TAG = "bos-stage"
+        const val ORGAN_LESLIE = 37
+        const val ORGAN_PERC = 27
+        val ORGAN_STAGE_PARAMS = (0..8).toList() + listOf(ORGAN_PERC, ORGAN_LESLIE)
 
         /** engine/include/bagosynths/MidiZone.h, `Param`, in order. */
         val ZONE_PARAMS = listOf(

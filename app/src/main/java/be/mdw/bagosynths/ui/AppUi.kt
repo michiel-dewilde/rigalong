@@ -2,7 +2,10 @@ package be.mdw.bagosynths.ui
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -16,6 +19,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
@@ -53,7 +57,10 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import be.mdw.bagosynths.NativeBridge
+import androidx.compose.ui.res.stringResource
+import be.mdw.bagosynths.R
 import be.mdw.bagosynths.model.Digest
+import be.mdw.bagosynths.model.RackCp88
 import be.mdw.bagosynths.model.RackEngine
 import be.mdw.bagosynths.model.RackLiveSet
 import be.mdw.bagosynths.model.RackPart
@@ -79,7 +86,9 @@ private val Dim = Color(0xFF8A919C)
 @Composable
 fun BagoTheme(content: @Composable () -> Unit) {
     MaterialTheme(colorScheme = darkColorScheme(
-        primary = Accent, background = Bg, surface = Panel, onSurface = Color(0xFFE6E9EF),
+        // Dark text on the green, everywhere Material puts text or a thumb on it.
+        primary = Accent, onPrimary = Color(0xFF0B0D10), primaryContainer = Accent,
+        onPrimaryContainer = Color(0xFF0B0D10), background = Bg, surface = Panel, onSurface = Color(0xFFE6E9EF),
         onBackground = Color(0xFFE6E9EF), secondary = Warn, error = Danger,
     )) { Surface(color = Bg, modifier = Modifier.fillMaxSize()) { content() } }
 }
@@ -94,6 +103,7 @@ fun AppUi(player: SongPlayer, lib: AppLibrary, host: EngineHost) {
             delay(500)
         }
     }
+    LaunchedEffect(screen) { player.onStage = screen == 0 }
     LaunchedEffect(Unit) {
         while (true) {
             player.pollSelections()
@@ -101,13 +111,16 @@ fun AppUi(player: SongPlayer, lib: AppLibrary, host: EngineHost) {
         }
     }
     BagoTheme {
-        Column(Modifier.fillMaxSize().padding(12.dp)) {
+        // Edge to edge is the rule at target SDK 36: keep clear of the status
+        // and navigation bars, and of a display cutout, ourselves.
+        Column(Modifier.fillMaxSize().safeDrawingPadding().padding(12.dp)) {
             TopBar(player, health, screen, onScreen = { screen = it }, onPrototype = host::showPrototype)
             Spacer(Modifier.height(8.dp))
             when (screen) {
                 0 -> StageScreen(player)
                 1 -> SongsScreen(player, lib, host)
-                else -> LibraryScreen(player, lib, onOpened = { screen = 0 })
+                2 -> LibraryScreen(player, lib, onOpened = { screen = 0 })
+                else -> SetupScreen(player, host)
             }
         }
     }
@@ -117,44 +130,86 @@ fun AppUi(player: SongPlayer, lib: AppLibrary, host: EngineHost) {
 private fun TopBar(player: SongPlayer, health: String, screen: Int, onScreen: (Int) -> Unit, onPrototype: () -> Unit) {
     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp),
         modifier = Modifier.fillMaxWidth()) {
-        Tab("Stage", screen == 0) { onScreen(0) }
-        Tab("Songs", screen == 1) { onScreen(1) }
-        Tab("Library", screen == 2) { onScreen(2) }
+        // EDIT LOCK (S17.3): from the stage, the editors open only on a long
+        // press, so a stray tap mid-song never leaves the stage.
+        val locked = screen == 0
+        Tab(stringResource(R.string.tab_stage), screen == 0) { onScreen(0) }
+        Tab(stringResource(R.string.tab_songs), screen == 1, locked) { onScreen(1) }
+        Tab(stringResource(R.string.tab_library), screen == 2, locked) { onScreen(2) }
+        Tab(stringResource(R.string.tab_setup), screen == 3, locked) { onScreen(3) }
+        if (locked) Text(stringResource(R.string.hold_to_edit), color = Dim, fontSize = 11.sp)
         Spacer(Modifier.width(8.dp))
         Column(Modifier.weight(1f)) {
-            Text(player.setlistName.ifEmpty { "No setlist" }, color = Dim, fontSize = 14.sp, maxLines = 1)
+            Text(player.setlistName.ifEmpty { stringResource(R.string.no_setlist) }, color = Dim, fontSize = 14.sp, maxLines = 1)
             Text(health, color = if (health.startsWith("!")) Warn else Dim, fontSize = 12.sp, maxLines = 1,
                 overflow = TextOverflow.Ellipsis)
         }
-        TextButton(onClick = onPrototype) { Text("Prototype", color = Dim) }
+        Tab(stringResource(R.string.tab_prototype), false, locked) { onPrototype() }
         Button(onClick = player::panic, colors = ButtonDefaults.buttonColors(containerColor = Danger),
-            modifier = Modifier.height(48.dp)) { Text("PANIC", fontWeight = FontWeight.Bold) }
+            modifier = Modifier.height(48.dp)) { Text(stringResource(R.string.panic), fontWeight = FontWeight.Bold, color = Color.White) }
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun Tab(label: String, selected: Boolean, onClick: () -> Unit) {
+private fun Tab(label: String, selected: Boolean, longPressOnly: Boolean = false, onClick: () -> Unit) {
+    val press = if (longPressOnly) Modifier.combinedClickable(onClick = {}, onLongClick = onClick)
+    else Modifier.clickable(onClick = onClick)
     Box(Modifier.background(if (selected) Accent.copy(alpha = 0.25f) else Panel, RoundedCornerShape(8.dp))
-        .clickable(onClick = onClick).padding(horizontal = 18.dp, vertical = 12.dp)) {
+        .then(press).padding(horizontal = 18.dp, vertical = 12.dp)) {
         Text(label, color = if (selected) Accent else Color.White, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
     }
 }
 
 // ------------------------------------------------------------------ stage
 
-@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun StageScreen(player: SongPlayer) {
-    Column(Modifier.fillMaxSize()) {
+    // With a lead sheet the screen is split between it and the controls (S9.1, S15.3).
+    val sheet = player.sheetFile
+    if (sheet == null) {
+        StageControls(player, Modifier.fillMaxSize())
+        return
+    }
+    BoxWithConstraints(Modifier.fillMaxSize()) {
+        val portrait = maxHeight > maxWidth
+        val sheetView = @Composable { m: Modifier ->
+            LeadSheetView(sheet, player.sheetPage, player.sheetTwoUp && !portrait, { player.sheetPages = it }, m)
+        }
+        if (portrait) {
+            // Portrait: the sheet above, the controls below (S15.4).
+            Column(Modifier.fillMaxSize()) {
+                sheetView(Modifier.fillMaxWidth().weight(0.6f))
+                Spacer(Modifier.height(8.dp))
+                StageControls(player, Modifier.fillMaxWidth().weight(0.4f))
+            }
+        } else {
+            Row(Modifier.fillMaxSize()) {
+                sheetView(Modifier.fillMaxHeight().weight(0.6f))
+                Spacer(Modifier.width(10.dp))
+                StageControls(player, Modifier.fillMaxHeight().weight(0.4f))
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun StageControls(player: SongPlayer, modifier: Modifier) {
+    Column(modifier) {
         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
             BigButton("◀", enabled = player.songIndex > 0, width = 88) { player.previousSong() }
             Column(Modifier.weight(1f).padding(horizontal = 12.dp)) {
                 Text(player.songNames.getOrNull(player.songIndex) ?: "—", fontSize = 30.sp,
                     fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 val next = player.songNames.getOrNull(player.songIndex + 1)
-                val sel = player.lastSelection.let { if (it.isEmpty()) "" else "   ·   last from the keys: $it" }
-                Text((if (next != null) "next: $next" else "last song") + sel, color = Dim, fontSize = 15.sp, maxLines = 1)
+                val sel = (if (player.lastSelection.isEmpty()) "" else stringResource(R.string.from_keys, player.lastSelection)) +
+                    player.cp88Status.let { if (it.isEmpty()) "" else "   ·   $it" }
+                Text((if (next != null) stringResource(R.string.next_song, next) else stringResource(R.string.last_song)) + sel,
+                    color = Dim, fontSize = 15.sp, maxLines = 1)
             }
+            TempoBox(player)
+            Spacer(Modifier.width(10.dp))
             BigButton("▶", enabled = player.songIndex + 1 < player.songNames.size, width = 88) { player.nextSong() }
         }
         Spacer(Modifier.height(12.dp))
@@ -173,20 +228,67 @@ private fun StageScreen(player: SongPlayer) {
             }
         }
         Spacer(Modifier.height(16.dp))
-        Text("Levels", color = Dim, fontSize = 14.sp)
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(stringResource(R.string.levels), color = Dim, fontSize = 14.sp, modifier = Modifier.weight(1f))
+            Tab(stringResource(R.string.store_levels), false, longPressOnly = true) { player.storeLevels() }
+        }
         val engines = player.rack?.slots?.keys?.sorted().orEmpty()
-        Row(horizontalArrangement = Arrangement.spacedBy(16.dp), modifier = Modifier.fillMaxWidth().weight(1f)) {
+        // Scrolls sideways when the panels do not fit (a phone, portrait: S18.4, S20.2).
+        Row(horizontalArrangement = Arrangement.spacedBy(16.dp),
+            modifier = Modifier.fillMaxWidth().weight(1f).horizontalScroll(rememberScrollState())) {
+            if (RackEngine.HAMMOND in engines) OrganPanel(player)
             for (e in engines) {
                 val plays = player.playing[e] ?: false
                 Column(Modifier.width(140.dp).fillMaxHeight().background(Panel, RoundedCornerShape(10.dp)).padding(10.dp),
                     horizontalAlignment = Alignment.CenterHorizontally) {
-                    Text(e.label, fontWeight = FontWeight.SemiBold, color = if (plays) Accent else Dim)
-                    Text(if (plays) "playing" else "silent", fontSize = 12.sp, color = Dim)
+                    Text(engineLabel(e), fontWeight = FontWeight.SemiBold, color = if (plays) Accent else Dim)
+                    Text(stringResource(if (plays) R.string.engine_playing else R.string.engine_silent), fontSize = 12.sp, color = Dim)
                     Spacer(Modifier.height(8.dp))
                     val level = player.levels[e] ?: 0f
                     Text("%.0f %%".format(level * 100), fontSize = 18.sp)
                     // Moves only by dragging, never by a touch (S17.4).
                     RelativeFader(level, { player.setLevel(e, it) }, Modifier.weight(1f).fillMaxWidth())
+                }
+            }
+        }
+    }
+}
+
+private val DRAWBAR_LABELS = listOf("16'", "5⅓'", "8'", "4'", "2⅔'", "2'", "1⅗'", "1⅓'", "1'")
+private val DRAWBAR_COLOURS = listOf(Color(0xFF8B4A2B), Color(0xFF8B4A2B), Color(0xFFE6E2D6), Color(0xFFE6E2D6),
+    Color(0xFF2B2B2B), Color(0xFFE6E2D6), Color(0xFF2B2B2B), Color(0xFF2B2B2B), Color(0xFFE6E2D6))
+
+/** The organ's upper drawbars, Leslie and percussion, on the stage (S6.1's example). */
+@Composable
+private fun OrganPanel(player: SongPlayer) {
+    Column(Modifier.fillMaxHeight().background(Panel, RoundedCornerShape(10.dp)).padding(10.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text(stringResource(R.string.organ), fontWeight = FontWeight.SemiBold)
+            val leslie = player.organ[SongPlayer.ORGAN_LESLIE] ?: 1f
+            for ((v, label) in listOf(0f to stringResource(R.string.leslie_stop), 1f to stringResource(R.string.leslie_slow),
+                    2f to stringResource(R.string.leslie_fast))) {
+                Box(Modifier.background(if (leslie == v) Accent else Bg, RoundedCornerShape(8.dp))
+                    .clickable { player.setOrgan(SongPlayer.ORGAN_LESLIE, v) }.padding(horizontal = 14.dp, vertical = 8.dp)) {
+                    Text(label, color = if (leslie == v) Color.Black else Color.White)
+                }
+            }
+            val perc = (player.organ[SongPlayer.ORGAN_PERC] ?: 0f) > 0.5f
+            Box(Modifier.background(if (perc) Accent else Bg, RoundedCornerShape(8.dp))
+                .clickable { player.setOrgan(SongPlayer.ORGAN_PERC, if (perc) 0f else 1f) }
+                .padding(horizontal = 14.dp, vertical = 8.dp)) {
+                Text(stringResource(R.string.percussion), color = if (perc) Color.Black else Color.White)
+            }
+        }
+        Spacer(Modifier.height(8.dp))
+        Row(Modifier.weight(1f), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            for (i in 0..8) {
+                val v = (player.organ[i] ?: 0f) / 8f
+                Column(Modifier.width(44.dp).fillMaxHeight(), horizontalAlignment = Alignment.CenterHorizontally) {
+                    Text(DRAWBAR_LABELS[i], fontSize = 11.sp, color = Dim)
+                    // Whole steps, as on the instrument: 0..8.
+                    RelativeFader(v, { player.setOrgan(i, Math.round(it * 8f).toFloat()) },
+                        Modifier.weight(1f).fillMaxWidth(), color = DRAWBAR_COLOURS[i])
+                    Text(((player.organ[i] ?: 0f).toInt()).toString(), fontSize = 13.sp)
                 }
             }
         }
@@ -212,6 +314,7 @@ private fun SongsScreen(player: SongPlayer, lib: AppLibrary, host: EngineHost) {
     var selected by remember { mutableStateOf<Digest?>(null) }
     var editing by remember { mutableStateOf<Pair<Digest?, RackSong>?>(null) }
     var editName by remember { mutableStateOf("") }
+    val newSongName = stringResource(R.string.new_song)
 
     BoxWithConstraints(Modifier.fillMaxSize()) {
         val wide = maxWidth > 900.dp
@@ -226,7 +329,7 @@ private fun SongsScreen(player: SongPlayer, lib: AppLibrary, host: EngineHost) {
                 },
                 onNew = {
                     editing = null to RackSong.starter(preset = host.currentInstrument())
-                    editName = "New song"
+                    editName = newSongName
                     selected = null
                 },
                 onChanged = { revision++; player.reload() })
@@ -234,9 +337,9 @@ private fun SongsScreen(player: SongPlayer, lib: AppLibrary, host: EngineHost) {
         val editor = @Composable {
             val ed = editing
             if (ed == null) {
-                Text("Pick a song, or add one.", color = Dim, modifier = Modifier.padding(24.dp))
+                Text(stringResource(R.string.pick_song), color = Dim, modifier = Modifier.padding(24.dp))
             } else {
-                SongEditor(ed.second, editName, host, onName = { editName = it },
+                SongEditor(ed.second, editName, host, player, onName = { editName = it },
                     onChange = { editing = ed.first to it },
                     onSave = {
                         val id = lib.saveSong(ed.first, editName, ed.second)
@@ -273,7 +376,7 @@ private fun SetlistPanel(lib: AppLibrary, setlistId: Digest?, revision: Int, sel
     val songs = remember(setlistId, revision) { setlistId?.let { lib.songsOf(it) }.orEmpty() }
     val name = remember(setlistId, revision) { setlistId?.let { lib.store.entry(it)?.version?.name }.orEmpty() }
     Column(Modifier.fillMaxSize().background(Panel, RoundedCornerShape(10.dp)).padding(10.dp)) {
-        Text("Setlist: $name", fontWeight = FontWeight.SemiBold)
+        Text(stringResource(R.string.setlist_named, name), fontWeight = FontWeight.SemiBold)
         Spacer(Modifier.height(6.dp))
         LazyColumn(Modifier.weight(1f)) {
             itemsIndexed(songs) { i, (entry, _) ->
@@ -281,7 +384,7 @@ private fun SetlistPanel(lib: AppLibrary, setlistId: Digest?, revision: Int, sel
                 Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()
                     .background(if (id != null && id == selected) Accent.copy(alpha = 0.2f) else Color.Transparent)
                     .clickable(enabled = id != null) { id?.let(onSelect) }.padding(vertical = 6.dp)) {
-                    Text("${i + 1}. ${entry?.version?.name ?: "(removed)"}", modifier = Modifier.weight(1f))
+                    Text("${i + 1}. ${entry?.version?.name ?: stringResource(R.string.removed_song)}", modifier = Modifier.weight(1f))
                     if (setlistId != null) {
                         TextButton(onClick = { move(lib, setlistId, songs.mapNotNull { it.first?.id }, i, -1); onChanged() },
                             enabled = i > 0) { Text("▲") }
@@ -295,7 +398,7 @@ private fun SetlistPanel(lib: AppLibrary, setlistId: Digest?, revision: Int, sel
                 }
             }
         }
-        Button(onClick = onNew, modifier = Modifier.fillMaxWidth()) { Text("Add a song") }
+        Button(onClick = onNew, modifier = Modifier.fillMaxWidth()) { Text(stringResource(R.string.add_song)) }
     }
 }
 
@@ -308,19 +411,32 @@ private fun move(lib: AppLibrary, setlistId: Digest, ids: List<Digest>, i: Int, 
 }
 
 @Composable
-private fun SongEditor(song: RackSong, name: String, host: EngineHost, onName: (String) -> Unit,
+private fun SongEditor(song: RackSong, name: String, host: EngineHost, player: SongPlayer, onName: (String) -> Unit,
                        onChange: (RackSong) -> Unit, onSave: () -> Unit) {
     var picker by remember { mutableStateOf<RackEngine?>(null) }
     Column(Modifier.fillMaxSize().background(Panel, RoundedCornerShape(10.dp)).padding(12.dp)
         .verticalScroll(rememberScrollState())) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            OutlinedTextField(value = name, onValueChange = onName, label = { Text("Song") },
+            OutlinedTextField(value = name, onValueChange = onName, label = { Text(stringResource(R.string.song)) },
                 singleLine = true, modifier = Modifier.weight(1f))
             Spacer(Modifier.width(12.dp))
-            Button(onClick = onSave, modifier = Modifier.height(56.dp)) { Text("Save") }
+            LeadSheetButton(song, player, onChange)
+            Spacer(Modifier.width(12.dp))
+            Button(onClick = onSave, modifier = Modifier.height(56.dp)) { Text(stringResource(R.string.save)) }
+        }
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            androidx.compose.material3.Checkbox(checked = song.tempo != null, onCheckedChange = { on ->
+                onChange(song.copy(tempo = if (on) be.mdw.bagosynths.model.Tempo(bpm = 120.0) else null))
+            })
+            Text(stringResource(R.string.tempo))
+            song.tempo?.let { t ->
+                NumberField(stringResource(R.string.bpm_short), t.bpm.toInt(), 20..300) {
+                    onChange(song.copy(tempo = t.copy(bpm = it.toDouble())))
+                }
+            }
         }
         Spacer(Modifier.height(12.dp))
-        Text("Engines", fontWeight = FontWeight.SemiBold)
+        Text(stringResource(R.string.engines), fontWeight = FontWeight.SemiBold)
         for (e in RackEngine.entries) {
             val slot = song.slots[e]
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -333,13 +449,13 @@ private fun SongEditor(song: RackSong, name: String, host: EngineHost, onName: (
                         ls.copy(parts = parts)
                     }))
                 })
-                Text(e.label, modifier = Modifier.width(80.dp))
+                Text(engineLabel(e), modifier = Modifier.width(80.dp))
                 if (slot != null) {
                     OutlinedButton(onClick = { picker = e }, modifier = Modifier.weight(1f)) {
-                        Text(slot.preset ?: "(as loaded)", maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Text(slot.preset ?: stringResource(R.string.as_loaded_paren), maxLines = 1, overflow = TextOverflow.Ellipsis)
                     }
                     Spacer(Modifier.width(8.dp))
-                    Text("level", color = Dim)
+                    Text(stringResource(R.string.level), color = Dim)
                     Slider(value = slot.level.toFloat(), onValueChange = { v ->
                         onChange(song.copy(slots = song.slots + (e to slot.copy(level = v.toDouble()))))
                     }, modifier = Modifier.width(180.dp))
@@ -348,14 +464,15 @@ private fun SongEditor(song: RackSong, name: String, host: EngineHost, onName: (
         }
         Spacer(Modifier.height(12.dp))
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Text("Live sets", fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
+            Text(stringResource(R.string.live_sets), fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
+            val nextName = stringResource(R.string.live_set_n, song.liveSets.size + 1)
             OutlinedButton(onClick = {
                 val parts = song.slots.keys.associateWith { RackPart() }
-                onChange(song.copy(liveSets = song.liveSets + RackLiveSet("Live set ${song.liveSets.size + 1}", parts)))
-            }) { Text("Add live set") }
+                onChange(song.copy(liveSets = song.liveSets + RackLiveSet(nextName, parts)))
+            }) { Text(stringResource(R.string.add_live_set)) }
         }
         song.liveSets.forEachIndexed { i, ls ->
-            LiveSetCard(song, i, ls, onChange)
+            LiveSetCard(song, i, ls, player, onChange)
         }
     }
     picker?.let { e ->
@@ -368,16 +485,19 @@ private fun SongEditor(song: RackSong, name: String, host: EngineHost, onName: (
 }
 
 @Composable
-private fun LiveSetCard(song: RackSong, i: Int, ls: RackLiveSet, onChange: (RackSong) -> Unit) {
+private fun LiveSetCard(song: RackSong, i: Int, ls: RackLiveSet, player: SongPlayer, onChange: (RackSong) -> Unit) {
     fun put(n: RackLiveSet) = onChange(song.copy(liveSets = song.liveSets.toMutableList().also { it[i] = n }))
+    var importing by remember { mutableStateOf("") }
+    val copyName = stringResource(R.string.copy_of, ls.name)
+    val reading = stringResource(R.string.reading_cp88)
     Column(Modifier.fillMaxWidth().padding(vertical = 6.dp).border(1.dp, Color(0xFF2A2E36), RoundedCornerShape(8.dp))
         .padding(8.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             OutlinedTextField(value = ls.name, onValueChange = { put(ls.copy(name = it)) }, singleLine = true,
-                label = { Text("Live set ${i + 1}") }, modifier = Modifier.weight(1f))
+                label = { Text(stringResource(R.string.live_set_n, i + 1)) }, modifier = Modifier.weight(1f))
             TextButton(onClick = {
-                onChange(song.copy(liveSets = song.liveSets.toMutableList().also { it.add(i + 1, ls.copy(name = ls.name + " copy")) }))
-            }) { Text("Copy") }
+                onChange(song.copy(liveSets = song.liveSets.toMutableList().also { it.add(i + 1, ls.copy(name = copyName)) }))
+            }) { Text(stringResource(R.string.copy)) }
             TextButton(enabled = i > 0, onClick = {
                 onChange(song.copy(liveSets = song.liveSets.toMutableList().also { it[i] = it[i - 1].also { _ -> it[i - 1] = ls } }))
             }) { Text("▲") }
@@ -388,25 +508,108 @@ private fun LiveSetCard(song: RackSong, i: Int, ls: RackLiveSet, onChange: (Rack
         for (e in song.slots.keys.sorted()) {
             val p = ls.parts[e] ?: RackPart(plays = false)
             fun putPart(np: RackPart) = put(ls.copy(parts = ls.parts + (e to np)))
-            Row(verticalAlignment = Alignment.CenterVertically) {
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.horizontalScroll(rememberScrollState())) {
                 Checkbox(checked = p.plays, onCheckedChange = { putPart(p.copy(plays = it)) })
-                Text(e.label, modifier = Modifier.width(80.dp))
-                NumberField("low", p.keyLow, 0..127, noteName = true) { putPart(p.copy(keyLow = it)) }
-                NumberField("high", p.keyHigh, 0..127, noteName = true) { putPart(p.copy(keyHigh = it)) }
-                NumberField("transp.", p.transpose, -48..48) { putPart(p.copy(transpose = it)) }
-                NumberField("ch in", p.channelIn, 0..16) { putPart(p.copy(channelIn = it)) }
+                Text(engineLabel(e), modifier = Modifier.width(80.dp))
+                NumberField(stringResource(R.string.key_low), p.keyLow, 0..127, noteName = true) { putPart(p.copy(keyLow = it)) }
+                NumberField(stringResource(R.string.key_high), p.keyHigh, 0..127, noteName = true) { putPart(p.copy(keyHigh = it)) }
+                NumberField(stringResource(R.string.transpose_short), p.transpose, -48..48) { putPart(p.copy(transpose = it)) }
+                NumberField(stringResource(R.string.channel_in_short), p.channelIn, 0..16) { putPart(p.copy(channelIn = it)) }
                 Checkbox(checked = p.level != null, onCheckedChange = { on ->
                     putPart(p.copy(level = if (on) song.slots[e]?.level ?: 0.8 else null))
                 })
-                Text("own level", color = Dim, fontSize = 12.sp)
+                Text(stringResource(R.string.own_level), color = Dim, fontSize = 12.sp)
                 p.level?.let { lv ->
                     Slider(value = lv.toFloat(), onValueChange = { putPart(p.copy(level = it.toDouble())) },
                         modifier = Modifier.width(140.dp))
                 }
             }
         }
+        // The CP-88 (I4.7): leave it, select one of its sounds, or own one.
+        val cp = ls.cp88
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(stringResource(R.string.cp88), modifier = Modifier.width(80.dp).padding(start = 12.dp))
+            for ((mode, label) in listOf("leave" to stringResource(R.string.cp88_leave), "select" to stringResource(R.string.cp88_select),
+                    "own" to stringResource(R.string.cp88_own))) {
+                TextButton(onClick = { put(ls.copy(cp88 = cp.copy(mode = mode))) }) {
+                    Text(label, color = if (cp.mode == mode) Accent else Dim)
+                }
+            }
+            when (cp.mode) {
+                "select" -> {
+                    NumberField(stringResource(R.string.page), cp.page, 1..40) { put(ls.copy(cp88 = cp.copy(page = it))) }
+                    NumberField(stringResource(R.string.set), cp.set, 1..8) { put(ls.copy(cp88 = cp.copy(set = it))) }
+                }
+                "own" -> {
+                    Text(cp.soundName?.ifEmpty { stringResource(R.string.unnamed) } ?: stringResource(R.string.no_sound_yet),
+                        modifier = Modifier.padding(horizontal = 8.dp))
+                    OutlinedButton(onClick = {
+                        importing = reading
+                        Thread {
+                            val r = runCatching { player.importCurrentCp88Sound() }
+                            android.os.Handler(android.os.Looper.getMainLooper()).post {
+                                r.onSuccess { (d, n) ->
+                                    put(ls.copy(cp88 = cp.copy(mode = "own", sound = d, soundName = n))); importing = ""
+                                }.onFailure { importing = it.message ?: "failed" }
+                            }
+                        }.start()
+                    }) { Text(stringResource(R.string.import_current_sound)) }
+                    Text(importing, color = Warn, fontSize = 12.sp, modifier = Modifier.padding(start = 8.dp))
+                }
+            }
+        }
     }
 }
+
+/** The song's tempo, a visual beat (I12.2), tap tempo and saving a tapped one (S12.3, I12.3). */
+@Composable
+private fun TempoBox(player: SongPlayer) {
+    var now by remember { mutableStateOf(System.nanoTime()) }
+    LaunchedEffect(Unit) { while (true) { now = System.nanoTime(); delay(16) } }
+    val bpm = player.bpm
+    val beatNs = bpm?.let { (60e9 / it).toLong() }
+    val phase = if (beatNs != null && beatNs > 0) ((now - player.beatOrigin).mod(beatNs)).toDouble() / beatNs else 1.0
+    val lit = phase < 0.15
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Box(Modifier.size(22.dp).background(if (lit) Accent else Panel, RoundedCornerShape(11.dp)))
+        Spacer(Modifier.width(8.dp))
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            Text(bpm?.let { stringResource(R.string.bpm, it) } ?: stringResource(R.string.no_tempo), fontSize = 18.sp)
+            if (player.bpmTapped) TextButton(onClick = player::saveTempo) { Text(stringResource(R.string.save_tempo)) }
+        }
+        Spacer(Modifier.width(8.dp))
+        BigButton(stringResource(R.string.tap), enabled = true, width = 88) { player.tap() }
+    }
+}
+
+/** Attach or remove the song's lead sheet: a PDF from the file picker, into the library (S9.3). */
+@Composable
+private fun LeadSheetButton(song: RackSong, player: SongPlayer, onChange: (RackSong) -> Unit) {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val picker = androidx.activity.compose.rememberLauncherForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) runCatching {
+            val bytes = context.contentResolver.openInputStream(uri)!!.use { it.readBytes() }
+            onChange(song.copy(leadSheet = player.storePdf(bytes)))
+        }
+    }
+    if (song.leadSheet == null) {
+        OutlinedButton(onClick = { picker.launch(arrayOf("application/pdf")) }) { Text(stringResource(R.string.attach_lead_sheet)) }
+    } else {
+        OutlinedButton(onClick = { onChange(song.copy(leadSheet = null)) }) { Text(stringResource(R.string.remove_lead_sheet)) }
+    }
+}
+
+/** An engine's name for people, from resources (the model's labels are for logs). */
+@Composable
+private fun engineLabel(e: RackEngine): String = stringResource(when (e) {
+    RackEngine.SFIZZ -> R.string.engine_sfizz
+    RackEngine.HAMMOND -> R.string.engine_hammond
+    RackEngine.SURGE -> R.string.engine_surge
+    RackEngine.DEXED -> R.string.engine_dexed
+    RackEngine.PLAITS -> R.string.engine_plaits
+    RackEngine.FLUID -> R.string.engine_fluid
+})
 
 private val NOTE_NAMES = listOf("C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B")
 private fun noteLabel(n: Int) = NOTE_NAMES[n % 12] + (n / 12 - 1)
@@ -428,13 +631,13 @@ private fun PresetPicker(e: RackEngine, host: EngineHost, onPick: (String?, Int?
     val choices = remember(e) { presetChoices(e, host) }
     var filter by remember { mutableStateOf("") }
     AlertDialog(onDismissRequest = onDismiss, confirmButton = {
-        TextButton(onClick = { onPick(null, null) }) { Text("As loaded") }
-    }, dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
-        title = { Text("${e.label}: patch") },
+        TextButton(onClick = { onPick(null, null) }) { Text(stringResource(R.string.as_loaded)) }
+    }, dismissButton = { TextButton(onClick = onDismiss) { Text(stringResource(R.string.cancel)) } },
+        title = { Text(stringResource(R.string.patch_of, engineLabel(e))) },
         text = {
             Column(Modifier.height(420.dp)) {
                 OutlinedTextField(value = filter, onValueChange = { filter = it }, singleLine = true,
-                    label = { Text("Search") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Text))
+                    label = { Text(stringResource(R.string.search)) }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Text))
                 val shown = choices.filter { filter.isEmpty() || it.second.contains(filter, true) }.take(300)
                 LazyColumn {
                     itemsIndexed(shown) { _, (value, label) ->

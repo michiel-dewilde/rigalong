@@ -66,6 +66,15 @@ class RackTest {
     }
 
     @Test
+    fun theLeadSheetTravelsWithTheSong() {
+        val pdf = store.put("%PDF-1.4 test".toByteArray())
+        val song = draft.copy(leadSheet = pdf).toObjects(store)
+        assertEquals(pdf, RackSong.fromObjects(store, song)!!.leadSheet)
+        val c = store.closure(listOf(Ref(store.putTyped(song))))
+        assertEquals("application/pdf", c.types[pdf])
+    }
+
+    @Test
     fun theSameDraftIsTheSameSong() {
         assertEquals(store.putTyped(draft.toObjects(store)), store.putTyped(draft.toObjects(store)))
     }

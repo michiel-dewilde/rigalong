@@ -40,9 +40,16 @@
       uncached but lets the SoC sleep.
     -->
     <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <!--
+      ACCESS_NOTIFICATION_POLICY, for Do Not Disturb on stage (REQUIREMENTS
+      S17.2): only ever used while the app is in front and the player has
+      switched it on, and the previous setting is put back on the way out.
+      The user grants it once in the system's settings.
+    -->
+    <uses-permission android:name="android.permission.ACCESS_NOTIFICATION_POLICY" />
 
     <application
-        android:label="Bag-O-Synths"
+        android:label="@string/app_name"
         android:icon="@mipmap/ic_launcher"
         android:roundIcon="@mipmap/ic_launcher_round"
         android:allowBackup="false"

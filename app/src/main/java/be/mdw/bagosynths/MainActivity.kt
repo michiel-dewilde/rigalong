@@ -234,6 +234,7 @@ class MainActivity : androidx.activity.ComponentActivity() {
         filter.addAction("be.mdw.bagosynths.SYSEX")
         filter.addAction("be.mdw.bagosynths.USBSTALL")
         filter.addAction("be.mdw.bagosynths.STAGE")
+        filter.addAction("be.mdw.bagosynths.CP88SELFTEST")
         if (Build.VERSION.SDK_INT >= 33) {
             registerReceiver(debugReceiver, filter, Context.RECEIVER_EXPORTED)
         } else {
@@ -301,6 +302,7 @@ class MainActivity : androidx.activity.ComponentActivity() {
 
     override fun onResume() {
         super.onResume()
+        applyStageDnd(true)
 
         // Before anything else, and while this activity is genuinely in front:
         // starting a foreground service from the background is refused on
@@ -463,6 +465,7 @@ class MainActivity : androidx.activity.ComponentActivity() {
 
     override fun onPause() {
         super.onPause()
+        applyStageDnd(false)
         // Save on the way out, every time. A patch you have to remember to save is
         // a patch you lose, and capturing the graph is a few dozen plain reads.
         savePatch(named = false)
@@ -1875,6 +1878,9 @@ class MainActivity : androidx.activity.ComponentActivity() {
                     if (song > 0) player.selectSong(song - 1)
                     if (ls > 0) player.selectLiveSet(ls - 1)
                 }
+                // TEST: the CP-88 path end to end (SongPlayer.cp88SelfTest):
+                //   adb shell am broadcast -a be.mdw.bagosynths.CP88SELFTEST --ei liveset 1
+                "be.mdw.bagosynths.CP88SELFTEST" -> player.cp88SelfTest(intent.getIntExtra("liveset", 1))
                 "be.mdw.bagosynths.SYSEX" -> sysexExchange(
                     intent.getStringExtra("hex").orEmpty(),
                     intent.getIntExtra("gap", 20),
@@ -2491,6 +2497,52 @@ class MainActivity : androidx.activity.ComponentActivity() {
     private lateinit var appLibrary: be.mdw.bagosynths.ui.AppLibrary
     private lateinit var player: be.mdw.bagosynths.ui.SongPlayer
 
+    /**
+     * Page turners and footswitches arrive as keys (I9.2). On the new UI's
+     * stage: Page Down / right / down arrow / space the next live set, Page Up /
+     * left / up arrow the previous one. Configurable in the environment once
+     * that view exists (S9.2).
+     */
+    override fun dispatchKeyEvent(event: android.view.KeyEvent): Boolean {
+        if (::composeView.isInitialized && composeView.visibility == View.VISIBLE && player.onStage &&
+            event.action == android.view.KeyEvent.ACTION_DOWN) {
+            when (event.keyCode) {
+                android.view.KeyEvent.KEYCODE_PAGE_DOWN, android.view.KeyEvent.KEYCODE_DPAD_RIGHT,
+                android.view.KeyEvent.KEYCODE_DPAD_DOWN, android.view.KeyEvent.KEYCODE_SPACE -> {
+                    player.forwardKey(); return true
+                }
+                android.view.KeyEvent.KEYCODE_PAGE_UP, android.view.KeyEvent.KEYCODE_DPAD_LEFT,
+                android.view.KeyEvent.KEYCODE_DPAD_UP -> {
+                    player.backKey(); return true
+                }
+            }
+        }
+        return super.dispatchKeyEvent(event)
+    }
+
+    // --------------------------------------------------- Do Not Disturb (S17.2)
+
+    private var dndBefore: Int? = null
+
+    private fun notificationManager() = getSystemService(Context.NOTIFICATION_SERVICE) as android.app.NotificationManager
+
+    /**
+     * While the app is in front and the player asked for it: notifications and
+     * calls silenced, alarms and media not (INTERRUPTION_FILTER_ALARMS). The
+     * previous filter is put back when the app leaves the front.
+     */
+    private fun applyStageDnd(front: Boolean) {
+        val nm = notificationManager()
+        if (!nm.isNotificationPolicyAccessGranted) return
+        if (front && prefs().getBoolean("stage.dnd", false)) {
+            if (dndBefore == null) dndBefore = nm.currentInterruptionFilter
+            nm.setInterruptionFilter(android.app.NotificationManager.INTERRUPTION_FILTER_ALARMS)
+        } else {
+            dndBefore?.let { nm.setInterruptionFilter(it) }
+            dndBefore = null
+        }
+    }
+
     private fun showNewUi(on: Boolean) {
         val was = composeView.visibility == View.VISIBLE
         composeView.visibility = if (on) View.VISIBLE else View.GONE
@@ -2515,6 +2567,34 @@ class MainActivity : androidx.activity.ComponentActivity() {
                 .joinToString("   ") { it.trim().replace(Regex("\\s+"), " ") }
             val bad = lines.any { it.contains("WRONG") || it.contains("failed") || it.contains("STALLED") }
             return (if (bad) "! " else "") + pick
+        }
+        override fun statusLines() = statusView.text.toString().lines()
+        override fun routing(): be.mdw.bagosynths.ui.Routing {
+            val (a, m) = effectiveModes(resolveAudio(), resolveMidi())
+            return be.mdw.bagosynths.ui.Routing(
+                audioDevice = shortName(chosenOutputName), audioMode = a.name,
+                midiDevice = shortName(chosenMidiName), midiMode = m.name,
+                usbBufferMs = usbBufferMs, usbBufferChoices = UsbBuffers.choicesMs.toList())
+        }
+        override fun stageDnd() = prefs().getBoolean("stage.dnd", false) &&
+                notificationManager().isNotificationPolicyAccessGranted
+        override fun setStageDnd(on: Boolean) {
+            if (on && !notificationManager().isNotificationPolicyAccessGranted) {
+                startActivity(android.content.Intent(android.provider.Settings.ACTION_NOTIFICATION_POLICY_ACCESS_SETTINGS))
+                return
+            }
+            prefs().edit().putBoolean("stage.dnd", on).apply()
+            applyStageDnd(on)
+        }
+        override fun cycleAudioDevice() = cycleOutput()
+        override fun cycleMidiDevice() = cycleMidi()
+        override fun setAudioMode(mode: String) = setMode(Use.AUDIO, IoMode.parse(mode))
+        override fun setMidiMode(mode: String) = setMode(Use.MIDI, IoMode.parse(mode))
+        override fun setUsbBufferMs(ms: Int) {
+            if (ms !in UsbBuffers.choicesMs || ms == usbBufferMs) return
+            usbBufferMs = ms
+            saveModePrefs()
+            if (effectiveMode(Use.AUDIO).direct) applyRouting("buffer change")
         }
     }
 
