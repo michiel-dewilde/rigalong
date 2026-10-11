@@ -18,6 +18,8 @@ package be.mdw.bagosynths.model
  * so a parameter key is `e.Level` or `e.zone.keyLow`. The engines meet in
  * node `mix`, the reverb, whose parameters ("Room size", "Damping", "Width",
  * "Mix") the song may set; those it leaves out keep the reverb's defaults.
+ * A song may put an effect on the whole mix: node `mix.fx`, kind `fx.<type>`,
+ * between `mix` and `out`.
  */
 enum class RackEngine(val key: String, val nodeType: String, val label: String) {
     SFIZZ("sfizz", "sfizz", "Piano"),
@@ -98,6 +100,8 @@ data class RackSong(
     val leadSheet: Digest? = null,
     /** The reverb the engines meet in, by parameter name; empty = its defaults. */
     val reverb: Map<String, Double> = emptyMap(),
+    /** An effect on the whole mix, after the reverb, or null. */
+    val masterFx: RackFx? = null,
 ) {
     /** The song and its live sets as library objects. Live sets are put into [store]. */
     fun toObjects(store: Store): Song {
@@ -106,7 +110,14 @@ data class RackSong(
         nodes["in"] = Node(kind = "port.midiIn", port = "Keys")
         nodes["mix"] = Node(kind = "reverb", params = reverb)
         nodes["out"] = Node(kind = "port.audioOut", port = "Main Out")
-        wires["mix.out"] = Wire("mix:out", "out:in")
+        val master = masterFx?.takeIf { it.type != "off" }
+        if (master == null) {
+            wires["mix.out"] = Wire("mix:out", "out:in")
+        } else {
+            nodes["mix.fx"] = Node(kind = "fx.${master.type}", params = master.params)
+            wires["mix.fx.in"] = Wire("mix:out", "mix.fx:in")
+            wires["mix.out"] = Wire("mix.fx:out", "out:in")
+        }
         for ((e, slot) in slots.toSortedMap()) {
             val patch = store.putTyped(Patch(engine = e.key, preset = slot.preset, program = slot.program,
                 params = slot.params))
@@ -184,7 +195,8 @@ data class RackSong(
                 RackLiveSet(ls.name, parts, cp)
             }
             return RackSong(slots, liveSets, song.tempo, song.leadSheet?.toRef()?.digest,
-                song.nodes["mix"]?.params ?: emptyMap())
+                song.nodes["mix"]?.params ?: emptyMap(),
+                song.nodes["mix.fx"]?.let { RackFx(it.kind.removePrefix("fx."), it.params) })
         }
 
         /** A new song: one engine, one live set. */

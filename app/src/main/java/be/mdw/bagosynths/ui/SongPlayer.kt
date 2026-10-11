@@ -655,7 +655,7 @@ class SongPlayer(private val lib: Library, private val host: EngineHost, private
      */
     fun previewSlot(e: RackEngine, slot: be.mdw.bagosynths.model.RackSlot) {
         loadPreset(e, slot.preset, slot.program)
-        applyFx(e, slot.fx)
+        applyFx(e.ordinal, slot.fx)
         for ((name, v) in slot.params) setNodeParam(e, name, v.toFloat())
     }
 
@@ -688,17 +688,20 @@ class SongPlayer(private val lib: Library, private val host: EngineHost, private
 
     // ---------------------------------------------------------- insert effects
 
-    /** Engine [e]'s insert effect node: the rack adds one per engine, in rack order. */
-    private val fxNodes = HashMap<RackEngine, Int>()
-    private fun fxIndex(e: RackEngine): Int? = fxNodes[e] ?: (0 until NativeBridge.nativeNodeCount())
-        .filter { NativeBridge.nativeNodeType(it) == "Fx" }.getOrNull(e.ordinal)?.also { fxNodes[e] = it }
+    /**
+     * Effect slot [slot]'s node: the rack adds one per engine, in rack order,
+     * then [MASTER_FX] on the whole mix.
+     */
+    private val fxNodes = HashMap<Int, Int>()
+    private fun fxIndex(slot: Int): Int? = fxNodes[slot] ?: (0 until NativeBridge.nativeNodeCount())
+        .filter { NativeBridge.nativeNodeType(it) == "Fx" }.getOrNull(slot)?.also { fxNodes[slot] = it }
 
     private fun fxParamIndex(node: Int, name: String): Int? = (0 until NativeBridge.nativeNodeParamCount(node))
         .firstOrNull { NativeBridge.nativeNodeParamName(node, it) == name }
 
-    /** Puts [fx] on engine [e]: its type, then its sync switches, then its values (which snap to note values when synced). */
-    fun applyFx(e: RackEngine, fx: be.mdw.bagosynths.model.RackFx?) {
-        val node = fxIndex(e) ?: return
+    /** Puts [fx] in effect slot [slot]: its type, then its sync switches, then its values (which snap to note values when synced). */
+    fun applyFx(slot: Int, fx: be.mdw.bagosynths.model.RackFx?) {
+        val node = fxIndex(slot) ?: return
         val type = be.mdw.bagosynths.model.RackFx.TYPES.indexOf(fx?.type ?: "off").coerceAtLeast(0)
         NativeBridge.nativeSetNodeParam(node, 0, type.toFloat())
         val params = fx?.params.orEmpty()
@@ -707,9 +710,9 @@ class SongPlayer(private val lib: Library, private val host: EngineHost, private
         }
     }
 
-    /** The effect's parameters as they are on engine [e] now (the type excluded). */
-    fun fxParams(e: RackEngine): List<ParamDesc> {
-        val node = fxIndex(e) ?: return emptyList()
+    /** The effect's parameters as they are in slot [slot] now (the type excluded). */
+    fun fxParams(slot: Int): List<ParamDesc> {
+        val node = fxIndex(slot) ?: return emptyList()
         return (1 until NativeBridge.nativeNodeParamCount(node)).mapNotNull { p ->
             val name = NativeBridge.nativeNodeParamName(node, p)
             if (name.isEmpty()) return@mapNotNull null
@@ -718,14 +721,14 @@ class SongPlayer(private val lib: Library, private val host: EngineHost, private
         }
     }
 
-    fun auditionFx(e: RackEngine, name: String, v: Float) {
-        val node = fxIndex(e) ?: return
+    fun auditionFx(slot: Int, name: String, v: Float) {
+        val node = fxIndex(slot) ?: return
         fxParamIndex(node, name)?.let { NativeBridge.nativeSetNodeParam(node, it, v) }
     }
 
     /** [v] of the effect's parameter [name] as the player reads it, or null. */
-    fun fxDisplay(e: RackEngine, name: String, v: Float): String? {
-        val node = fxIndex(e) ?: return null
+    fun fxDisplay(slot: Int, name: String, v: Float): String? {
+        val node = fxIndex(slot) ?: return null
         return fxParamIndex(node, name)?.let { NativeBridge.nativeNodeParamDisplay(node, it, v) }
     }
 
@@ -765,9 +768,10 @@ class SongPlayer(private val lib: Library, private val host: EngineHost, private
         // Every song sets the whole reverb, so one song's room never stays
         // with the next.
         previewReverb(r?.reverb.orEmpty())
+        applyFx(MASTER_FX, r?.masterFx)
         for (e in RackEngine.entries) {
             val slot = r?.slots?.get(e)
-            applyFx(e, slot?.fx)
+            applyFx(e.ordinal, slot?.fx)
             if (slot == null) {
                 // Not in this song: no new notes, and level 0 lets the engine park.
                 setWire(e, midi = false)
@@ -870,6 +874,8 @@ class SongPlayer(private val lib: Library, private val host: EngineHost, private
         private const val TAG = "bos-stage"
         /** What a switching controller can be taught (I10.4, I12.3). */
         val CONTROLLER_ACTIONS = listOf("next", "previous", "tap", "click")
+        /** The effect slot on the whole mix; 0-5 are the engines'. */
+        const val MASTER_FX = 6
         /** ReverbNode's own defaults (graph/Nodes.h), for a song that sets none. */
         val REVERB_DEFAULTS = mapOf("Room size" to 0.72, "Damping" to 0.35, "Width" to 1.0, "Mix" to 0.25)
         const val ORGAN_LESLIE = 37

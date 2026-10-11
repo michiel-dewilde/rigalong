@@ -1817,7 +1817,12 @@ bool AudioEngine::rebuildGraph(std::string* error) {
             mGraph.connect(engines[i], 0, idFx, 0);
             mRackAudio[i] = mGraph.connectSwitchable(idFx, 0, idReverb, 0);
         }
-        mGraph.connect(idReverb, 0, idOut, 0);
+        // And one on the whole mix, after the room: a song's hall or delay over
+        // everything. The seventh Fx node, so the UI finds it by order.
+        auto masterFx = std::make_unique<bagosynths::FxNode>();
+        const bagosynths::NodeId idMasterFx = mGraph.addNode(std::move(masterFx));
+        mGraph.connect(idReverb, 0, idMasterFx, 0);
+        mGraph.connect(idMasterFx, 0, idOut, 0);
 
         mGraph.setMidiEntry(idMidi);
         mGraph.setAudioExit(idOut);

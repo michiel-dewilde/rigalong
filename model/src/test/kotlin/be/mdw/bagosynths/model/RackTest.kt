@@ -100,6 +100,15 @@ class RackTest {
     }
 
     @Test
+    fun aMasterEffectSitsBetweenTheMixAndTheOutput() {
+        val hall = RackFx("reverb", mapOf("Mix" to 0.25))
+        val song = draft.copy(masterFx = hall).toObjects(store)
+        assertEquals("mix.fx:out", song.wires["mix.out"]?.from)
+        assertEquals(hall, RackSong.fromObjects(store, song)?.masterFx)
+        assertEquals("mix:out", draft.toObjects(store).wires["mix.out"]?.from)
+    }
+
+    @Test
     fun theSameDraftIsTheSameSong() {
         assertEquals(store.putTyped(draft.toObjects(store)), store.putTyped(draft.toObjects(store)))
     }

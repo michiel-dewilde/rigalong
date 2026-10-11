@@ -468,6 +468,7 @@ private fun SongEditor(song: RackSong, name: String, host: EngineHost, player: S
     var patchEditor by remember { mutableStateOf<RackEngine?>(null) }
     var reverbEditor by remember { mutableStateOf(false) }
     var fxEditor by remember { mutableStateOf<RackEngine?>(null) }
+    var masterFxEditor by remember { mutableStateOf(false) }
     Column(Modifier.fillMaxSize().background(Panel, RoundedCornerShape(10.dp)).padding(12.dp)
         .verticalScroll(rememberScrollState())) {
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -478,6 +479,11 @@ private fun SongEditor(song: RackSong, name: String, host: EngineHost, player: S
             Spacer(Modifier.width(12.dp))
             OutlinedButton(onClick = { reverbEditor = true }) {
                 Text(stringResource(R.string.reverb_button), color = if (song.reverb.isEmpty()) Color.White else Accent)
+            }
+            Spacer(Modifier.width(12.dp))
+            OutlinedButton(onClick = { masterFxEditor = true }) {
+                Text(song.masterFx?.let { stringResource(R.string.master_fx_is, stringResource(fxLabel(it.type))) }
+                    ?: stringResource(R.string.master_fx_button), color = if (song.masterFx == null) Color.White else Accent)
             }
             Spacer(Modifier.width(12.dp))
             Button(onClick = onSave, modifier = Modifier.height(56.dp)) { Text(stringResource(R.string.save)) }
@@ -547,10 +553,14 @@ private fun SongEditor(song: RackSong, name: String, host: EngineHost, player: S
     }
     fxEditor?.let { e ->
         song.slots[e]?.let { slot ->
-            FxEditor(e, slot, player, onChange = { f ->
+            FxEditor(stringResource(R.string.fx_of, engineLabel(e)), e.ordinal, slot.fx, player, onChange = { f ->
                 onChange(song.copy(slots = song.slots + (e to (song.slots[e] ?: slot).copy(fx = f))))
             }, onDismiss = { fxEditor = null })
         }
+    }
+    if (masterFxEditor) {
+        FxEditor(stringResource(R.string.master_fx_title), SongPlayer.MASTER_FX, song.masterFx, player,
+            onChange = { onChange(song.copy(masterFx = it)) }, onDismiss = { masterFxEditor = false })
     }
     if (reverbEditor) {
         ReverbEditor(song, player, onChange = { onChange(song.copy(reverb = it)) },
@@ -773,9 +783,9 @@ private fun ParamRow(p: SongPlayer.ParamDesc, v: Float, set: Boolean, display: (
 /** An engine's insert effect (M6): which one, and its parameters, heard as they move. */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun FxEditor(e: RackEngine, slot: RackSlot, player: SongPlayer,
+private fun FxEditor(title: String, e: Int, current: be.mdw.bagosynths.model.RackFx?, player: SongPlayer,
                      onChange: (be.mdw.bagosynths.model.RackFx?) -> Unit, onDismiss: () -> Unit) {
-    var fx by remember(e) { mutableStateOf(slot.fx ?: be.mdw.bagosynths.model.RackFx("off")) }
+    var fx by remember(e) { mutableStateOf(current ?: be.mdw.bagosynths.model.RackFx("off")) }
     val params = remember(e, fx.type) { player.applyFx(e, fx); player.fxParams(e) }
     fun put(f: be.mdw.bagosynths.model.RackFx) { fx = f; onChange(f.takeIf { it.type != "off" }) }
     AlertDialog(onDismissRequest = onDismiss, modifier = WideDialog, properties = WideDialogProperties,
@@ -785,7 +795,7 @@ private fun FxEditor(e: RackEngine, slot: RackSlot, player: SongPlayer,
                 Text(stringResource(R.string.clear))
             }
         },
-        title = { Text(stringResource(R.string.fx_of, engineLabel(e))) },
+        title = { Text(title) },
         text = {
             Column {
                 androidx.compose.foundation.layout.FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {

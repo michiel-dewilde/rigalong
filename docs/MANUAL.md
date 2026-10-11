@@ -86,6 +86,8 @@ song being edited:
 * **Reverb…**: the room all of the song's sounds meet in (size, damping,
   width, mix), heard at once while you move it. A song that sets nothing gets
   the default room.
+* **Master FX…**: one more effect on the whole mix, after the room, such as
+  a Hall or a delay over everything.
 * **Live sets**: for each live set and each engine:
   * whether it **plays**;
   * a **key range**, from low to high, which makes a split;
