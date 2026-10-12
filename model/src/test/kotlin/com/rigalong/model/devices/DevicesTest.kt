@@ -46,11 +46,28 @@ class DevicesTest {
         val reply = Cp88.split(Cp88.SILENT)
         assertNull(s.collect(reply.take(18)), "an incomplete reply is no sound yet")
         assertContentEquals(Cp88.SILENT, s.collect(listOf(byteArrayOf(0xF0.toByte(), 0x7E, 0xF7.toByte())) + reply))
-        // The CP-88's own dumps after slot writes (0B 10 00) ahead of a reply are not part of it.
-        val stray = Cp88.build(intArrayOf(0x0B, 0x10, 0x00), ByteArray(8))
+        // Receipts for earlier writes (0B 10 00) ahead of a reply are not part of it.
+        val stray = receipt("0f2307")
         assertContentEquals(Cp88.SILENT, s.collect(listOf(stray, stray) + reply))
         // A slot's reply (page 36) comes back in the stored form.
         assertContentEquals(Cp88.SILENT, s.collect(listOf(stray) + Cp88.retarget(Cp88.SILENT, 36, 1)))
+    }
+
+    /** As the CP-88 sent it, after page 36 set 8 was written: F0 43 00 7F 1C 00 0A 08 0B 10 00 00 0F 23 07 00 00 24 F7. */
+    private fun receipt(footer: String) = Cp88.build(intArrayOf(0x0B, 0x10, 0x00),
+        ("00" + footer + "0000").chunked(2).map { it.toInt(16).toByte() }.toByteArray())
+
+    @Test
+    fun theCp88SaysWhichSlotItStored() {
+        val s = assertNotNull(Cp88Driver.sounds)
+        assertEquals("f043007f1c000a080b1000000f2307000024f7", hex(receipt("0f2307")))
+        assertEquals(36 to 8, s.stored(receipt("0f2307")))
+        assertEquals(1 to 1, s.stored(receipt("0f0000")))
+        assertEquals(40 to 8, s.stored(receipt("0f2707")))
+        assertNull(s.stored(receipt("0f7f00")), "the current buffer is no slot")
+        assertNull(s.stored(receipt("0e2307")), "only a footer is stored")
+        assertNull(s.stored(Cp88.split(Cp88.SILENT).last()), "a footer itself is no receipt")
+        assertNull(MidiDeviceDriver.sounds?.stored(receipt("0f2307")))
     }
 
     @Test

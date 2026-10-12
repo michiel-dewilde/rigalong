@@ -56,6 +56,7 @@ object Cp88Driver : DeviceDriver {
         override val neutral get() = Cp88X9.INIT_SOUND
         override fun dumpRequest(area: Int?, slot: Int) = Cp88.dumpRequest(area, slot)
         override fun collect(messages: List<ByteArray>) = Cp88.collect(messages)
+        override fun stored(message: ByteArray) = Cp88.stored(message)
         override val formats = listOf(X9Format, YamlFormat, JsonFormat)
     }
 

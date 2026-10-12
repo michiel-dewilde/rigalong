@@ -349,12 +349,12 @@ private fun StageControls(player: SongPlayer, host: EngineHost, modifier: Modifi
     }
 }
 
-/** What [StagePanels] needs to put every panel in one row (dp). */
+/** What [StagePanels] needs to put every panel in one row (dp), the drawbars squeezed. */
 private fun stagePanelsMinWidth(player: SongPlayer, s: Float): Float {
     val sounds = player.rack?.instances.orEmpty()
     val organ = sounds.any { it.engine == RackEngine.SETBFREE }
     val count = sounds.size + (if (organ) 1 else 0) + 1
-    return sounds.size * LEVEL_MIN * s + (if (organ) organWidth(DRAWBAR_MIN_DP, s) else 0f) + MASTER_MIN * s +
+    return sounds.size * LEVEL_MIN * s + (if (organ) organSqueezed(s) else 0f) + MASTER_MIN * s +
         16f * s * (count - 1)
 }
 
@@ -363,6 +363,9 @@ private const val MASTER_MIN = 90f
 
 /** setBfree's panel with drawbars [bar] wide (and 8, scaled, apart). */
 private fun organWidth(bar: Float, s: Float) = 9 * bar + 8 * 8f * s + 2 * 10f * s
+
+/** setBfree's panel with its drawbars [DRAWBAR_SQUEEZE_DP] apart, gaps and all. */
+private fun organSqueezed(s: Float) = 9 * DRAWBAR_SQUEEZE_DP + 2 * 10f * s
 
 /**
  * One panel below the live sets, with the widths it may take (dp): [minW] is
@@ -398,8 +401,10 @@ private fun StagePanels(player: SongPlayer, host: EngineHost, s: Float, modifier
                 fontSize = (16f * s).sp, maxLines = 1, overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.combinedClickable(onClick = {}, onLongClick = { player.requestEdit(instance = inst.id) }))
             val level = player.levels[inst.id] ?: 0f
-            Text(stringResource(if (plays) R.string.engine_playing else R.string.engine_silent) +
-                "  ·  " + "%.0f %%".format(level * 100), fontSize = (13f * s).sp, color = Dim, maxLines = 1)
+            // The level first: a narrow panel cuts off the word, which the name's colour says too.
+            Text("%.0f %%".format(level * 100) + "  ·  " +
+                stringResource(if (plays) R.string.engine_playing else R.string.engine_silent),
+                fontSize = (13f * s).sp, color = Dim, maxLines = 1, overflow = TextOverflow.Clip)
             Spacer(Modifier.height((6f * s).dp))
             // Moves only by dragging, never by a touch (S17.4).
             Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
@@ -409,10 +414,10 @@ private fun StagePanels(player: SongPlayer, host: EngineHost, s: Float, modifier
         }
     }
     if (sounds.any { it.engine == RackEngine.SETBFREE }) {
-        // Nine drawbars, each a fingertip wide and 72 (scaled) at most; on a phone held
-        // upright, down to [DRAWBAR_SQUEEZE_DP] apart rather than scrolling.
+        // Nine drawbars, each a fingertip wide and 72 (scaled) at most; on a phone,
+        // down to [DRAWBAR_SQUEEZE_DP] apart rather than scrolling or taking a row more.
         panels += StagePanel(organWidth(DRAWBAR_MIN_DP, s), organWidth(maxOf(DRAWBAR_MIN_DP, 72f * s), s),
-            9 * DRAWBAR_SQUEEZE_DP + 2 * pad) { m ->
+            organSqueezed(s)) { m ->
             SetBfreePanel(player, s, m)
         }
     }
@@ -421,12 +426,17 @@ private fun StagePanels(player: SongPlayer, host: EngineHost, s: Float, modifier
 
     BoxWithConstraints(modifier) {
         val w = maxWidth.value
-        // First fit, in order: each panel in the first row that still has room at least widths.
-        val rows = ArrayList<MutableList<StagePanel>>()
-        for (p in panels) {
-            val row = rows.firstOrNull { r -> r.sumOf { it.minW.toDouble() } + gap * r.size + p.minW <= w }
-            if (row != null) row += p else rows += mutableListOf(p)
+        // First fit, in order: each panel in the first row that still has room at its least width --
+        // or at what it may give way to, where that saves a row (setBfree beside the levels, a phone on its side).
+        fun pack(least: (StagePanel) -> Float): List<MutableList<StagePanel>> {
+            val rows = ArrayList<MutableList<StagePanel>>()
+            for (p in panels) {
+                val row = rows.firstOrNull { r -> r.sumOf { least(it).toDouble() } + gap * r.size + least(p) <= w }
+                if (row != null) row += p else rows += mutableListOf(p)
+            }
+            return rows
         }
+        val rows = pack { it.minW }.let { loose -> pack { it.squeezeW }.takeIf { it.size < loose.size } ?: loose }
         // A panel never taller than its fader's comfortable stroke and the text above it.
         val maxRowH = FADER_MAX.value + 70f * s + 2 * pad + 40f * s
         val rowH = ((maxHeight.value - gap * (rows.size - 1)) / rows.size).coerceAtMost(maxRowH)
@@ -489,9 +499,10 @@ private val FADER_MAX = 400.dp
 private const val DRAWBAR_MIN_DP = 48f
 
 /**
- * ...except alone in a row too narrow for nine of those (a phone held upright):
- * then 36 apart (5.7 mm), the whole column touchable. Measured on sw411 against
- * the alternatives: two rows of drawbars halve the stroke (to about 60 dp), and
+ * ...except where nine of those take a scrolling row (a phone held upright) or
+ * a row more (beside the levels, a phone on its side): then down to 36 apart
+ * (5.7 mm), the whole column touchable. Measured on sw411 upright against the
+ * alternatives: two rows of drawbars halve the stroke (to about 60 dp), and
  * every fader on its side leaves twelve lanes of about 38 dp; one squeezed row
  * keeps 41 dp apart and the full stroke.
  */

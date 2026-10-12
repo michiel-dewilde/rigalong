@@ -26,6 +26,7 @@ object Cp88 {
     private const val HEADER = 0x0E
     private const val FOOTER = 0x0F
     private val COMMON = intArrayOf(0x46, 0x00, 0x00)
+    private val RECEIPT = intArrayOf(0x0B, 0x10, 0x00)
 
     data class Dump(val address: IntArray, val data: ByteArray)
 
@@ -126,8 +127,7 @@ object Cp88 {
     /**
      * One sound out of what came in, or null while it is incomplete: from the
      * latest header to its footer, every dump that is not one of a sound's 17
-     * blocks left out. After slots are written the CP-88 sends dumps of its
-     * own at 0B 10 00 (LOG.md 2026-10-12), which arrive ahead of a reply.
+     * blocks left out -- such as a receipt ([stored]) for an earlier write.
      */
     fun collect(messages: List<ByteArray>): ByteArray? {
         val dumps = messages.filter { m -> parse(m)?.address?.let { it[0] == HEADER || it[0] == FOOTER || isBlock(it) } == true }
@@ -142,6 +142,25 @@ object Cp88 {
         val b = Cp88X9Tables.BLOCKS
         // The current buffer's soundmondo block is at 00 7F 00 too; a slot's at 00 pp 0n.
         return (0 until b.size / 4).any { i -> a[0] == b[4 * i] && (i == 0 || (a[1] == b[4 * i + 1] && a[2] == b[4 * i + 2])) }
+    }
+
+    /**
+     * The slot (page, set; 1-based) that a receipt says was stored, or null
+     * if [message] is none. A header and the footer for the same slot make the
+     * CP-88 store it and answer with a dump at 0B 10 00: 00, the footer's
+     * address, 00 00 -- a few ms after the footer, one per sound. A lone
+     * header or footer, a footer for another slot or an invalid page gets no
+     * receipt. It says the slot was stored, not that it holds what was sent:
+     * the header starts from Init Sound, and a block left out or with a bad
+     * checksum is stored as Init Sound's, receipt and all (LOG.md 2026-10-12).
+     * The current buffer's (7F 00) is not a slot: null.
+     */
+    fun stored(message: ByteArray): Pair<Int, Int>? {
+        val d = parse(message) ?: return null
+        if (!d.address.contentEquals(RECEIPT) || d.data.size < 4 || d.data[0].toInt() != 0 || u(d.data[1]) != FOOTER) return null
+        val pp = u(d.data[2])
+        val n = u(d.data[3])
+        return if (pp in 0..39 && n in 0..7) (pp + 1) to (n + 1) else null
     }
 
     /** A stored sound as the dumps that write it into slot page:set (1-based). */

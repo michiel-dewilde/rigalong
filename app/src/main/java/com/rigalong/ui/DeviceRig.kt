@@ -67,6 +67,12 @@ class DeviceRig(private val lib: Library, private val prefs: SharedPreferences, 
     private val active = ConcurrentHashMap<String, Int>()
     /** Per device name: what the app selected last, and when, so the device echoing it back is not the player. */
     private val lastSent = ConcurrentHashMap<String, Pair<Map<String, Int>, Long>>()
+    /**
+     * Per device name: whether it confirms what it stored ([DeviceSounds.stored]).
+     * Learnt from the first write; until then, and for one that does not, a
+     * write counts once it is sent. On the queue only.
+     */
+    private val receipts = HashMap<String, Boolean>()
 
     fun driver(d: ExternalSynth): DeviceDriver = Devices.driver(d.kind) ?: com.rigalong.model.devices.MidiDeviceDriver
 
@@ -150,7 +156,7 @@ class DeviceRig(private val lib: Library, private val prefs: SharedPreferences, 
                 o[p.d.name] = good.associateBy { it - 1 }
                 when {
                     p.tooMany -> say("${p.d.name}: only live sets 1-${p.s.slots} can own a sound (one ${p.s.area.label})")
-                    failed > 0 -> say("${p.d.name}: could not write $failed slot(s) -- is it in a direct USB mode?")
+                    failed > 0 -> say("${p.d.name}: could not write $failed slot(s) -- it did not confirm them, or MIDI out is not on direct USB")
                     else -> say("${p.d.name}: ${p.s.area.label} $area, $written slot(s) written, $kept unchanged", log = written > 0)
                 }
             }
@@ -192,13 +198,40 @@ class DeviceRig(private val lib: Library, private val prefs: SharedPreferences, 
             val key = slotKey(p.d, area, slot)
             val digest = Digest.of(bytes).hex
             if (prefs.getString(key, null) == digest) { kept++; good += slot; continue }
-            if (p.s.write(bytes, area, slot).all(::send)) {
+            // Once more if the device does not say it stored it: the slot is only taken as written when it does.
+            if ((1..2).any { p.s.write(bytes, area, slot).all(::send) && stored(p, area, slot) }) {
                 written++; good += slot; prefs.edit().putString(key, digest).apply()
             } else {
                 failed++; prefs.edit().remove(key).apply()
             }
         }
         return Written(written, kept, failed, good)
+    }
+
+    /**
+     * Whether [p]'s device stored [slot] of [area], just written: its receipt,
+     * a few ms after the last byte. One that has not sent receipts yet is
+     * given [RECEIPT_MS] once to show it does. Other replies left waiting are
+     * dropped here, as [read] would.
+     */
+    private fun stored(p: Plan, area: Int, slot: Int): Boolean {
+        val name = p.d.name
+        if (receipts[name] == false) return true
+        val end = System.currentTimeMillis() + RECEIPT_MS
+        while (System.currentTimeMillis() < end) {
+            val m = NativeBridge.nativeUsbSysexDrain()
+            if (m == null) { Thread.sleep(1); continue }
+            val got = p.s.stored(m) ?: continue
+            if (receipts.put(name, true) == null) Log.i(TAG, "$name confirms what it stores")
+            if (got == area to slot) return true
+        }
+        if (receipts[name] == true) {
+            Log.w(TAG, "$name: no receipt for $area:$slot")
+            return false
+        }
+        receipts[name] = false
+        Log.i(TAG, "$name sent no receipt: its writes count once sent")
+        return true
     }
 
     /**
@@ -293,6 +326,7 @@ class DeviceRig(private val lib: Library, private val prefs: SharedPreferences, 
     /** MIDI out has come up: maybe another unit than before, so every device is brought in line. */
     fun midiOutReady(liveSets: List<LiveSet>, index: Int, next: List<LiveSet>?) {
         forget()
+        queue.execute { receipts.clear() }
         writeSong(liveSets)
         liveSetSelected(index, liveSets.getOrNull(index))
         preload(next)
@@ -406,6 +440,8 @@ class DeviceRig(private val lib: Library, private val prefs: SharedPreferences, 
     companion object {
         private const val KEY = "devices"
         private const val TAG = "rigalong-devices"
+        /** How long a write waits for the receipt: the CP-88 sends it 1-8 ms after the footer (LOG.md 2026-10-12). */
+        private const val RECEIPT_MS = 300L
 
         /** [area] and its neighbour for the next song: the one below it, or above at the bottom of [range]. */
         fun pairOf(area: Int, range: IntRange): List<Int> =

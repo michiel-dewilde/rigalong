@@ -103,6 +103,13 @@ interface DeviceSounds {
     /** The reply so far as one sound, or null while it is incomplete; messages that are not part of one are ignored. */
     fun collect(messages: List<ByteArray>): ByteArray?
 
+    /**
+     * The (area, slot) that [message], the device's own receipt after a
+     * write, says it stored; null if it is none. A device without receipts
+     * leaves this as it is.
+     */
+    fun stored(message: ByteArray): Pair<Int, Int>? = null
+
     /** Files of the device's own and text forms, for import, export and editing. */
     val formats: List<SoundFormat> get() = emptyList()
 }
