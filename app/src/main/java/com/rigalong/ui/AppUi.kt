@@ -196,12 +196,12 @@ private fun TopBar(player: SongPlayer, health: String, screen: Int, onScreen: (I
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun Tab(label: String, selected: Boolean, longPressOnly: Boolean = false, onClick: () -> Unit) {
+private fun Tab(label: String, selected: Boolean, longPressOnly: Boolean = false, scale: Float = 1f, onClick: () -> Unit) {
     val press = if (longPressOnly) Modifier.combinedClickable(onClick = {}, onLongClick = onClick)
     else Modifier.clickable(onClick = onClick)
     Box(Modifier.background(if (selected) Accent.copy(alpha = 0.25f) else Panel, RoundedCornerShape(8.dp))
-        .then(press).padding(horizontal = 18.dp, vertical = 12.dp)) {
-        Text(label, color = if (selected) Accent else Color.White, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
+        .then(press).padding(horizontal = (18f * scale).dp, vertical = (12f * scale).dp)) {
+        Text(label, color = if (selected) Accent else Color.White, fontSize = (16f * scale).sp, fontWeight = FontWeight.SemiBold)
     }
 }
 
@@ -237,89 +237,209 @@ private fun StageScreen(player: SongPlayer, host: EngineHost) {
     }
 }
 
-@OptIn(ExperimentalLayoutApi::class, ExperimentalFoundationApi::class)
+/**
+ * The stage's controls, sized for the device rather than at fixed sizes:
+ * everything fits on any screen, a phone on its side included, and a tablet
+ * gets big targets. One scale [s] belongs to the device -- its smallest
+ * width (Android's "sw"), so turning it rearranges but never resizes:
+ * sw640 is 1, from 0.55 up to 1.3. It is held down only where the stage
+ * would not fit (the height, or the song row's width). Live sets are buttons
+ * of bounded size, wrapping; the levels are panels of bounded size, in as
+ * many rows as the width needs ([StagePanels]). Short and wide (a phone on
+ * its side), the song and live sets take a column at the left and the levels
+ * get the full height beside them -- when they fit there in one row.
+ */
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun StageControls(player: SongPlayer, host: EngineHost, modifier: Modifier) {
-    Column(modifier) {
-        // Beside a lead sheet the stage column is narrow: the tempo then gets a
-        // row of its own, so the song's name is not squeezed to a few letters.
-        androidx.compose.foundation.layout.BoxWithConstraints(Modifier.fillMaxWidth()) {
-        val narrow = maxWidth < 760.dp
-        Column {
+    BoxWithConstraints(modifier) {
+    val w = maxWidth.value
+    val h = maxHeight.value
+    val device = (androidx.compose.ui.platform.LocalConfiguration.current.smallestScreenWidthDp / 640f).coerceIn(0.55f, 1.3f)
+    val fit = minOf(device, h / 450f)
+    val sideLeft = 420f * fit
+    val side = h < 420f && w >= 1.5f * h && stagePanelsMinWidth(player, fit) <= w - sideLeft - 16f * fit
+    // The tempo gets a row of its own where the song row would not hold it.
+    val narrow = side || w < 760f * fit
+    val s = if (side) fit else minOf(fit, w / if (narrow) 420f else 760f).coerceAtLeast(0.5f)
+    fun d(v: Float) = (v * s).dp
+
+    val songRow = @Composable {
         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-            BigButton("◀", enabled = player.songIndex > 0, width = 88) { player.previousSong() }
-            Column(Modifier.weight(1f).padding(horizontal = 12.dp)) {
-                Text(player.songNames.getOrNull(player.songIndex) ?: "—", fontSize = 30.sp,
+            BigButton("◀", enabled = player.songIndex > 0, width = 88, scale = s) { player.previousSong() }
+            Column(Modifier.weight(1f).padding(horizontal = d(12f))) {
+                Text(player.songNames.getOrNull(player.songIndex) ?: "—", fontSize = (30f * s).sp,
                     fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 val next = player.songNames.getOrNull(player.songIndex + 1)
                 val sel = (if (player.lastSelection.isEmpty()) "" else stringResource(R.string.from_keys, player.lastSelection)) +
                     player.devices.status.let { if (it.isEmpty()) "" else "   ·   $it" }
                 Text((if (next != null) stringResource(R.string.next_song, next) else stringResource(R.string.last_song)) + sel,
-                    color = Dim, fontSize = 15.sp, maxLines = 1)
+                    color = Dim, fontSize = (15f * s).sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
             if (!narrow) {
-                TempoBox(player)
-                Spacer(Modifier.width(10.dp))
+                TempoBox(player, s)
+                Spacer(Modifier.width(d(10f)))
             }
-            BigButton("▶", enabled = player.songIndex + 1 < player.songNames.size, width = 88) { player.nextSong() }
+            BigButton("▶", enabled = player.songIndex + 1 < player.songNames.size, width = 88, scale = s) { player.nextSong() }
         }
         if (narrow) {
-            Spacer(Modifier.height(8.dp))
-            Row(horizontalArrangement = Arrangement.End, modifier = Modifier.fillMaxWidth()) { TempoBox(player) }
+            Spacer(Modifier.height(d(8f)))
+            Row(horizontalArrangement = Arrangement.End, modifier = Modifier.fillMaxWidth()) { TempoBox(player, s) }
         }
-        }
-        }
-        Spacer(Modifier.height(12.dp))
-        FlowRow(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalArrangement = Arrangement.spacedBy(10.dp),
-            modifier = Modifier.fillMaxWidth()) {
-            player.liveSetNames.forEachIndexed { i, name ->
-                val sel = i == player.liveSetIndex
-                Box(Modifier.size(width = 190.dp, height = 84.dp)
-                    .background(if (sel) Accent else Panel, RoundedCornerShape(12.dp))
-                    .border(2.dp, if (sel) Accent else Color(0xFF2A2E36), RoundedCornerShape(12.dp))
-                    // A tap selects it; a long press edits it (quick edit from the stage).
-                    .combinedClickable(onClick = { player.selectLiveSet(i) }, onLongClick = { player.requestEdit(liveSet = i) })
-                    .padding(10.dp),
-                    contentAlignment = Alignment.Center) {
-                    Text(name, color = if (sel) Color.Black else Color.White, fontSize = 20.sp,
-                        fontWeight = FontWeight.SemiBold, textAlign = TextAlign.Center, maxLines = 2)
+    }
+    // Live sets: buttons 150 to 260 (scaled) wide, as many to a row as fit in [width], wrapping.
+    val liveSets = @Composable { width: Float ->
+        val names = player.liveSetNames
+        val gapLs = 10f * s
+        val columns = ((width + gapLs) / (150f * s + gapLs)).toInt().coerceIn(1, maxOf(1, names.size))
+        val buttonW = ((width - gapLs * (columns - 1)) / columns).coerceAtMost(260f * s)
+        Column(verticalArrangement = Arrangement.spacedBy(gapLs.dp)) {
+            for (row in names.indices.chunked(columns)) {
+                Row(horizontalArrangement = Arrangement.spacedBy(gapLs.dp)) {
+                    for (i in row) {
+                        val sel = i == player.liveSetIndex
+                        Box(Modifier.size(width = buttonW.dp, height = d(84f))
+                            .background(if (sel) Accent else Panel, RoundedCornerShape(d(12f)))
+                            .border(2.dp, if (sel) Accent else Color(0xFF2A2E36), RoundedCornerShape(d(12f)))
+                            // A tap selects it; a long press edits it (quick edit from the stage).
+                            .combinedClickable(onClick = { player.selectLiveSet(i) }, onLongClick = { player.requestEdit(liveSet = i) })
+                            .padding(d(8f)),
+                            contentAlignment = Alignment.Center) {
+                            Text(names[i], color = if (sel) Color.Black else Color.White, fontSize = (20f * s).sp,
+                                fontWeight = FontWeight.SemiBold, textAlign = TextAlign.Center, maxLines = 2,
+                                overflow = TextOverflow.Ellipsis)
+                        }
+                    }
                 }
             }
         }
-        Spacer(Modifier.height(16.dp))
+    }
+    val levelsHeader = @Composable {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Text(stringResource(R.string.levels), color = Dim, fontSize = 14.sp, modifier = Modifier.weight(1f))
-            Tab(stringResource(R.string.store_levels), false, longPressOnly = true) { player.storeInLiveSet() }
+            Text(stringResource(R.string.levels), color = Dim, fontSize = (14f * s).sp, modifier = Modifier.weight(1f))
+            Tab(stringResource(R.string.store_levels), false, longPressOnly = true, scale = s) { player.storeInLiveSet() }
         }
-        val rackNow = player.rack
-        val sounds = rackNow?.instances.orEmpty()
-        Row(Modifier.fillMaxWidth().weight(1f)) {
-        // Scrolls sideways when the panels do not fit (a phone, portrait: S18.4, S20.2).
-        Row(horizontalArrangement = Arrangement.spacedBy(16.dp),
-            modifier = Modifier.weight(1f).fillMaxHeight().horizontalScroll(rememberScrollState())) {
-            // The levels first: where the row is narrower than its panels (beside
-            // a lead sheet), setBfree's drawbars scroll into view, not the faders.
-            // One fader per sound, two sfizz instances being two faders.
-            for (inst in sounds) {
-                val plays = player.playing[inst.id] ?: false
-                Column(Modifier.width(140.dp).fillMaxHeight().background(Panel, RoundedCornerShape(10.dp)).padding(10.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally) {
-                    // A long press on its name opens its patch in the editor.
-                    Text(rackNow!!.displayName(inst), fontWeight = FontWeight.SemiBold, color = if (plays) Accent else Dim,
-                        maxLines = 1, overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.combinedClickable(onClick = {}, onLongClick = { player.requestEdit(instance = inst.id) }))
-                    Text(stringResource(if (plays) R.string.engine_playing else R.string.engine_silent), fontSize = 12.sp, color = Dim)
-                    Spacer(Modifier.height(8.dp))
-                    val level = player.levels[inst.id] ?: 0f
-                    Text("%.0f %%".format(level * 100), fontSize = 18.sp)
-                    // Moves only by dragging, never by a touch (S17.4).
-                    RelativeFader(level, { player.setLevel(inst.id, it) }, Modifier.weight(1f).fillMaxWidth())
+        Spacer(Modifier.height(d(6f)))
+    }
+
+    if (side) {
+        Row(Modifier.fillMaxSize()) {
+            // Many live sets may not fit the column's height: it scrolls, the levels never do.
+            Column(Modifier.width(sideLeft.dp).fillMaxHeight().verticalScroll(rememberScrollState())) {
+                songRow()
+                Spacer(Modifier.height(d(10f)))
+                liveSets(sideLeft)
+            }
+            Spacer(Modifier.width(d(16f)))
+            Column(Modifier.weight(1f).fillMaxHeight()) {
+                levelsHeader()
+                StagePanels(player, host, s, Modifier.fillMaxWidth().weight(1f))
+            }
+        }
+    } else {
+        Column(Modifier.fillMaxSize()) {
+            songRow()
+            Spacer(Modifier.height(d(12f)))
+            liveSets(w)
+            Spacer(Modifier.height(d(12f)))
+            levelsHeader()
+            StagePanels(player, host, s, Modifier.fillMaxWidth().weight(1f))
+        }
+    }
+    }
+}
+
+/** What [StagePanels] needs to put every panel in one row (dp). */
+private fun stagePanelsMinWidth(player: SongPlayer, s: Float): Float {
+    val sounds = player.rack?.instances.orEmpty()
+    val organ = sounds.any { it.engine == RackEngine.SETBFREE }
+    val count = sounds.size + (if (organ) 1 else 0) + 1
+    return sounds.size * LEVEL_MIN * s + (if (organ) organWidth(DRAWBAR_MIN_DP, s) else 0f) + MASTER_MIN * s +
+        16f * s * (count - 1)
+}
+
+private const val LEVEL_MIN = 110f
+private const val MASTER_MIN = 90f
+
+/** setBfree's panel with drawbars [bar] wide. */
+private fun organWidth(bar: Float, s: Float) = 9 * bar + 8 * 8f * s + 2 * 10f * s
+
+/** One panel below the live sets, with the widths it may take (dp). */
+private class StagePanel(val minW: Float, val prefW: Float, val content: @Composable (Modifier) -> Unit)
+
+/**
+ * The levels, setBfree's drawbars and the master, as panels of bounded size
+ * (S18.4): each between its least and its preferred width, never taller than
+ * a comfortable fader stroke allows. They are placed in order, each in the
+ * first row with room, so a narrow screen gets more rows rather than squeezed
+ * or stretched panels; a row's spare width goes to its panels up to their
+ * preferred widths, and the master keeps the right-hand end of its row. A
+ * panel wider than the screen (the drawbars, on a phone held upright) scrolls.
+ */
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun StagePanels(player: SongPlayer, host: EngineHost, s: Float, modifier: Modifier) {
+    val rackNow = player.rack
+    val sounds = rackNow?.instances.orEmpty()
+    val gap = 16f * s
+    val pad = 10f * s
+    val panels = ArrayList<StagePanel>()
+    for (inst in sounds) panels += StagePanel(LEVEL_MIN * s, 160f * s) { m ->
+        val plays = player.playing[inst.id] ?: false
+        Column(m.background(Panel, RoundedCornerShape((10f * s).dp)).padding(pad.dp),
+            horizontalAlignment = Alignment.CenterHorizontally) {
+            // A long press on its name opens its patch in the editor.
+            Text(rackNow!!.displayName(inst), fontWeight = FontWeight.SemiBold, color = if (plays) Accent else Dim,
+                fontSize = (16f * s).sp, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.combinedClickable(onClick = {}, onLongClick = { player.requestEdit(instance = inst.id) }))
+            val level = player.levels[inst.id] ?: 0f
+            Text(stringResource(if (plays) R.string.engine_playing else R.string.engine_silent) +
+                "  ·  " + "%.0f %%".format(level * 100), fontSize = (13f * s).sp, color = Dim, maxLines = 1)
+            Spacer(Modifier.height((6f * s).dp))
+            // Moves only by dragging, never by a touch (S17.4).
+            Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
+                RelativeFader(level, { player.setLevel(inst.id, it) },
+                    Modifier.heightIn(max = FADER_MAX).fillMaxHeight().fillMaxWidth())
+            }
+        }
+    }
+    if (sounds.any { it.engine == RackEngine.SETBFREE }) {
+        // Nine drawbars, each a fingertip wide at least and 72 (scaled) at most.
+        panels += StagePanel(organWidth(DRAWBAR_MIN_DP, s), organWidth(maxOf(DRAWBAR_MIN_DP, 72f * s), s)) { m ->
+            SetBfreePanel(player, s, m)
+        }
+    }
+    val master = StagePanel(MASTER_MIN * s, 110f * s) { m -> MasterFader(host, s, m) }
+    panels += master
+
+    BoxWithConstraints(modifier) {
+        val w = maxWidth.value
+        // First fit, in order: each panel in the first row that still has room at least widths.
+        val rows = ArrayList<MutableList<StagePanel>>()
+        for (p in panels) {
+            val row = rows.firstOrNull { r -> r.sumOf { it.minW.toDouble() } + gap * r.size + p.minW <= w }
+            if (row != null) row += p else rows += mutableListOf(p)
+        }
+        // A panel never taller than its fader's comfortable stroke and the text above it.
+        val maxRowH = FADER_MAX.value + 70f * s + 2 * pad + 40f * s
+        val rowH = ((maxHeight.value - gap * (rows.size - 1)) / rows.size).coerceAtMost(maxRowH)
+        Column(verticalArrangement = Arrangement.spacedBy(gap.dp)) {
+            for (row in rows) {
+                // The spare width goes to the panels up to their preferred widths, shared as they need it.
+                val spare = (w - gap * (row.size - 1) - row.sumOf { it.minW.toDouble() }.toFloat()).coerceAtLeast(0f)
+                val want = row.sumOf { (it.prefW - it.minW).toDouble() }.toFloat()
+                val share = if (want > 0f) minOf(1f, spare / want) else 0f
+                // Only a row wider than the screen (one panel too wide for it) scrolls.
+                val over = row.sumOf { it.minW.toDouble() } + gap * (row.size - 1) > w
+                Row(Modifier.fillMaxWidth().height(rowH.dp).then(if (over) Modifier.horizontalScroll(rememberScrollState()) else Modifier),
+                    horizontalArrangement = Arrangement.spacedBy(gap.dp)) {
+                    for (p in row) {
+                        // The master keeps the right-hand end of its row.
+                        if (p === master && row.size > 1 && !over) Spacer(Modifier.weight(1f))
+                        p.content(Modifier.width((p.minW + (p.prefW - p.minW) * share).dp).fillMaxHeight())
+                    }
                 }
             }
-            if (sounds.any { it.engine == RackEngine.SETBFREE }) SetBfreePanel(player)
-        }
-        Spacer(Modifier.width(16.dp))
-        MasterFader(host)
         }
     }
 }
@@ -331,22 +451,30 @@ private fun StageControls(player: SongPlayer, host: EngineHost, modifier: Modifi
  */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun MasterFader(host: EngineHost) {
+private fun MasterFader(host: EngineHost, s: Float, modifier: Modifier) {
     var db by remember { mutableStateOf(host.masterDb()) }
     val min = NativeBridge.MASTER_MIN_DB
     val max = NativeBridge.MASTER_MAX_DB
-    Column(Modifier.width(110.dp).fillMaxHeight().background(Panel, RoundedCornerShape(10.dp)).padding(10.dp),
+    Column(modifier.background(Panel, RoundedCornerShape((10f * s).dp)).padding((10f * s).dp),
         horizontalAlignment = Alignment.CenterHorizontally) {
-        Text(stringResource(R.string.master), fontWeight = FontWeight.SemiBold,
+        Text(stringResource(R.string.master), fontWeight = FontWeight.SemiBold, fontSize = (16f * s).sp,
             modifier = Modifier.combinedClickable(onClick = {}, onLongClick = { host.setMasterDb(0f); db = 0f }))
-        Text("%+.1f dB".format(db), fontSize = 16.sp)
-        Spacer(Modifier.height(8.dp))
-        RelativeFader((db - min) / (max - min), { f ->
-            val v = Math.round((min + f * (max - min)) * 2f) / 2f
-            host.setMasterDb(v); db = v
-        }, Modifier.weight(1f).fillMaxWidth(), color = Warn)
+        Text("%+.1f dB".format(db), fontSize = (14f * s).sp, color = Dim, maxLines = 1)
+        Spacer(Modifier.height((6f * s).dp))
+        Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
+            RelativeFader((db - min) / (max - min), { f ->
+                val v = Math.round((min + f * (max - min)) * 2f) / 2f
+                host.setMasterDb(v); db = v
+            }, Modifier.heightIn(max = FADER_MAX).fillMaxHeight().fillMaxWidth(), color = Warn)
+        }
     }
 }
+
+/** The longest a stage fader gets: a comfortable full stroke (6-7 cm), fine enough that a finger's jitter does not tell. */
+private val FADER_MAX = 400.dp
+
+/** The narrowest a drawbar gets: a fingertip (Material's smallest touch target). */
+private const val DRAWBAR_MIN_DP = 48f
 
 private val DRAWBAR_LABELS = listOf("16'", "5⅓'", "8'", "4'", "2⅔'", "2'", "1⅗'", "1⅓'", "1'")
 private val DRAWBAR_COLOURS = listOf(Color(0xFF8B4A2B), Color(0xFF8B4A2B), Color(0xFFE6E2D6), Color(0xFFE6E2D6),
@@ -354,39 +482,45 @@ private val DRAWBAR_COLOURS = listOf(Color(0xFF8B4A2B), Color(0xFF8B4A2B), Color
 
 /** setBfree's upper drawbars, Leslie and percussion, on the stage (S6.1's example). */
 @Composable
-private fun SetBfreePanel(player: SongPlayer) {
-    Column(Modifier.fillMaxHeight().background(Panel, RoundedCornerShape(10.dp)).padding(10.dp)) {
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+private fun SetBfreePanel(player: SongPlayer, s: Float, modifier: Modifier) {
+    Column(modifier.background(Panel, RoundedCornerShape((10f * s).dp)).padding((10f * s).dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy((8f * s).dp)) {
             // Which setBfree, where the song has several: the one playing in this live set.
             val r = player.rack
             val shown = player.setBfreeId?.let { r?.instance(it) }
             Text(if (r != null && shown != null && r.instances.count { it.engine == RackEngine.SETBFREE } > 1)
-                r.displayName(shown) else stringResource(R.string.engine_setbfree), fontWeight = FontWeight.SemiBold)
+                r.displayName(shown) else stringResource(R.string.engine_setbfree), fontWeight = FontWeight.SemiBold,
+                fontSize = (16f * s).sp)
             val leslie = player.setBfree[SongPlayer.SETBFREE_LESLIE] ?: 1f
             for ((v, label) in listOf(0f to stringResource(R.string.leslie_stop), 1f to stringResource(R.string.leslie_slow),
                     2f to stringResource(R.string.leslie_fast))) {
                 Box(Modifier.background(if (leslie == v) Accent else Bg, RoundedCornerShape(8.dp))
-                    .clickable { player.setSetBfree(SongPlayer.SETBFREE_LESLIE, v) }.padding(horizontal = 14.dp, vertical = 8.dp)) {
-                    Text(label, color = if (leslie == v) Color.Black else Color.White)
+                    .clickable { player.setSetBfree(SongPlayer.SETBFREE_LESLIE, v) }
+                    .padding(horizontal = (14f * s).dp, vertical = (8f * s).dp)) {
+                    Text(label, color = if (leslie == v) Color.Black else Color.White, fontSize = (14f * s).sp)
                 }
             }
             val perc = (player.setBfree[SongPlayer.SETBFREE_PERC] ?: 0f) > 0.5f
             Box(Modifier.background(if (perc) Accent else Bg, RoundedCornerShape(8.dp))
                 .clickable { player.setSetBfree(SongPlayer.SETBFREE_PERC, if (perc) 0f else 1f) }
-                .padding(horizontal = 14.dp, vertical = 8.dp)) {
-                Text(stringResource(R.string.percussion), color = if (perc) Color.Black else Color.White)
+                .padding(horizontal = (14f * s).dp, vertical = (8f * s).dp)) {
+                Text(stringResource(R.string.percussion), color = if (perc) Color.Black else Color.White, fontSize = (14f * s).sp)
             }
         }
-        Spacer(Modifier.height(8.dp))
-        Row(Modifier.weight(1f), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        Spacer(Modifier.height((8f * s).dp))
+        // The nine share the panel's width; each column, gap and all, takes the touch.
+        Row(Modifier.weight(1f).fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy((8f * s).dp)) {
             for (i in 0..8) {
                 val v = (player.setBfree[i] ?: 0f) / 8f
-                Column(Modifier.width(44.dp).fillMaxHeight(), horizontalAlignment = Alignment.CenterHorizontally) {
-                    Text(DRAWBAR_LABELS[i], fontSize = 11.sp, color = Dim)
+                Column(Modifier.weight(1f).fillMaxHeight(), horizontalAlignment = Alignment.CenterHorizontally) {
+                    Text(DRAWBAR_LABELS[i], fontSize = (13f * s).sp, color = Dim)
                     // Whole steps, as on the instrument: 0..8.
-                    RelativeFader(v, { player.setSetBfree(i, Math.round(it * 8f).toFloat()) },
-                        Modifier.weight(1f).fillMaxWidth(), color = DRAWBAR_COLOURS[i])
-                    Text(((player.setBfree[i] ?: 0f).toInt()).toString(), fontSize = 13.sp)
+                    Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
+                        RelativeFader(v, { player.setSetBfree(i, Math.round(it * 8f).toFloat()) },
+                            Modifier.heightIn(max = FADER_MAX).fillMaxHeight().fillMaxWidth(),
+                            color = DRAWBAR_COLOURS[i])
+                    }
+                    Text(((player.setBfree[i] ?: 0f).toInt()).toString(), fontSize = (13f * s).sp)
                 }
             }
         }
@@ -395,12 +529,12 @@ private fun SetBfreePanel(player: SongPlayer) {
 
 @Composable
 private fun BigButton(label: String, enabled: Boolean, width: Int, selected: Boolean = false,
-                      fontSize: Int = 30, onClick: () -> Unit) {
-    Box(Modifier.size(width = width.dp, height = 72.dp)
+                      fontSize: Int = 30, scale: Float = 1f, onClick: () -> Unit) {
+    Box(Modifier.size(width = (width * scale).dp, height = (72 * scale).dp)
         .background(if (enabled) Panel else Bg, RoundedCornerShape(12.dp))
         .border(2.dp, if (selected) Accent else Color(0xFF2A2E36), RoundedCornerShape(12.dp))
         .clickable(enabled = enabled, onClick = onClick), contentAlignment = Alignment.Center) {
-        Text(label, fontSize = fontSize.sp, color = if (enabled) Color.White else Color(0xFF3A3F48))
+        Text(label, fontSize = (fontSize * scale).sp, color = if (enabled) Color.White else Color(0xFF3A3F48), maxLines = 1)
     }
 }
 
@@ -788,7 +922,7 @@ private fun LiveSetCard(song: RackSong, i: Int, ls: RackLiveSet, player: SongPla
  * click runs the beat shows its number in the bar, in step with what is heard.
  */
 @Composable
-private fun TempoBox(player: SongPlayer) {
+private fun TempoBox(player: SongPlayer, s: Float = 1f) {
     var now by remember { mutableStateOf(System.nanoTime()) }
     LaunchedEffect(Unit) { while (true) { now = System.nanoTime(); delay(16) } }
     val bpm = player.bpm
@@ -798,28 +932,28 @@ private fun TempoBox(player: SongPlayer) {
     val count = player.clickBeat(now)
     Row(verticalAlignment = Alignment.CenterVertically) {
         if (count > 0) {
-            Box(Modifier.size(44.dp).background(if (lit) Accent else Panel, RoundedCornerShape(22.dp)),
+            Box(Modifier.size((44f * s).dp).background(if (lit) Accent else Panel, RoundedCornerShape((22f * s).dp)),
                 contentAlignment = Alignment.Center) {
-                Text(count.toString(), fontSize = 24.sp, fontWeight = FontWeight.Bold,
+                Text(count.toString(), fontSize = (24f * s).sp, fontWeight = FontWeight.Bold,
                     color = if (lit) Color.Black else Color.White)
             }
         } else {
-            Box(Modifier.size(22.dp).background(if (lit) Accent else Panel, RoundedCornerShape(11.dp)))
+            Box(Modifier.size((22f * s).dp).background(if (lit) Accent else Panel, RoundedCornerShape((11f * s).dp)))
         }
-        Spacer(Modifier.width(8.dp))
+        Spacer(Modifier.width((8f * s).dp))
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            Text(bpm?.let { stringResource(R.string.bpm, it) } ?: stringResource(R.string.no_tempo), fontSize = 18.sp)
+            Text(bpm?.let { stringResource(R.string.bpm, it) } ?: stringResource(R.string.no_tempo), fontSize = (18f * s).sp)
             if (player.bpmTapped) TextButton(onClick = player::saveTempo) { Text(stringResource(R.string.save_tempo)) }
         }
-        Spacer(Modifier.width(8.dp))
-        BigButton(stringResource(R.string.tap), enabled = true, width = 88) { player.tap() }
-        Spacer(Modifier.width(8.dp))
+        Spacer(Modifier.width((8f * s).dp))
+        BigButton(stringResource(R.string.tap), enabled = true, width = 88, scale = s) { player.tap() }
+        Spacer(Modifier.width((8f * s).dp))
         BigButton(stringResource(when {
             player.clickRunning -> R.string.click_stop
             player.clickContinuous -> R.string.click_on
             else -> R.string.count_in
         }), enabled = bpm != null, width = 104, selected = player.clickRunning,
-            fontSize = 22) { player.toggleClick() }
+            fontSize = 22, scale = s) { player.toggleClick() }
     }
 }
 

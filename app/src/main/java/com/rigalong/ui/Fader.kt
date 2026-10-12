@@ -36,12 +36,14 @@ fun RelativeFader(value: Float, onValue: (Float) -> Unit, modifier: Modifier = M
     }) {
         val w = size.width
         val h = size.height
+        // A layout can squeeze a fader to nothing (a phone on its side): draw nothing, never throw.
+        if (w <= 0f || h <= 0f) return@Canvas
         val track = w * 0.18f
         drawRoundRect(Color(0xFF2A2E36), Offset((w - track) / 2, 0f), Size(track, h), CornerRadius(track / 2))
         val filled = h * current
         drawRoundRect(color.copy(alpha = 0.55f), Offset((w - track) / 2, h - filled), Size(track, filled),
             CornerRadius(track / 2))
-        val capH = 28f
+        val capH = minOf(28f, h)
         val y = (h - filled - capH / 2).coerceIn(0f, h - capH)
         drawRoundRect(Color(0xFFE6E9EF), Offset(w * 0.1f, y), Size(w * 0.8f, capH), CornerRadius(6f))
     }
