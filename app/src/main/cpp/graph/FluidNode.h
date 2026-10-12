@@ -7,9 +7,9 @@
 #include <string>
 #include <vector>
 
-#include <bagosynths/Gain.h>
-#include <bagosynths/Graph.h>
-#include <bagosynths/ParamQueue.h>
+#include <rigalong/Gain.h>
+#include <rigalong/Graph.h>
+#include <rigalong/ParamQueue.h>
 
 // SF2 and SF3 SoundFonts, as a graph node: FluidSynth.
 //
@@ -46,7 +46,7 @@
 // opaque handles and pulls in nothing.
 #include <fluidsynth/types.h>
 
-namespace bagosynths {
+namespace rigalong {
 
 class FluidNode : public Node {
 public:
@@ -193,4 +193,4 @@ private:
     SmoothedGain mGain;
 };
 
-}  // namespace bagosynths
+}  // namespace rigalong

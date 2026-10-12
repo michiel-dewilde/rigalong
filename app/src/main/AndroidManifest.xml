@@ -84,7 +84,7 @@
             </intent-filter>
             <!--
               USB audio and MIDI devices. This is what lets "always open with
-              Bag-O-Synths" grant USB permission once and for all, so that a
+              RigAlong" grant USB permission once and for all, so that a
               replugged CP-88 in a direct-USB mode comes back without a dialog
               in the middle of a set. singleTask above makes the attach land on
               the running instrument (onNewIntent) instead of starting a second

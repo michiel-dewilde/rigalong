@@ -17,10 +17,10 @@ inline double nowSec() {
 }
 }  // namespace
 
-#define LOGI(...) __android_log_print(ANDROID_LOG_INFO, "bos-graph", __VA_ARGS__)
-#define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, "bos-graph", __VA_ARGS__)
+#define LOGI(...) __android_log_print(ANDROID_LOG_INFO, "rigalong-graph", __VA_ARGS__)
+#define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, "rigalong-graph", __VA_ARGS__)
 
-namespace bagosynths {
+namespace rigalong {
 
 // ------------------------------------------------------------------- sfizz
 
@@ -486,4 +486,4 @@ const char* LimiterNode::paramName(int index) const {
     }
 }
 
-}  // namespace bagosynths
+}  // namespace rigalong

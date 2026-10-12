@@ -31,7 +31,7 @@ def tree(rel):
     if base == "libfluidglue.a":
         # Ours, and deliberately so: it carries a SECOND copy of stb_vorbis,
         # because sfizz vendors one too. Every public name in ours is prefixed
-        # bagosynths_, so the two cannot collide -- see cpp/fluid/fluid_glue.c.
+        # rigalong_, so the two cannot collide -- see cpp/fluid/fluid_glue.c.
         return "ours:" + base
     return "ours:" + base
 

@@ -14,6 +14,6 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "bagosynths"
+rootProject.name = "rigalong"
 include(":app")
 include(":model")

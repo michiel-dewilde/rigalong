@@ -8,11 +8,11 @@ plugins {
 }
 
 android {
-    namespace = "be.mdw.bagosynths"
+    namespace = "be.mdw.rigalong"
     compileSdk = 36          // Android 16. Costs nothing in device support.
 
     defaultConfig {
-        applicationId = "be.mdw.bagosynths"
+        applicationId = "be.mdw.rigalong"
         // minSdk is the only setting that limits who can install this. 29 is
         // forced by AMidi (native MIDI), which is non-negotiable here.
         // Android 10+ is ~98% of active devices.
@@ -39,7 +39,7 @@ android {
                 // DEBUGGABLE build so wrap.sh is honoured. Diagnostic only --
                 // never judge audio from it.
                 if (project.hasProperty("asan")) {
-                    arguments += "-DBOS_ASAN=ON"
+                    arguments += "-DRIGALONG_ASAN=ON"
                 }
 
                 // Build OUR library, and only our library.
@@ -50,7 +50,7 @@ android {
                 // EXCLUDE_FROM_ALL precisely so they would not be built. They do
                 // not link here (they bypass libfluidsynth and so never see our
                 // Ogg decoder) and they are not wanted anyway.
-                targets += "bagosynths"
+                targets += "rigalong"
             }
         }
     }

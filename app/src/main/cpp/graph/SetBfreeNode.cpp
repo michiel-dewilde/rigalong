@@ -27,7 +27,7 @@ extern "C" {
 extern double SampleRateD;   // beatrix_glue.c; read by tonegen.c and vibrato.c
 }
 
-#define LOGI(...) __android_log_print(ANDROID_LOG_INFO, "bos-setbfree", __VA_ARGS__)
+#define LOGI(...) __android_log_print(ANDROID_LOG_INFO, "rigalong-setbfree", __VA_ARGS__)
 
 namespace {
 inline double nowSec() {
@@ -73,11 +73,11 @@ const char* const kParamNames[] = {
     "Level",
 };
 static_assert(sizeof(kParamNames) / sizeof(kParamNames[0]) ==
-                      static_cast<size_t>(bagosynths::SetBfreeNode::kNumParams),
+                      static_cast<size_t>(rigalong::SetBfreeNode::kNumParams),
               "parameter name table out of step with the enum");
 }  // namespace
 
-namespace bagosynths {
+namespace rigalong {
 
 SetBfreeNode::SetBfreeNode() {
     // Defaults: a usable registration the moment the node exists, so a fresh patch
@@ -459,4 +459,4 @@ void SetBfreeNode::process(const ProcessArgs& args) {
     if (ms > mMaxRenderMs) mMaxRenderMs = ms;
 }
 
-}  // namespace bagosynths
+}  // namespace rigalong

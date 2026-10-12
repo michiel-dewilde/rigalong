@@ -16,7 +16,7 @@
 #include <cstring>
 #include <ctime>
 
-#define LOG_TAG "bos-usb"
+#define LOG_TAG "rigalong-usb"
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
 #define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, __VA_ARGS__)
 
@@ -691,7 +691,7 @@ void UsbAudioOut::reapLoop() {
         LOGI("usb reap thread: hosted on an AAudio callback, SCHED_FIFO priority %d",
              sp.sched_priority);
     } else {
-        bos::raiseRenderPriority("usb reap thread", bos::kTransportNice);
+        rigalong::raiseRenderPriority("usb reap thread", rigalong::kTransportNice);
     }
     // The deadline is one packet.
     mHint.start({gettid()}, mPeriodNs);

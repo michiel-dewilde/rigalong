@@ -45,39 +45,39 @@
  * The list is generated from the public declarations in stb_vorbis.c rather
  * than curated, so nothing can be missed by hand.
  */
-#define stb_vorbis_close bagosynths_stb_vorbis_close
-#define stb_vorbis_comment bagosynths_stb_vorbis_comment
-#define stb_vorbis_decode_filename bagosynths_stb_vorbis_decode_filename
-#define stb_vorbis_decode_frame_pushdata bagosynths_stb_vorbis_decode_frame_pushdata
-#define stb_vorbis_decode_memory bagosynths_stb_vorbis_decode_memory
-#define stb_vorbis_float_size_test bagosynths_stb_vorbis_float_size_test
-#define stb_vorbis_flush_pushdata bagosynths_stb_vorbis_flush_pushdata
-#define stb_vorbis_get_comment bagosynths_stb_vorbis_get_comment
-#define stb_vorbis_get_error bagosynths_stb_vorbis_get_error
-#define stb_vorbis_get_file_offset bagosynths_stb_vorbis_get_file_offset
-#define stb_vorbis_get_frame_ bagosynths_stb_vorbis_get_frame_
-#define stb_vorbis_get_frame_float bagosynths_stb_vorbis_get_frame_float
-#define stb_vorbis_get_frame_short bagosynths_stb_vorbis_get_frame_short
-#define stb_vorbis_get_frame_short_interleaved bagosynths_stb_vorbis_get_frame_short_interleaved
-#define stb_vorbis_get_info bagosynths_stb_vorbis_get_info
-#define stb_vorbis_get_sample_offset bagosynths_stb_vorbis_get_sample_offset
-#define stb_vorbis_get_samples_ bagosynths_stb_vorbis_get_samples_
-#define stb_vorbis_get_samples_float bagosynths_stb_vorbis_get_samples_float
-#define stb_vorbis_get_samples_float_interleaved bagosynths_stb_vorbis_get_samples_float_interleaved
-#define stb_vorbis_get_samples_short bagosynths_stb_vorbis_get_samples_short
-#define stb_vorbis_get_samples_short_interleaved bagosynths_stb_vorbis_get_samples_short_interleaved
-#define stb_vorbis_info bagosynths_stb_vorbis_info
-#define stb_vorbis_open_file bagosynths_stb_vorbis_open_file
-#define stb_vorbis_open_file_section bagosynths_stb_vorbis_open_file_section
-#define stb_vorbis_open_filename bagosynths_stb_vorbis_open_filename
-#define stb_vorbis_open_memory bagosynths_stb_vorbis_open_memory
-#define stb_vorbis_open_pushdata bagosynths_stb_vorbis_open_pushdata
-#define stb_vorbis_seek bagosynths_stb_vorbis_seek
-#define stb_vorbis_seek_ bagosynths_stb_vorbis_seek_
-#define stb_vorbis_seek_frame bagosynths_stb_vorbis_seek_frame
-#define stb_vorbis_seek_start bagosynths_stb_vorbis_seek_start
-#define stb_vorbis_stream_length_in_samples bagosynths_stb_vorbis_stream_length_in_samples
-#define stb_vorbis_stream_length_in_seconds bagosynths_stb_vorbis_stream_length_in_seconds
+#define stb_vorbis_close rigalong_stb_vorbis_close
+#define stb_vorbis_comment rigalong_stb_vorbis_comment
+#define stb_vorbis_decode_filename rigalong_stb_vorbis_decode_filename
+#define stb_vorbis_decode_frame_pushdata rigalong_stb_vorbis_decode_frame_pushdata
+#define stb_vorbis_decode_memory rigalong_stb_vorbis_decode_memory
+#define stb_vorbis_float_size_test rigalong_stb_vorbis_float_size_test
+#define stb_vorbis_flush_pushdata rigalong_stb_vorbis_flush_pushdata
+#define stb_vorbis_get_comment rigalong_stb_vorbis_get_comment
+#define stb_vorbis_get_error rigalong_stb_vorbis_get_error
+#define stb_vorbis_get_file_offset rigalong_stb_vorbis_get_file_offset
+#define stb_vorbis_get_frame_ rigalong_stb_vorbis_get_frame_
+#define stb_vorbis_get_frame_float rigalong_stb_vorbis_get_frame_float
+#define stb_vorbis_get_frame_short rigalong_stb_vorbis_get_frame_short
+#define stb_vorbis_get_frame_short_interleaved rigalong_stb_vorbis_get_frame_short_interleaved
+#define stb_vorbis_get_info rigalong_stb_vorbis_get_info
+#define stb_vorbis_get_sample_offset rigalong_stb_vorbis_get_sample_offset
+#define stb_vorbis_get_samples_ rigalong_stb_vorbis_get_samples_
+#define stb_vorbis_get_samples_float rigalong_stb_vorbis_get_samples_float
+#define stb_vorbis_get_samples_float_interleaved rigalong_stb_vorbis_get_samples_float_interleaved
+#define stb_vorbis_get_samples_short rigalong_stb_vorbis_get_samples_short
+#define stb_vorbis_get_samples_short_interleaved rigalong_stb_vorbis_get_samples_short_interleaved
+#define stb_vorbis_info rigalong_stb_vorbis_info
+#define stb_vorbis_open_file rigalong_stb_vorbis_open_file
+#define stb_vorbis_open_file_section rigalong_stb_vorbis_open_file_section
+#define stb_vorbis_open_filename rigalong_stb_vorbis_open_filename
+#define stb_vorbis_open_memory rigalong_stb_vorbis_open_memory
+#define stb_vorbis_open_pushdata rigalong_stb_vorbis_open_pushdata
+#define stb_vorbis_seek rigalong_stb_vorbis_seek
+#define stb_vorbis_seek_ rigalong_stb_vorbis_seek_
+#define stb_vorbis_seek_frame rigalong_stb_vorbis_seek_frame
+#define stb_vorbis_seek_start rigalong_stb_vorbis_seek_start
+#define stb_vorbis_stream_length_in_samples rigalong_stb_vorbis_stream_length_in_samples
+#define stb_vorbis_stream_length_in_seconds rigalong_stb_vorbis_stream_length_in_seconds
 
 #include "stb_vorbis.c"
 
@@ -85,11 +85,11 @@
  * Decode one Ogg Vorbis stream to interleaved 16-bit PCM.
  *
  * Returns frames decoded (0 for an empty stream), or -1 on error. On success
- * *out owns a buffer that bagosynths_ogg_free() releases, and *channels says how many
+ * *out owns a buffer that rigalong_ogg_free() releases, and *channels says how many
  * channels it holds — the caller rejects anything but mono, because that is all
  * the SF3 format stores.
  */
-int bagosynths_ogg_decode_mono16(const void *ogg, int len, short **out, int *channels)
+int rigalong_ogg_decode_mono16(const void *ogg, int len, short **out, int *channels)
 {
     short *pcm = NULL;
     int rate = 0;
@@ -116,7 +116,7 @@ int bagosynths_ogg_decode_mono16(const void *ogg, int len, short **out, int *cha
     return frames;
 }
 
-void bagosynths_ogg_free(short *pcm)
+void rigalong_ogg_free(short *pcm)
 {
     free(pcm);   /* stb_vorbis allocates the result with malloc */
 }

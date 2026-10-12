@@ -594,7 +594,7 @@ Measured on the device, that also buys scheduling we are otherwise refused:
 ```
 AudioTrack    prio=-3  nice=-16  rtprio=2  policy=1   <- Oboe callback: SCHED_FIFO
 usb-routing   prio= 1  nice=-19  rtprio=0  policy=0   <- our render thread
-bos-sched: render thread: nice -19 (SCHED_FIFO refused: Operation not permitted)
+rigalong-sched: render thread: nice -19 (SCHED_FIFO refused: Operation not permitted)
 ```
 
 AudioFlinger hands its own callback thread the real-time policy the kernel
@@ -730,7 +730,7 @@ without being it.
 
 **External load does not even reach us.** Eight spinners left the bare
 transport's `late` completely unchanged, 666 -> 666. A reap thread at nice -19
-wins that fight. Bag-O-Synths loses it only because its competition is INSIDE
+wins that fight. RigAlong loses it only because its competition is INSIDE
 the process and in the same priority band -- the render thread.
 
 **The lead: the IN stream, not the OUT stream.** OUT and IN are separate
@@ -835,7 +835,7 @@ it either.
 
 ### Where that leaves it
 
-usbhost survives `late=8654`, `starved=996`, `deficit=24,2 s`. Bag-O-Synths
+usbhost survives `late=8654`, `starved=996`, `deficit=24,2 s`. RigAlong
 latches with a nearly pristine transport. **So the cause is something this app
 DOES, not how well it is scheduled**, and the next step is a direct comparison
 of the two transports' wire behaviour rather than another sweep.
@@ -848,14 +848,14 @@ Checked and eliminated already, so the next person does not repeat them:
   neither in the reap path.
 * **MIDI does not contaminate the reap queue.** `USBDEVFS_REAPURB` is per-fd, so
   a MIDI URB submitted on the same descriptor would be reaped by the audio loop
-  and cast to the wrong type -- but Bag-O-Synths uses the synchronous
+  and cast to the wrong type -- but RigAlong uses the synchronous
   `USBDEVFS_BULK` ioctl and usbhost uses Java `bulkTransfer`, whose comment
   says outright that "a native reap loop would steal its completions". Both
   already avoid it.
 * **Packet sizes stay legal.** `fbDrop` and `fbClamp` are zero in every latch.
 
 What has NOT been compared, and is where to go next: the actual sequence of
-submitted packet sizes on the wire, bagosynths against usbhost, over the moments
+submitted packet sizes on the wire, rigalong against usbhost, over the moments
 around a latch.
 
 ## 6. Still open

@@ -12,8 +12,8 @@
 
 #include <fluidsynth.h>
 
-#define LOGI(...) __android_log_print(ANDROID_LOG_INFO, "bos-fluid", __VA_ARGS__)
-#define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, "bos-fluid", __VA_ARGS__)
+#define LOGI(...) __android_log_print(ANDROID_LOG_INFO, "rigalong-fluid", __VA_ARGS__)
+#define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, "rigalong-fluid", __VA_ARGS__)
 
 namespace {
 inline double nowSec() {
@@ -26,7 +26,7 @@ const char* const kParamNames[] = {
     "Level", "Reverb", "Chorus", "Transpose", "Bend Range",
 };
 static_assert(sizeof(kParamNames) / sizeof(kParamNames[0]) ==
-                      static_cast<size_t>(bagosynths::FluidNode::kNumParams),
+                      static_cast<size_t>(rigalong::FluidNode::kNumParams),
               "parameter names and the Param enum have drifted apart");
 
 // One channel, not sixteen. A SoundFont is a General MIDI bank and FluidSynth
@@ -64,7 +64,7 @@ std::string fileNameOf(const std::string& path) {
 }
 }  // namespace
 
-namespace bagosynths {
+namespace rigalong {
 
 FluidNode::FluidNode() {
     mParams[kLevel] = 1.0f;
@@ -611,4 +611,4 @@ void FluidNode::process(const ProcessArgs& args) {
     if (ms > mMaxRenderMs) mMaxRenderMs = ms;
 }
 
-}  // namespace bagosynths
+}  // namespace rigalong

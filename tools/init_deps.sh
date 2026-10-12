@@ -4,7 +4,7 @@
 #   tools/init_deps.sh
 #
 # Everything under third_party/ is a submodule of a FORK, on the branch
-# `bagosynths/main`, with a RELATIVE url in .gitmodules -- `../sfizz.git` and so
+# `rigalong/main`, with a RELATIVE url in .gitmodules -- `../sfizz.git` and so
 # on. Relative resolves against whatever origin this repository was cloned from,
 # so ssh and https both work and neither is written down anywhere.
 #

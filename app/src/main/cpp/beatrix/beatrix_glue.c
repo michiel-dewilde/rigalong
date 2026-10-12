@@ -5,7 +5,7 @@
  * sources reference but do not define. We compile neither, so we provide them
  * here -- exactly as b_synth/lv2.c does, and for the same reason.
  *
- * This file is part of Bag-O-Synths and is GPL-3.0-or-later; the setBfree sources it
+ * This file is part of RigAlong and is GPL-3.0-or-later; the setBfree sources it
  * supports are GPL-2-or-later, which combines. See LICENSING.md.
  */
 

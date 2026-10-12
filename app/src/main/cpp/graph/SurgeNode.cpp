@@ -13,8 +13,8 @@
 #include "SurgeSynthesizer.h"
 #include "SurgeStorage.h"
 
-#define LOGI(...) __android_log_print(ANDROID_LOG_INFO, "bos-surge", __VA_ARGS__)
-#define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, "bos-surge", __VA_ARGS__)
+#define LOGI(...) __android_log_print(ANDROID_LOG_INFO, "rigalong-surge", __VA_ARGS__)
+#define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, "rigalong-surge", __VA_ARGS__)
 
 namespace {
 inline double nowSec() {
@@ -29,11 +29,11 @@ const char* const kParamNames[] = {
     "Macro 5", "Macro 6", "Macro 7", "Macro 8",
 };
 static_assert(sizeof(kParamNames) / sizeof(kParamNames[0]) ==
-                      static_cast<size_t>(bagosynths::SurgeNode::kNumParams),
+                      static_cast<size_t>(rigalong::SurgeNode::kNumParams),
               "parameter name table out of step with the enum");
 }  // namespace
 
-namespace bagosynths {
+namespace rigalong {
 
 // Surge's host interface. Two methods, both of which exist so that a plugin
 // editor can follow parameter changes it did not itself make. There is no
@@ -436,4 +436,4 @@ void SurgeNode::process(const ProcessArgs& args) {
     if (ms > mMaxRenderMs) mMaxRenderMs = ms;
 }
 
-}  // namespace bagosynths
+}  // namespace rigalong

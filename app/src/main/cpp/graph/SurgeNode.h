@@ -6,9 +6,9 @@
 #include <string>
 #include <vector>
 
-#include <bagosynths/Gain.h>
-#include <bagosynths/Graph.h>
-#include <bagosynths/ParamQueue.h>
+#include <rigalong/Gain.h>
+#include <rigalong/Graph.h>
+#include <rigalong/ParamQueue.h>
 
 // Surge XT's synthesis engine as a graph node.
 //
@@ -42,7 +42,7 @@
 
 class SurgeSynthesizer;
 
-namespace bagosynths {
+namespace rigalong {
 
 class SurgeNode : public Node {
 public:
@@ -179,4 +179,4 @@ private:
     SmoothedGain mGain;
 };
 
-}  // namespace bagosynths
+}  // namespace rigalong

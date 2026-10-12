@@ -25,7 +25,7 @@
 #include <thread>
 #include <vector>
 
-#include <bagosynths/UsbMidi.h>
+#include <rigalong/UsbMidi.h>
 
 class UsbMidiIn {
 public:
@@ -134,7 +134,7 @@ private:
     std::vector<MidiUrb> mRetired;
     class UsbAudioOut* mCo = nullptr;
     bool mAsync = false;
-    void push(const bagosynths::usbmidi::Message& m);
+    void push(const rigalong::usbmidi::Message& m);
 
     int mFd = -1;
     int mEp = 0;
@@ -144,7 +144,7 @@ private:
 
     std::thread mThread;
     std::atomic<bool> mRunning{false};
-    bagosynths::usbmidi::UmpAssembler mUmpAsm;
+    rigalong::usbmidi::UmpAssembler mUmpAsm;
 
     // Single producer (the reader thread), single consumer (the render
     // thread). Fixed 4-byte records, [length, b0, b1, b2], so a message's

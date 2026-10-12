@@ -1,4 +1,4 @@
-// Bag-O-Synths test instrument.
+// RigAlong test instrument.
 // Uses sfizz's built-in generators, so it needs no sample files at all --
 // enough to prove the sfizz node renders, responds to velocity and releases
 // cleanly, before a multi-gigabyte piano library is involved.

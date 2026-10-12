@@ -6,7 +6,7 @@
   lines, and the player's own status messages (DeviceRig.status).
 -->
 <resources>
-    <string name="app_name">Bag-O-Synths</string>
+    <string name="app_name">RigAlong</string>
 
     <!-- top bar -->
     <string name="tab_stage">Stage</string>

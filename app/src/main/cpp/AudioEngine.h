@@ -10,15 +10,15 @@
 #include <string>
 #include <thread>
 
-#include <bagosynths/Dither.h>
-#include <bagosynths/Click.h>
-#include <bagosynths/Gain.h>
+#include <rigalong/Dither.h>
+#include <rigalong/Click.h>
+#include <rigalong/Gain.h>
 #include "MidiInput.h"
 #include "RealtimePriority.h"
 #include "usb/UsbAudioOut.h"
-#include <bagosynths/Graph.h>
-#include <bagosynths/MidiZone.h>
-#include <bagosynths/Wire.h>
+#include <rigalong/Graph.h>
+#include <rigalong/MidiZone.h>
+#include <rigalong/Wire.h>
 #include "graph/SetBfreeNode.h"
 #include "graph/SurgeNode.h"
 #include "graph/DexedNode.h"
@@ -91,17 +91,17 @@ public:
 
     MidiInput& midi() { return mMidi; }
     // The metronome (I12.2), mixed into the main out before the master volume.
-    bagosynths::Click& click() { return mClick; }
+    rigalong::Click& click() { return mClick; }
     // The song's tempo for tempo-synced parameters (I12.1); 0 or less = none (120).
     void setTempo(double bpm) {
         mTempo.store(bpm > 0.0 ? bpm : 120.0, std::memory_order_relaxed);
-        bagosynths::FxNode::setHostTempo(bpm);
+        rigalong::FxNode::setHostTempo(bpm);
     }
 
     // --- graph -------------------------------------------------------------
     // The signal path is a node graph (see GRAPH.md). M3 builds a fixed default
     // patch in code; the editor comes later and changes nothing down here.
-    bagosynths::Graph& graph() { return mGraph; }
+    rigalong::Graph& graph() { return mGraph; }
 
     // Recompiles and publishes a new schedule. Off the audio thread only.
     bool rebuildGraph(std::string* error = nullptr);
@@ -115,8 +115,8 @@ public:
     int instanceCount() const { return mInstanceCount.load(std::memory_order_acquire); }
     // Its engine (kRack*), or -1.
     int instanceType(int i) const { return i >= 0 && i < instanceCount() ? mInstanceType[i] : -1; }
-    bagosynths::Node* instanceNode(int i) const { return i >= 0 && i < instanceCount() ? mInstanceNode[i] : nullptr; }
-    bagosynths::FxNode* instanceFx(int i) const { return i >= 0 && i < instanceCount() ? mFx[i] : nullptr; }
+    rigalong::Node* instanceNode(int i) const { return i >= 0 && i < instanceCount() ? mInstanceNode[i] : nullptr; }
+    rigalong::FxNode* instanceFx(int i) const { return i >= 0 && i < instanceCount() ? mFx[i] : nullptr; }
 
     // A new instance of engine `type` (kRack*): built, wired, compiled in
     // without touching what is playing (only the new nodes are prepared), and
@@ -136,12 +136,12 @@ public:
     // The instruments in the default patch. All are always present and all
     // always receive MIDI; which one is heard is a question of level, so that
     // layering setBfree under sfizz costs nothing but a fader move.
-    bagosynths::SetBfreeNode* setBfree() { return mSetBfree; }
-    bagosynths::SfizzNode* sfizz() { return mSfizz; }
-    bagosynths::SurgeNode* surge() { return mSurge; }
-    bagosynths::DexedNode* dexed() { return mDexed; }
-    bagosynths::PlaitsNode* plaits() { return mPlaits; }
-    bagosynths::FluidNode* fluid() { return mFluid; }
+    rigalong::SetBfreeNode* setBfree() { return mSetBfree; }
+    rigalong::SfizzNode* sfizz() { return mSfizz; }
+    rigalong::SurgeNode* surge() { return mSurge; }
+    rigalong::DexedNode* dexed() { return mDexed; }
+    rigalong::PlaitsNode* plaits() { return mPlaits; }
+    rigalong::FluidNode* fluid() { return mFluid; }
 
     // Brings Surge up on the loader thread: constructing it scans the patch
     // library, which is 41 ms of file work and has no business on the UI thread
@@ -459,9 +459,9 @@ private:
     // Graph, and the compiled schedule the audio thread actually runs.
     // Publication is a single atomic store; retired schedules are freed on a
     // non-audio thread, never inside the callback.
-    bagosynths::Graph mGraph;
-    std::atomic<bagosynths::Schedule*> mSchedule{nullptr};
-    std::vector<std::unique_ptr<bagosynths::Schedule>> mScheduleKeepAlive;
+    rigalong::Graph mGraph;
+    std::atomic<rigalong::Schedule*> mSchedule{nullptr};
+    std::vector<std::unique_ptr<rigalong::Schedule>> mScheduleKeepAlive;
 
     // WHICH SCHEDULE THE RENDER THREAD IS INSIDE. A hazard pointer.
     //
@@ -486,40 +486,40 @@ private:
     // any generation the reader is inside: either the reader saw the new store
     // and is on the new one, or the writer sees the old one in the hazard --
     // there is no interleaving in which the writer frees what the reader holds.
-    std::atomic<bagosynths::Schedule*> mScheduleHazard{nullptr};
-    bagosynths::SfizzNode* mSfizz = nullptr;
-    bagosynths::SetBfreeNode* mSetBfree = nullptr;
-    bagosynths::SurgeNode* mSurge = nullptr;
-    bagosynths::DexedNode* mDexed = nullptr;
-    bagosynths::PlaitsNode* mPlaits = nullptr;
-    bagosynths::FluidNode* mFluid = nullptr;
-    bagosynths::ReverbNode* mReverb = nullptr;
+    std::atomic<rigalong::Schedule*> mScheduleHazard{nullptr};
+    rigalong::SfizzNode* mSfizz = nullptr;
+    rigalong::SetBfreeNode* mSetBfree = nullptr;
+    rigalong::SurgeNode* mSurge = nullptr;
+    rigalong::DexedNode* mDexed = nullptr;
+    rigalong::PlaitsNode* mPlaits = nullptr;
+    rigalong::FluidNode* mFluid = nullptr;
+    rigalong::ReverbNode* mReverb = nullptr;
 
     // THE RACK (PLAN.md M2, first slice): one zone and two switchable wires per
     // engine, so a song's live sets can split, layer, transpose and route the
     // fixed set of engines without a recompile. Index: kRack* below.
     // Per instance (see instances, above); entries are written before
     // mInstanceCount moves past them, so the render thread never sees half of one.
-    bagosynths::MidiZoneNode* mZone[kMaxInstances] = {};
-    bagosynths::FxNode* mFx[kMaxInstances] = {};
-    std::shared_ptr<bagosynths::WireControl> mRackMidi[kMaxInstances];
-    std::shared_ptr<bagosynths::WireControl> mRackAudio[kMaxInstances];
+    rigalong::MidiZoneNode* mZone[kMaxInstances] = {};
+    rigalong::FxNode* mFx[kMaxInstances] = {};
+    std::shared_ptr<rigalong::WireControl> mRackMidi[kMaxInstances];
+    std::shared_ptr<rigalong::WireControl> mRackAudio[kMaxInstances];
     int mInstanceType[kMaxInstances] = {};
-    bagosynths::Node* mInstanceNode[kMaxInstances] = {};
+    rigalong::Node* mInstanceNode[kMaxInstances] = {};
     int mInstanceLevelParam[kMaxInstances] = {};
     std::atomic<int> mInstanceCount{0};
     std::atomic<bool> mInstanceBusy[kMaxInstances] = {};
-    bagosynths::NodeId mIdMidiIn = -1;
-    bagosynths::NodeId mIdReverb = -1;
+    rigalong::NodeId mIdMidiIn = -1;
+    rigalong::NodeId mIdReverb = -1;
     // What the first instances were brought up with, for the ones added later.
     std::string mSurgeDataPath, mSurgeHomePath;
     std::vector<std::string> mFluidDirs, mDexedDirs;
-    void wireInstance(int i, int type, bagosynths::Node* node, bagosynths::NodeId idNode, int levelParam);
+    void wireInstance(int i, int type, rigalong::Node* node, rigalong::NodeId idNode, int levelParam);
     bool compileAndPublish(bool prepareAll, std::string* error);
 public:
     // Rack positions, in the order the engines were always built.
     enum { kRackSfizz, kRackSetBfree, kRackSurge, kRackDexed, kRackPlaits, kRackFluid, kRackSize };
-    bagosynths::MidiZoneNode* zone(int i) const { return i >= 0 && i < instanceCount() ? mZone[i] : nullptr; }
+    rigalong::MidiZoneNode* zone(int i) const { return i >= 0 && i < instanceCount() ? mZone[i] : nullptr; }
     void setRackWire(int i, bool midiOn, bool audioOn, float gain) {
         if (i < 0 || i >= instanceCount() || !mRackMidi[i]) return;
         mRackMidi[i]->setOn(midiOn);
@@ -528,12 +528,12 @@ public:
     }
 private:
     // Not in the default patch any more; kept for the graph editor to place.
-    bagosynths::LimiterNode* mLimiter = nullptr;
+    rigalong::LimiterNode* mLimiter = nullptr;
 
     // Events injected from the UI (on-screen keys), handed to the graph at the
     // top of the next block. Single producer, single consumer, fixed capacity.
     static constexpr int kInjectCapacity = 128;
-    bagosynths::MidiEvent mInjected[kInjectCapacity];
+    rigalong::MidiEvent mInjected[kInjectCapacity];
     std::atomic<uint32_t> mInjectWrite{0};
     std::atomic<uint32_t> mInjectRead{0};
 
@@ -545,7 +545,7 @@ private:
     struct ControlTable {
         int count = 0;
         ControlMap maps[kMaxControlMaps];
-        bagosynths::Node* nodes[kMaxControlMaps] = {};
+        rigalong::Node* nodes[kMaxControlMaps] = {};
     };
     ControlTable mControlTables[2];
     std::atomic<uint32_t> mControlGen{0};
@@ -557,7 +557,7 @@ private:
     std::atomic<uint64_t> mControlMoved{0};
     std::atomic<bool> mControlLearn{false};
     std::atomic<int> mLearnedControl{-1};
-    void applyControlMaps(const bagosynths::MidiBuffer& in);
+    void applyControlMaps(const rigalong::MidiBuffer& in);
 
     // Background loader. Ordinary priority and deliberately NOT pinned to the
     // big cores: it must never compete with the audio thread. See GRAPH.md.
@@ -614,8 +614,8 @@ private:
     std::atomic<float> mMasterGain{1.0f};
 
     // The master gain, ramped. Render thread only. See SmoothedGain.
-    bagosynths::SmoothedGain mMasterRamp;
-    bagosynths::Click mClick;
+    rigalong::SmoothedGain mMasterRamp;
+    rigalong::Click mClick;
     std::atomic<double> mTempo{120.0};
 
     std::atomic<int32_t> mPreferredRate{0};
@@ -842,7 +842,7 @@ private:
     std::atomic<uint32_t> mRingWrite{0};
     std::atomic<uint32_t> mRingRead{0};
     // Scheduler hint for the render thread: see RealtimePriority.h.
-    bos::PerfHint mPerfHint;
+    rigalong::PerfHint mPerfHint;
 
     std::thread mRenderThread;
     std::atomic<bool> mRenderRun{false};

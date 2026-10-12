@@ -14,7 +14,7 @@
 
 #include "harness.h"
 
-using bagosynths::FxNode;
+using rigalong::FxNode;
 
 namespace {
 
@@ -34,9 +34,9 @@ std::vector<float> run(FxNode& n, const std::vector<float>& in, int block = 128,
     for (size_t at = 0; at < in.size(); at += static_cast<size_t>(block)) {
         const int frames = static_cast<int>(std::min<size_t>(static_cast<size_t>(block), in.size() - at));
         for (int i = 0; i < frames; ++i) ib[static_cast<size_t>(i)] = ib[static_cast<size_t>(block + i)] = in[at + static_cast<size_t>(i)];
-        bagosynths::AudioPort pin{ib.data(), 2, block};
-        bagosynths::AudioPort pout{ob.data(), 2, block};
-        bagosynths::ProcessArgs a;
+        rigalong::AudioPort pin{ib.data(), 2, block};
+        rigalong::AudioPort pout{ob.data(), 2, block};
+        rigalong::ProcessArgs a;
         a.numFrames = frames;
         a.sampleRate = kRate;
         a.tempo = tempo;

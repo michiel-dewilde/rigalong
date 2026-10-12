@@ -188,7 +188,7 @@ was **not** implemented until the organ needed it: a second edge into any input
 pin used to produce silence, with no error.
 
 **Every parameter change crosses threads through one `ParamQueue`**
-(`engine/include/bagosynths/ParamQueue.h`): single producer, single consumer,
+(`engine/include/rigalong/ParamQueue.h`): single producer, single consumer,
 fixed capacity, no allocation, no locks. The UI thread pushes; the node drains
 the whole queue at the top of a block, so a change always lands on a block
 boundary and never halfway through one.
@@ -585,7 +585,7 @@ it.
 
 **Android Gradle builds every target it discovers, not `all`.** FluidSynth marks
 its unit tests `EXCLUDE_FROM_ALL` and AGP built them anyway, failing the build.
-`targets += "bagosynths"` in `build.gradle.kts` says what was always meant, and is
+`targets += "rigalong"` in `build.gradle.kts` says what was always meant, and is
 faster.
 
 **Content must be addressed by a name that is UNIQUE, not merely by a name.** The
@@ -788,7 +788,7 @@ reading that line before assuming either way.
 **Android Gradle builds every target it discovers, not `all`.** So a dependency's `EXCLUDE_FROM_ALL` test programs get built, and their link errors become yours. `targets += "<your lib>"` in `build.gradle.kts` is both the fix and a build-time saving.
 
 **`third_party/` is submodules of forks, and the modifications are commits.**
-Each fork carries branch `bagosynths/main`, and `.gitmodules` uses a RELATIVE
+Each fork carries branch `rigalong/main`, and `.gitmodules` uses a RELATIVE
 url (`../sfizz.git`), which resolves against whatever origin the superproject
 was cloned from — so ssh and https both work and neither is written down.
 `tools/init_deps.sh` checks them out; it exists only because Surge carries 23
@@ -929,7 +929,7 @@ coordinate tapping once sent 18 taps into the launcher and opened random apps,
 because the app had crashed and nothing checked:
 
 ```bash
-adb shell dumpsys window | grep -c "mCurrentFocus.*be.mdw.bagosynths"   # 1 = safe
+adb shell dumpsys window | grep -c "mCurrentFocus.*be.mdw.rigalong"   # 1 = safe
 ```
 
 `tools/stress.sh` has the guard built in and aborts loudly with the crash buffer
@@ -939,7 +939,7 @@ re-read them from a screenshot after any UI change.
 ### The USB audio path to the CP-88 stalls, and it is not this app
 
 **Established 2026-09-20, and the one thing here that is certain: the fault is
-outside this project.** It was reproduced with **Bag-O-Synths force-stopped**,
+outside this project.** It was reproduced with **RigAlong force-stopped**,
 nothing holding the device, and only the CP-88 on the bus by a direct cable —
 and YouTube produced the same click-then-silence.
 

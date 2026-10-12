@@ -1,13 +1,13 @@
 // SmoothedGain: the ramp that stops a level change being a click.
 
-#include <bagosynths/Gain.h>
+#include <rigalong/Gain.h>
 
 #include <cmath>
 #include <vector>
 
 #include "harness.h"
 
-using bagosynths::SmoothedGain;
+using rigalong::SmoothedGain;
 
 namespace {
 

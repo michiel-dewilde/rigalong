@@ -1,13 +1,13 @@
-# Bag-O-Synths — user manual (draft)
+# RigAlong — user manual (draft)
 
-Bag-O-Synths turns an Android tablet into a sound module for a stage piano:
+RigAlong turns an Android tablet into a sound module for a stage piano:
 six synthesis engines that you play from your keyboard, organised into songs
 and setlists, switched from the screen, a footswitch, or the keyboard's own
 buttons. It works with any class-compliant USB MIDI keyboard. It has
 particular support for the Yamaha CP88/CP73, which can carry both the notes
 and the sound over a single USB cable.
 
-*Bag-O-Synths is an independent project, not affiliated with or endorsed by
+*RigAlong is an independent project, not affiliated with or endorsed by
 Yamaha. "CP88" and "CP73" are named only as compatible hardware.*
 
 ---
@@ -341,7 +341,7 @@ Every setlist and song, with its history.
 
 1. Connect the keyboard's USB TO HOST port to the tablet with a USB A-B cable,
    through a USB-C adapter or a hub if needed.
-2. Start Bag-O-Synths and allow it to use the USB device ("always allow").
+2. Start RigAlong and allow it to use the USB device ("always allow").
 3. In Setup, set audio and MIDI to **USB device**. Both sound and notes then
    travel over that single cable, and the tablet's sound comes out of the
    keyboard's own outputs.

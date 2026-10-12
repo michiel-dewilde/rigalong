@@ -17,10 +17,10 @@
 #include <pthread.h>
 #include <thread>
 
-#include <bagosynths/Denormals.h>
-#include <bagosynths/SampleFormat.h>
+#include <rigalong/Denormals.h>
+#include <rigalong/SampleFormat.h>
 
-#define LOG_TAG "bos-audio"
+#define LOG_TAG "rigalong-audio"
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
 #define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, __VA_ARGS__)
 
@@ -776,12 +776,12 @@ oboe::DataCallbackResult AudioEngine::onAudioReady(oboe::AudioStream* stream,
         case oboe::AudioFormat::I24:
             // The CP-88's format. Implemented in engine/, where it is tested
             // against known bytes -- see SampleFormat.h for why that matters.
-            bagosynths::packI24(src, static_cast<uint8_t*>(audioData),
+            rigalong::packI24(src, static_cast<uint8_t*>(audioData),
                                 static_cast<int>(samples));
             break;
 
         case oboe::AudioFormat::I32:
-            bagosynths::packI32(src, static_cast<int32_t*>(audioData),
+            rigalong::packI32(src, static_cast<int32_t*>(audioData),
                                 static_cast<int>(samples));
             break;
         default:
@@ -824,19 +824,19 @@ oboe::DataCallbackResult AudioEngine::onAudioReady(oboe::AudioStream* stream,
 // the part was selected again. Releasing costs a little work, but only when a
 // part is switched, which is a human action and not a per-block one.
 void AudioEngine::updateInstrumentGates(int frames) {
-    struct Gate { bagosynths::Node* node; float level; };
+    struct Gate { rigalong::Node* node; float level; };
     // Every instance, the added ones too: read up to the published count only.
     const int count = mInstanceCount.load(std::memory_order_acquire);
     Gate gates[kMaxInstances];
     for (int k = 0; k < count; ++k) {
-        bagosynths::Node* n = mInstanceNode[k];
+        rigalong::Node* n = mInstanceNode[k];
         gates[k] = {n, n ? n->getParam(mInstanceLevelParam[k]) : 0.0f};
     }
     const int quietFrames = static_cast<int>(currentRate() * kQuietSeconds);
     // Twice the gain ramp, so the level is provably at zero before any voice is
     // cut. Cheap insurance against an off-by-one-block.
     const int fadeFrames =
-        static_cast<int>(currentRate() * bagosynths::SmoothedGain::kRampSeconds * 2.0) + 1;
+        static_cast<int>(currentRate() * rigalong::SmoothedGain::kRampSeconds * 2.0) + 1;
     const int ceilingFrames = static_cast<int>(currentRate() * kQuietCeilingSeconds);
     for (int i = 0; i < count; ++i) {
         const Gate& g = gates[i];
@@ -1028,7 +1028,7 @@ void AudioEngine::renderBlockIntoRing(int frames) {
     // use, then re-read the current one and retry if it moved under us. The
     // loop runs twice at most in practice -- only a rebuild landing in this
     // exact window makes it turn a second time.
-    bagosynths::Schedule* schedule = nullptr;
+    rigalong::Schedule* schedule = nullptr;
     for (;;) {
         schedule = mSchedule.load(std::memory_order_acquire);
         if (schedule == nullptr) {
@@ -1041,7 +1041,7 @@ void AudioEngine::renderBlockIntoRing(int frames) {
     // RELEASE IT on every exit from here on, or the retiring side will keep
     // this generation alive for ever.
     struct HazardRelease {
-        std::atomic<bagosynths::Schedule*>* h;
+        std::atomic<rigalong::Schedule*>* h;
         ~HazardRelease() { h->store(nullptr, std::memory_order_release); }
     } hazardRelease{&mScheduleHazard};
 
@@ -1064,7 +1064,7 @@ void AudioEngine::renderBlockIntoRing(int frames) {
         applyControlMaps(*schedule->midiInputSink);
 
         if (mProbeState.load(std::memory_order_acquire) == ProbeState::ArmedForNote) {
-            const bagosynths::MidiBuffer& in = *schedule->midiInputSink;
+            const rigalong::MidiBuffer& in = *schedule->midiInputSink;
             for (int i = 0; i < in.size(); ++i) {
                 if ((in[i].status & 0xF0u) == 0x90 && in[i].data2 > 0) {
                     mFramesSinceClick = 0;
@@ -1086,7 +1086,7 @@ void AudioEngine::renderBlockIntoRing(int frames) {
 
     // Interleave, dither, and write into the ring.
     if (schedule->audioOutputSource != nullptr) {
-        const bagosynths::AudioPort& src = *schedule->audioOutputSource;
+        const rigalong::AudioPort& src = *schedule->audioOutputSource;
         const float* l = src.channel(0);
         const float* r = src.width > 1 ? src.channel(1) : l;
         // Peak the block while it is being interleaved: the samples are already
@@ -1163,7 +1163,7 @@ void AudioEngine::renderLoop() {
     // BELOW the USB reap thread on purpose. The ring exists so that a late
     // render block is absorbed and inaudible; nothing absorbs a late URB. See
     // RealtimePriority.h.
-    bos::raiseRenderPriority("render thread", bos::kRenderNice);
+    rigalong::raiseRenderPriority("render thread", rigalong::kRenderNice);
     enableFlushToZero();
 
     // And the part that actually moves the needle on this tablet: a
@@ -1729,7 +1729,7 @@ void AudioEngine::resetPeaks() {
     // Per-node peaks as well, so the profile log and this button agree.
     {
         std::lock_guard<std::mutex> lock(mStreamLock);
-        if (bagosynths::Schedule* s = mSchedule.load(std::memory_order_acquire)) {
+        if (rigalong::Schedule* s = mSchedule.load(std::memory_order_acquire)) {
             s->resetProfile();
         }
     }
@@ -1748,15 +1748,15 @@ void AudioEngine::resetPeaks() {
 bool AudioEngine::rebuildGraph(std::string* error) {
     // Off the audio thread. Build the default patch the first time round.
     if (mSfizz == nullptr) {
-        auto midiIn = std::make_unique<bagosynths::MidiInNode>();
-        auto sfizz = std::make_unique<bagosynths::SfizzNode>();
-        auto setBfreeNode = std::make_unique<bagosynths::SetBfreeNode>();
-        auto surge = std::make_unique<bagosynths::SurgeNode>();
-        auto dexed = std::make_unique<bagosynths::DexedNode>();
-        auto plaits = std::make_unique<bagosynths::PlaitsNode>();
-        auto fluid = std::make_unique<bagosynths::FluidNode>();
-        auto reverb = std::make_unique<bagosynths::ReverbNode>();
-        auto out = std::make_unique<bagosynths::AudioOutNode>();
+        auto midiIn = std::make_unique<rigalong::MidiInNode>();
+        auto sfizz = std::make_unique<rigalong::SfizzNode>();
+        auto setBfreeNode = std::make_unique<rigalong::SetBfreeNode>();
+        auto surge = std::make_unique<rigalong::SurgeNode>();
+        auto dexed = std::make_unique<rigalong::DexedNode>();
+        auto plaits = std::make_unique<rigalong::PlaitsNode>();
+        auto fluid = std::make_unique<rigalong::FluidNode>();
+        auto reverb = std::make_unique<rigalong::ReverbNode>();
+        auto out = std::make_unique<rigalong::AudioOutNode>();
 
         mSfizz = sfizz.get();
         mSetBfree = setBfreeNode.get();
@@ -1766,15 +1766,15 @@ bool AudioEngine::rebuildGraph(std::string* error) {
         mFluid = fluid.get();
         mReverb = reverb.get();
 
-        const bagosynths::NodeId idMidi = mGraph.addNode(std::move(midiIn));
-        const bagosynths::NodeId idSfizz = mGraph.addNode(std::move(sfizz));
-        const bagosynths::NodeId idSetBfree = mGraph.addNode(std::move(setBfreeNode));
-        const bagosynths::NodeId idSurge = mGraph.addNode(std::move(surge));
-        const bagosynths::NodeId idDexed = mGraph.addNode(std::move(dexed));
-        const bagosynths::NodeId idPlaits = mGraph.addNode(std::move(plaits));
-        const bagosynths::NodeId idFluid = mGraph.addNode(std::move(fluid));
-        const bagosynths::NodeId idReverb = mGraph.addNode(std::move(reverb));
-        const bagosynths::NodeId idOut = mGraph.addNode(std::move(out));
+        const rigalong::NodeId idMidi = mGraph.addNode(std::move(midiIn));
+        const rigalong::NodeId idSfizz = mGraph.addNode(std::move(sfizz));
+        const rigalong::NodeId idSetBfree = mGraph.addNode(std::move(setBfreeNode));
+        const rigalong::NodeId idSurge = mGraph.addNode(std::move(surge));
+        const rigalong::NodeId idDexed = mGraph.addNode(std::move(dexed));
+        const rigalong::NodeId idPlaits = mGraph.addNode(std::move(plaits));
+        const rigalong::NodeId idFluid = mGraph.addNode(std::move(fluid));
+        const rigalong::NodeId idReverb = mGraph.addNode(std::move(reverb));
+        const rigalong::NodeId idOut = mGraph.addNode(std::move(out));
 
         // The default patch. Built in code; identical in every respect to what
         // the editor will later produce by hand.
@@ -1816,14 +1816,14 @@ bool AudioEngine::rebuildGraph(std::string* error) {
         // and route without a recompile and without stranding a held note.
         // The zones are added AFTER every existing node, so the prototype's
         // saved patches, which address nodes by ordinal, still line up.
-        const bagosynths::NodeId engines[kRackSize] = {idSfizz, idSetBfree, idSurge,
+        const rigalong::NodeId engines[kRackSize] = {idSfizz, idSetBfree, idSurge,
                                                        idDexed, idPlaits, idFluid};
         mIdMidiIn = idMidi;
         mIdReverb = idReverb;
         for (int i = 0; i < kRackSize; ++i) {
-            auto z = std::make_unique<bagosynths::MidiZoneNode>();
+            auto z = std::make_unique<rigalong::MidiZoneNode>();
             mZone[i] = z.get();
-            const bagosynths::NodeId idZone = mGraph.addNode(std::move(z));
+            const rigalong::NodeId idZone = mGraph.addNode(std::move(z));
             mGraph.connect(idMidi, 0, idZone, 0);
             mRackMidi[i] = mGraph.connectSwitchable(idZone, 0, engines[i], 0);
         }
@@ -1832,17 +1832,17 @@ bool AudioEngine::rebuildGraph(std::string* error) {
         // switchable wire follows it, so an engine's delay tail goes where the
         // engine's sound goes.
         for (int i = 0; i < kRackSize; ++i) {
-            auto fx = std::make_unique<bagosynths::FxNode>();
+            auto fx = std::make_unique<rigalong::FxNode>();
             mFx[i] = fx.get();
-            const bagosynths::NodeId idFx = mGraph.addNode(std::move(fx));
+            const rigalong::NodeId idFx = mGraph.addNode(std::move(fx));
             mGraph.connect(engines[i], 0, idFx, 0);
             mRackAudio[i] = mGraph.connectSwitchable(idFx, 0, idReverb, 0);
         }
         // The six are instances 0-5.
-        bagosynths::Node* nodes[kRackSize] = {mSfizz, mSetBfree, mSurge, mDexed, mPlaits, mFluid};
-        const int levels[kRackSize] = {bagosynths::SfizzNode::kLevel, bagosynths::SetBfreeNode::kLevel,
-                                       bagosynths::SurgeNode::kLevel, bagosynths::DexedNode::kLevel,
-                                       bagosynths::PlaitsNode::kLevel, bagosynths::FluidNode::kLevel};
+        rigalong::Node* nodes[kRackSize] = {mSfizz, mSetBfree, mSurge, mDexed, mPlaits, mFluid};
+        const int levels[kRackSize] = {rigalong::SfizzNode::kLevel, rigalong::SetBfreeNode::kLevel,
+                                       rigalong::SurgeNode::kLevel, rigalong::DexedNode::kLevel,
+                                       rigalong::PlaitsNode::kLevel, rigalong::FluidNode::kLevel};
         for (int i = 0; i < kRackSize; ++i) {
             mInstanceType[i] = i;
             mInstanceNode[i] = nodes[i];
@@ -1851,8 +1851,8 @@ bool AudioEngine::rebuildGraph(std::string* error) {
         mInstanceCount.store(kRackSize, std::memory_order_release);
         // And one on the whole mix, after the room: a song's hall or delay over
         // everything. The seventh Fx node, so the UI finds it by order.
-        auto masterFx = std::make_unique<bagosynths::FxNode>();
-        const bagosynths::NodeId idMasterFx = mGraph.addNode(std::move(masterFx));
+        auto masterFx = std::make_unique<rigalong::FxNode>();
+        const rigalong::NodeId idMasterFx = mGraph.addNode(std::move(masterFx));
         mGraph.connect(idReverb, 0, idMasterFx, 0);
         mGraph.connect(idMasterFx, 0, idOut, 0);
 
@@ -1861,11 +1861,11 @@ bool AudioEngine::rebuildGraph(std::string* error) {
 
         // Everything but sfizz starts silent: the app opens on sfizz,
         // and each of the others is brought in with its own fader.
-        mSetBfree->setParam(bagosynths::SetBfreeNode::kLevel, 0.0f);
-        mSurge->setParam(bagosynths::SurgeNode::kLevel, 0.0f);
-        mDexed->setParam(bagosynths::DexedNode::kLevel, 0.0f);
-        mPlaits->setParam(bagosynths::PlaitsNode::kLevel, 0.0f);
-        mFluid->setParam(bagosynths::FluidNode::kLevel, 0.0f);
+        mSetBfree->setParam(rigalong::SetBfreeNode::kLevel, 0.0f);
+        mSurge->setParam(rigalong::SurgeNode::kLevel, 0.0f);
+        mDexed->setParam(rigalong::DexedNode::kLevel, 0.0f);
+        mPlaits->setParam(rigalong::PlaitsNode::kLevel, 0.0f);
+        mFluid->setParam(rigalong::FluidNode::kLevel, 0.0f);
     }
 
     return compileAndPublish(true, error);
@@ -1878,7 +1878,7 @@ bool AudioEngine::compileAndPublish(bool prepareAll, std::string* error) {
     auto compiled = mGraph.compile(rate, frames, error, prepareAll);
     if (!compiled) return false;
 
-    bagosynths::Schedule* fresh = compiled.get();
+    rigalong::Schedule* fresh = compiled.get();
     mScheduleKeepAlive.push_back(std::move(compiled));
 
     // Publish. A single release store is the whole handover.
@@ -1895,11 +1895,11 @@ bool AudioEngine::compileAndPublish(bool prepareAll, std::string* error) {
     // DESCHEDULED reader cannot exist: the reader re-reads mSchedule after
     // publishing, so it would have seen the new one and retried.
     {
-        const bagosynths::Schedule* hazard =
+        const rigalong::Schedule* hazard =
                 mScheduleHazard.load(std::memory_order_seq_cst);
         auto dead = std::remove_if(
                 mScheduleKeepAlive.begin(), mScheduleKeepAlive.end(),
-                [&](const std::unique_ptr<bagosynths::Schedule>& s) {
+                [&](const std::unique_ptr<rigalong::Schedule>& s) {
                     return s.get() != fresh && s.get() != hazard;
                 });
         mScheduleKeepAlive.erase(dead, mScheduleKeepAlive.end());
@@ -2103,13 +2103,13 @@ void AudioEngine::loadDexedBanksAsync(const std::vector<std::string>& dirs) {
 
 void AudioEngine::rescanContentAsync() {
     runOnBigStack([this] {
-        std::set<bagosynths::Node*> done;
-        auto each = [&](int type, bagosynths::Node* n) {
+        std::set<rigalong::Node*> done;
+        auto each = [&](int type, rigalong::Node* n) {
             if (n == nullptr || !done.insert(n).second) return;
             switch (type) {
-                case kRackFluid: static_cast<bagosynths::FluidNode*>(n)->scanSoundFonts(mFluidDirs); break;
-                case kRackDexed: static_cast<bagosynths::DexedNode*>(n)->loadBanks(mDexedDirs); break;
-                case kRackSurge: static_cast<bagosynths::SurgeNode*>(n)->refreshPatches(); break;
+                case kRackFluid: static_cast<rigalong::FluidNode*>(n)->scanSoundFonts(mFluidDirs); break;
+                case kRackDexed: static_cast<rigalong::DexedNode*>(n)->loadBanks(mDexedDirs); break;
+                case kRackSurge: static_cast<rigalong::SurgeNode*>(n)->refreshPatches(); break;
                 default: break;
             }
         };
@@ -2134,7 +2134,7 @@ std::string AudioEngine::instrumentId() const {
 }
 
 void AudioEngine::injectNote(int note, int velocity) {
-    bagosynths::MidiEvent e;
+    rigalong::MidiEvent e;
     e.frame = 0;
     e.status = velocity > 0 ? 0x90 : 0x80;
     e.data1 = static_cast<uint8_t>(note);
@@ -2146,7 +2146,7 @@ void AudioEngine::injectNote(int note, int velocity) {
 }
 
 void AudioEngine::injectMidi(uint8_t status, uint8_t data1, uint8_t data2) {
-    bagosynths::MidiEvent e;
+    rigalong::MidiEvent e;
     e.frame = 0;
     e.status = status;
     e.data1 = data1;
@@ -2166,7 +2166,7 @@ void AudioEngine::setControlMaps(const ControlMap* maps, int count) {
     ControlTable& t = mControlTables[(gen + 1) & 1u];
     t.count = 0;
     for (int i = 0; i < count && t.count < kMaxControlMaps; ++i) {
-        bagosynths::Node* n = mGraph.nodeAt(maps[i].node);
+        rigalong::Node* n = mGraph.nodeAt(maps[i].node);
         if (n == nullptr) continue;
         t.maps[t.count] = maps[i];
         t.nodes[t.count] = n;
@@ -2181,7 +2181,7 @@ void AudioEngine::setControlLearn(bool on) {
     mControlLearn.store(on, std::memory_order_release);
 }
 
-void AudioEngine::applyControlMaps(const bagosynths::MidiBuffer& in) {
+void AudioEngine::applyControlMaps(const rigalong::MidiBuffer& in) {
     const uint32_t gen = mControlGen.load(std::memory_order_acquire);
     if (gen != mControlSeen) {
         // New maps (a song or a live set selected): every one picks up again.
@@ -2196,7 +2196,7 @@ void AudioEngine::applyControlMaps(const bagosynths::MidiBuffer& in) {
     const bool learn = mControlLearn.load(std::memory_order_relaxed);
     if (t.count == 0 && !learn) return;
     for (int i = 0; i < in.size(); ++i) {
-        const bagosynths::MidiEvent& e = in[i];
+        const rigalong::MidiEvent& e = in[i];
         if ((e.status & 0xF0u) != 0xB0u) continue;
         const int cc = e.data1;
         // Bank selects and channel mode messages are not controls.
@@ -2226,7 +2226,7 @@ void AudioEngine::applyControlMaps(const bagosynths::MidiBuffer& in) {
 
 void AudioEngine::allNotesOff() {
     for (int ch = 0; ch < 16; ++ch) {
-        bagosynths::MidiEvent e;
+        rigalong::MidiEvent e;
         e.frame = 0;
         e.status = static_cast<uint8_t>(0xB0 | ch);
         e.data1 = 123;   // all notes off
@@ -2313,7 +2313,7 @@ void AudioEngine::logProfile() {
     // printed -- the same defect as the render path, in a debug route that
     // would have been blamed on something else entirely.
     std::lock_guard<std::mutex> lock(mStreamLock);
-    bagosynths::Schedule* sched = mSchedule.load(std::memory_order_acquire);
+    rigalong::Schedule* sched = mSchedule.load(std::memory_order_acquire);
     if (sched == nullptr) return;
     for (size_t i = 0; i < sched->steps.size(); ++i) {
         LOGI("PROFILE %-12s last=%.3f ms  max=%.3f ms",
@@ -2372,10 +2372,10 @@ void AudioEngine::packForUsb(uint8_t* dst, const float* stereo, int frames) {
             std::memcpy(dst, mPackI16.data(), static_cast<size_t>(samples) * 2);
             break;
         case 3:
-            bagosynths::packI24(f, dst, samples);
+            rigalong::packI24(f, dst, samples);
             break;
         default:
-            bagosynths::packI32(f, reinterpret_cast<int32_t*>(dst), samples);
+            rigalong::packI32(f, reinterpret_cast<int32_t*>(dst), samples);
             break;
     }
 }
@@ -2505,19 +2505,19 @@ int AudioEngine::addInstance(int type) {
     const int i = mInstanceCount.load(std::memory_order_acquire);
     if (i >= kMaxInstances || mIdMidiIn < 0 || type < 0 || type >= kRackSize) return -1;
 
-    std::unique_ptr<bagosynths::Node> node;
+    std::unique_ptr<rigalong::Node> node;
     int level = 0;
     switch (type) {
-        case kRackSfizz:   node = std::make_unique<bagosynths::SfizzNode>();   level = bagosynths::SfizzNode::kLevel; break;
-        case kRackSetBfree: node = std::make_unique<bagosynths::SetBfreeNode>(); level = bagosynths::SetBfreeNode::kLevel; break;
-        case kRackSurge:   node = std::make_unique<bagosynths::SurgeNode>();   level = bagosynths::SurgeNode::kLevel; break;
-        case kRackDexed:   node = std::make_unique<bagosynths::DexedNode>();   level = bagosynths::DexedNode::kLevel; break;
-        case kRackPlaits:  node = std::make_unique<bagosynths::PlaitsNode>();  level = bagosynths::PlaitsNode::kLevel; break;
-        default:           node = std::make_unique<bagosynths::FluidNode>();   level = bagosynths::FluidNode::kLevel; break;
+        case kRackSfizz:   node = std::make_unique<rigalong::SfizzNode>();   level = rigalong::SfizzNode::kLevel; break;
+        case kRackSetBfree: node = std::make_unique<rigalong::SetBfreeNode>(); level = rigalong::SetBfreeNode::kLevel; break;
+        case kRackSurge:   node = std::make_unique<rigalong::SurgeNode>();   level = rigalong::SurgeNode::kLevel; break;
+        case kRackDexed:   node = std::make_unique<rigalong::DexedNode>();   level = rigalong::DexedNode::kLevel; break;
+        case kRackPlaits:  node = std::make_unique<rigalong::PlaitsNode>();  level = rigalong::PlaitsNode::kLevel; break;
+        default:           node = std::make_unique<rigalong::FluidNode>();   level = rigalong::FluidNode::kLevel; break;
     }
     node->setParam(level, 0.0f);   // silent until the song gives it a level
-    bagosynths::Node* raw = node.get();
-    const bagosynths::NodeId idNode = mGraph.addNode(std::move(node));
+    rigalong::Node* raw = node.get();
+    const rigalong::NodeId idNode = mGraph.addNode(std::move(node));
     wireInstance(i, type, raw, idNode, level);
 
     std::string error;
@@ -2532,12 +2532,12 @@ int AudioEngine::addInstance(int type) {
     bool started = true;
     switch (type) {
         case kRackSurge: {
-            auto* s = static_cast<bagosynths::SurgeNode*>(raw);
+            auto* s = static_cast<rigalong::SurgeNode*>(raw);
             started = runOnBigStack([s, this, done] { s->init(mSurgeDataPath, mSurgeHomePath); done(); });
             break;
         }
         case kRackFluid: {
-            auto* f = static_cast<bagosynths::FluidNode*>(raw);
+            auto* f = static_cast<rigalong::FluidNode*>(raw);
             started = runOnBigStack([f, this, rate, done] {
                 if (f->init(rate)) { f->scanSoundFonts(mFluidDirs); f->applyRequestedSoundFont(); }
                 done();
@@ -2545,7 +2545,7 @@ int AudioEngine::addInstance(int type) {
             break;
         }
         case kRackDexed: {
-            auto* d = static_cast<bagosynths::DexedNode*>(raw);
+            auto* d = static_cast<rigalong::DexedNode*>(raw);
             started = runOnBigStack([d, this, done] { d->loadBanks(mDexedDirs); done(); });
             break;
         }
@@ -2557,15 +2557,15 @@ int AudioEngine::addInstance(int type) {
     return i;
 }
 
-void AudioEngine::wireInstance(int i, int type, bagosynths::Node* node, bagosynths::NodeId idNode, int levelParam) {
-    auto z = std::make_unique<bagosynths::MidiZoneNode>();
+void AudioEngine::wireInstance(int i, int type, rigalong::Node* node, rigalong::NodeId idNode, int levelParam) {
+    auto z = std::make_unique<rigalong::MidiZoneNode>();
     mZone[i] = z.get();
-    const bagosynths::NodeId idZone = mGraph.addNode(std::move(z));
+    const rigalong::NodeId idZone = mGraph.addNode(std::move(z));
     mGraph.connect(mIdMidiIn, 0, idZone, 0);
     mRackMidi[i] = mGraph.connectSwitchable(idZone, 0, idNode, 0);
-    auto fx = std::make_unique<bagosynths::FxNode>();
+    auto fx = std::make_unique<rigalong::FxNode>();
     mFx[i] = fx.get();
-    const bagosynths::NodeId idFx = mGraph.addNode(std::move(fx));
+    const rigalong::NodeId idFx = mGraph.addNode(std::move(fx));
     mGraph.connect(idNode, 0, idFx, 0);
     mRackAudio[i] = mGraph.connectSwitchable(idFx, 0, mIdReverb, 0);
     mInstanceType[i] = type;
@@ -2590,24 +2590,24 @@ bool AudioEngine::instanceBusy(int i) const {
 }
 
 std::string AudioEngine::instancePreset(int i) const {
-    bagosynths::Node* n = instanceNode(i);
+    rigalong::Node* n = instanceNode(i);
     if (n == nullptr) return {};
     switch (mInstanceType[i]) {
-        case kRackSfizz: return static_cast<bagosynths::SfizzNode*>(n)->instrumentId();
-        case kRackSurge: return static_cast<bagosynths::SurgeNode*>(n)->currentPatchName();
-        case kRackFluid: return static_cast<bagosynths::FluidNode*>(n)->currentSoundFontName();
+        case kRackSfizz: return static_cast<rigalong::SfizzNode*>(n)->instrumentId();
+        case kRackSurge: return static_cast<rigalong::SurgeNode*>(n)->currentPatchName();
+        case kRackFluid: return static_cast<rigalong::FluidNode*>(n)->currentSoundFontName();
         default: return {};
     }
 }
 
 void AudioEngine::loadInstancePreset(int i, const std::string& name, int program, const std::string& path) {
-    bagosynths::Node* n = instanceNode(i);
+    rigalong::Node* n = instanceNode(i);
     if (n == nullptr || name.empty()) return;
     // The first six keep their own loaders and flags, which the prototype's
     // panels share; the rest load on their own background threads.
     switch (mInstanceType[i]) {
         case kRackSfizz: {
-            auto* s = static_cast<bagosynths::SfizzNode*>(n);
+            auto* s = static_cast<rigalong::SfizzNode*>(n);
             if (i == kRackSfizz) { loadInstrumentAsync(name, path); return; }
             if (s->instrumentId() == name || path.empty()) return;
             mInstanceBusy[i].store(true, std::memory_order_release);
@@ -2618,15 +2618,15 @@ void AudioEngine::loadInstancePreset(int i, const std::string& name, int program
             return;
         }
         case kRackSetBfree: {
-            auto* h = static_cast<bagosynths::SetBfreeNode*>(n);
-            for (int k = 0; k < bagosynths::SetBfreeNode::presetCount(); ++k) {
-                if (name == bagosynths::SetBfreeNode::presetName(k)) { h->applyPreset(k, 0); return; }
+            auto* h = static_cast<rigalong::SetBfreeNode*>(n);
+            for (int k = 0; k < rigalong::SetBfreeNode::presetCount(); ++k) {
+                if (name == rigalong::SetBfreeNode::presetName(k)) { h->applyPreset(k, 0); return; }
             }
             return;
         }
         case kRackSurge: {
             if (i == kRackSurge) { loadSurgePatchNamedAsync(name); return; }
-            auto* s = static_cast<bagosynths::SurgeNode*>(n);
+            auto* s = static_cast<rigalong::SurgeNode*>(n);
             s->requestPatchNamed(name);   // honoured by init() if it is not up yet
             if (!s->ready() || mInstanceBusy[i].exchange(true, std::memory_order_acq_rel)) return;
             if (!runOnBigStack([this, s, i] {
@@ -2636,19 +2636,19 @@ void AudioEngine::loadInstancePreset(int i, const std::string& name, int program
             return;
         }
         case kRackDexed:
-            static_cast<bagosynths::DexedNode*>(n)->selectVoiceNamed(name);   // remembered until the banks are in
+            static_cast<rigalong::DexedNode*>(n)->selectVoiceNamed(name);   // remembered until the banks are in
             return;
         case kRackPlaits: {
-            for (int k = 0; k < bagosynths::PlaitsNode::kNumEngines; ++k) {
-                if (name == bagosynths::PlaitsNode::engineName(k)) {
-                    n->setParam(bagosynths::PlaitsNode::kEngine, static_cast<float>(k));
+            for (int k = 0; k < rigalong::PlaitsNode::kNumEngines; ++k) {
+                if (name == rigalong::PlaitsNode::engineName(k)) {
+                    n->setParam(rigalong::PlaitsNode::kEngine, static_cast<float>(k));
                     return;
                 }
             }
             return;
         }
         default: {
-            auto* f = static_cast<bagosynths::FluidNode*>(n);
+            auto* f = static_cast<rigalong::FluidNode*>(n);
             f->requestSoundFontNamed(name);
             if (!f->ready() || mInstanceBusy[i].exchange(true, std::memory_order_acq_rel)) return;
             if (!runOnBigStack([this, f, i, program] {

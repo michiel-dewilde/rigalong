@@ -8,13 +8,13 @@
 
 #include "harness.h"
 
-#include <bagosynths/Graph.h>
+#include <rigalong/Graph.h>
 
 #include <memory>
 #include <string>
 #include <vector>
 
-using namespace bagosynths;
+using namespace rigalong;
 
 namespace {
 

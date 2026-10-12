@@ -5,7 +5,7 @@
 #include <cstdint>
 #include <jni.h>
 
-#include <bagosynths/Graph.h>
+#include <rigalong/Graph.h>
 #include "usb/UsbMidiIn.h"
 #include "usb/UsbMidiOut.h"
 
@@ -44,7 +44,7 @@ public:
     // which the graph then carries to whichever nodes are connected.
     // Bounded: never processes more than kMaxMessagesPerBlock, so a flood of MIDI
     // cannot blow the callback deadline.
-    void poll(bagosynths::MidiBuffer& out);
+    void poll(rigalong::MidiBuffer& out);
 
     uint64_t messageCount() const { return mMessageCount.load(std::memory_order_relaxed); }
 
@@ -66,7 +66,7 @@ private:
     static constexpr int kMaxMessagesPerBlock = 64;
     static constexpr int kBufferBytes = 256;
 
-    void dispatch(const uint8_t* data, size_t numBytes, bagosynths::MidiBuffer& out);
+    void dispatch(const uint8_t* data, size_t numBytes, rigalong::MidiBuffer& out);
 
     AMidiDevice* mDevice = nullptr;
     std::atomic<AMidiOutputPort*> mPort{nullptr};

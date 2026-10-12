@@ -17,18 +17,18 @@
 # them would mean cross-compiling all six for a laptop to gain nothing testable.
 # They keep their Android-side home until there is a reason better than symmetry.
 cmake_minimum_required(VERSION 3.22)
-project(bagosynths-engine LANGUAGES CXX)
+project(rigalong-engine LANGUAGES CXX)
 
-add_library(bagosynths-engine STATIC
+add_library(rigalong-engine STATIC
         src/Graph.cpp
         src/UsbDescriptors.cpp)
 
-target_include_directories(bagosynths-engine PUBLIC
+target_include_directories(rigalong-engine PUBLIC
         ${CMAKE_CURRENT_SOURCE_DIR}/include)
 
-target_compile_features(bagosynths-engine PUBLIC cxx_std_20)
+target_compile_features(rigalong-engine PUBLIC cxx_std_20)
 
-target_compile_options(bagosynths-engine PRIVATE
+target_compile_options(rigalong-engine PRIVATE
         -Wall -Wextra -Wno-unused-parameter
         $<$<CONFIG:Release>:-O3>
         # Deliberately NOT -ffast-math, for the same reason as the app target:
@@ -36,7 +36,7 @@ target_compile_options(bagosynths-engine PRIVATE
         # preventing them. Denormals are dealt with explicitly, in Denormals.h.
         )
 
-add_library(bagosynths::engine ALIAS bagosynths-engine)
+add_library(rigalong::engine ALIAS rigalong-engine)
 
 # The tests are built by engine/tests/run_tests.sh with a plain compiler, not
 # through CMake. See the comment at the top of that script: the whole argument

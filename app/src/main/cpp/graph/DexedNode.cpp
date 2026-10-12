@@ -23,8 +23,8 @@
 #include "msfa/synth.h"
 #include "msfa/tuning.h"
 
-#define LOGI(...) __android_log_print(ANDROID_LOG_INFO, "bos-dexed", __VA_ARGS__)
-#define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, "bos-dexed", __VA_ARGS__)
+#define LOGI(...) __android_log_print(ANDROID_LOG_INFO, "rigalong-dexed", __VA_ARGS__)
+#define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, "rigalong-dexed", __VA_ARGS__)
 
 namespace {
 inline double nowSec() {
@@ -37,7 +37,7 @@ const char* const kParamNames[] = {
     "Level", "Engine", "Transpose", "Bend Range", "Mod Depth",
 };
 static_assert(sizeof(kParamNames) / sizeof(kParamNames[0]) ==
-                      static_cast<size_t>(bagosynths::DexedNode::kNumParams),
+                      static_cast<size_t>(rigalong::DexedNode::kNumParams),
               "parameter name table out of step with the enum");
 
 const char* const kEngineNames[] = {"MODERN", "MARK I", "OPL"};
@@ -68,7 +68,7 @@ inline uint8_t normparm(uint8_t value, uint8_t max) {
 }
 }  // namespace
 
-namespace bagosynths {
+namespace rigalong {
 
 DexedNode::DexedNode() {
     mParams[kLevel] = 1.0f;
@@ -713,4 +713,4 @@ void DexedNode::process(const ProcessArgs& args) {
     if (ms > mMaxRenderMs) mMaxRenderMs = ms;
 }
 
-}  // namespace bagosynths
+}  // namespace rigalong

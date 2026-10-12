@@ -24,7 +24,7 @@ int64_t nowNs() {
 }
 }  // namespace
 
-#define LOG_TAG "bos-usb"
+#define LOG_TAG "rigalong-usb"
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
 #define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, __VA_ARGS__)
 
@@ -132,7 +132,7 @@ void UsbMidiIn::stop() {
     }
 }
 
-void UsbMidiIn::push(const bagosynths::usbmidi::Message& m) {
+void UsbMidiIn::push(const rigalong::usbmidi::Message& m) {
     if (mPort >= 0 && m.port != mPort) {
         mFiltered.fetch_add(1, std::memory_order_relaxed);
         return;
@@ -300,7 +300,7 @@ void UsbMidiIn::loop() {
     // It does not fix the shape -- a queue would -- but it bounds it, and it
     // costs nothing: this thread blocks in an ioctl and does a few microseconds
     // of decode per packet.
-    bos::raiseRenderPriority("usb midi reader", bos::kTransportNice);
+    rigalong::raiseRenderPriority("usb midi reader", rigalong::kTransportNice);
     mLastReturnNs = nowNs();
 
     uint8_t buf[512];
@@ -362,11 +362,11 @@ void UsbMidiIn::consume(const uint8_t* buf, int n) {
 
     if (mUmp) {
         mUmpAsm.feed(buf, static_cast<size_t>(n),
-                     [this](const bagosynths::usbmidi::Message& m) { push(m); });
+                     [this](const rigalong::usbmidi::Message& m) { push(m); });
     } else {
         for (int i = 0; i + 3 < n; i += 4) {
-            bagosynths::usbmidi::Message m;
-            if (bagosynths::usbmidi::decodePacket(buf + i, m)) {
+            rigalong::usbmidi::Message m;
+            if (rigalong::usbmidi::decodePacket(buf + i, m)) {
                 push(m);
             } else if (buf[i] != 0 || buf[i + 1] != 0) {
                 // All-zero padding is normal and says nothing; anything

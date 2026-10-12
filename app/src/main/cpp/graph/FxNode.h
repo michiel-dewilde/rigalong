@@ -5,10 +5,10 @@
 #include <string>
 #include <vector>
 
-#include <bagosynths/Graph.h>
-#include <bagosynths/ParamQueue.h>
+#include <rigalong/Graph.h>
+#include <rigalong/ParamQueue.h>
 
-namespace bagosynths {
+namespace rigalong {
 
 // An insert effect (PLAN.md M6): one of Surge XT's effects, from sst-effects,
 // on one engine's output -- a delay, a phaser, a flanger, the rotary speaker or
@@ -129,4 +129,4 @@ private:
     std::string mSyncNames[kMaxParams];
 };
 
-}  // namespace bagosynths
+}  // namespace rigalong

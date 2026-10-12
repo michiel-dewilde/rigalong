@@ -7,11 +7,11 @@
 
 #include "harness.h"
 
-#include <bagosynths/UsbMidi.h>
+#include <rigalong/UsbMidi.h>
 
 #include <vector>
 
-using namespace bagosynths::usbmidi;
+using namespace rigalong::usbmidi;
 
 namespace {
 

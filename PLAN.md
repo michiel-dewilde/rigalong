@@ -1,4 +1,4 @@
-# Plan: Bag-O-Synths, from prototype to usable app
+# Plan: RigAlong, from prototype to usable app
 
 Made 2026-10-11 from [REQUIREMENTS.md](REQUIREMENTS.md). Requirement ids (S, I, R,
 A) are cited so every step can be traced back to what was asked. Items marked
@@ -80,7 +80,7 @@ LOG.md as found.
 ### M0. Land the prototype and measure what blocks the design
 
 * Finish V6 on the FIFO build, then commit the `usb-direct-modes` work and
-  `tools/bosstress/` to `main` and push (project rule: straight to main).
+  `tools/stress/` to `main` and push (project rule: straight to main).
 * Run V1-V4 on the CP-88 now, since they decide M4's shape. V5 waits for M7.
 * Write `docs/FORMAT.md` v0: the object types, canonical form, reference syntax,
   entry versions, the OCI mapping. It is the contract for M1.

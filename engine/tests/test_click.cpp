@@ -1,6 +1,6 @@
 // Click: the metronome, placed on the sample.
 
-#include <bagosynths/Click.h>
+#include <rigalong/Click.h>
 
 #include <cmath>
 #include <cstdlib>
@@ -8,7 +8,7 @@
 
 #include "harness.h"
 
-using bagosynths::Click;
+using rigalong::Click;
 
 namespace {
 

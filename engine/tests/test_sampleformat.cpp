@@ -9,12 +9,12 @@
 
 #include "harness.h"
 
-#include <bagosynths/SampleFormat.h>
+#include <rigalong/SampleFormat.h>
 
 #include <cstdint>
 #include <vector>
 
-using namespace bagosynths;
+using namespace rigalong;
 
 namespace {
 

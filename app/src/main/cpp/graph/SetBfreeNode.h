@@ -4,9 +4,9 @@
 #include <string>
 #include <vector>
 
-#include <bagosynths/Gain.h>
-#include <bagosynths/Graph.h>
-#include <bagosynths/ParamQueue.h>
+#include <rigalong/Gain.h>
+#include <rigalong/Graph.h>
+#include <rigalong/ParamQueue.h>
 
 // The tonewheel organ: setBfree's Beatrix engine as a graph node.
 //
@@ -35,7 +35,7 @@
 
 struct b_instance;
 
-namespace bagosynths {
+namespace rigalong {
 
 class SetBfreeNode : public Node {
 public:
@@ -164,4 +164,4 @@ private:
     SmoothedGain mGain;
 };
 
-}  // namespace bagosynths
+}  // namespace rigalong

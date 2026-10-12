@@ -3,7 +3,7 @@
 #include <android/log.h>
 
 
-#define LOG_TAG "bos-midi"
+#define LOG_TAG "rigalong-midi"
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
 #define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, __VA_ARGS__)
 
@@ -58,7 +58,7 @@ void MidiInput::close() {
     }
 }
 
-void MidiInput::poll(bagosynths::MidiBuffer& out) {
+void MidiInput::poll(rigalong::MidiBuffer& out) {
     if (mUsbOpen.load(std::memory_order_acquire)) {
         // Bounded like the AMidi path: at most kBufferBytes per block, so a
         // flood cannot blow the render deadline; the rest waits a block.
@@ -92,7 +92,7 @@ void MidiInput::poll(bagosynths::MidiBuffer& out) {
     }
 }
 
-void MidiInput::dispatch(const uint8_t* data, size_t numBytes, bagosynths::MidiBuffer& out) {
+void MidiInput::dispatch(const uint8_t* data, size_t numBytes, rigalong::MidiBuffer& out) {
     size_t i = 0;
 
     while (i < numBytes) {
@@ -146,7 +146,7 @@ void MidiInput::dispatch(const uint8_t* data, size_t numBytes, bagosynths::MidiB
         // Events are timestamped at frame 0: they are applied at the start of
         // the block. Sample-accurate placement within the block is an M5
         // refinement; at 2 ms the quantisation is well below perception.
-        bagosynths::MidiEvent ev;
+        rigalong::MidiEvent ev;
         ev.frame = 0;
         ev.status = statusByte;
         ev.data1 = d1;

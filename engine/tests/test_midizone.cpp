@@ -2,11 +2,11 @@
 // change while notes are held -- without ever stranding one (REQUIREMENTS S4.2,
 // S4.8, I4.14).
 
-#include <bagosynths/MidiZone.h>
+#include <rigalong/MidiZone.h>
 
 #include "harness.h"
 
-using namespace bagosynths;
+using namespace rigalong;
 
 namespace {
 

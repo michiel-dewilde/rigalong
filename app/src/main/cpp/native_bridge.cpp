@@ -17,7 +17,7 @@
 #include <linux/usbdevice_fs.h>
 #include <sys/ioctl.h>
 
-#include <bagosynths/UsbDescriptors.h>
+#include <rigalong/UsbDescriptors.h>
 
 namespace {
 // One engine for the process lifetime. Never destroyed while the stream could be
@@ -45,70 +45,70 @@ int64_t clickDelayNs() {
 extern "C" {
 
 JNIEXPORT jboolean JNICALL
-Java_be_mdw_bagosynths_NativeBridge_nativeStart(JNIEnv*, jobject, jint deviceId, jint bufferBursts) {
+Java_be_mdw_rigalong_NativeBridge_nativeStart(JNIEnv*, jobject, jint deviceId, jint bufferBursts) {
     return engine().start(deviceId, bufferBursts) ? JNI_TRUE : JNI_FALSE;
 }
 
 JNIEXPORT void JNICALL
-Java_be_mdw_bagosynths_NativeBridge_nativeStop(JNIEnv*, jobject) {
+Java_be_mdw_rigalong_NativeBridge_nativeStop(JNIEnv*, jobject) {
     engine().stop();
 }
 
 JNIEXPORT jboolean JNICALL
-Java_be_mdw_bagosynths_NativeBridge_nativeOpenMidi(JNIEnv* env, jobject, jobject midiDevice,
+Java_be_mdw_rigalong_NativeBridge_nativeOpenMidi(JNIEnv* env, jobject, jobject midiDevice,
                                                  jint portIndex) {
     return engine().midi().open(env, midiDevice, portIndex) ? JNI_TRUE : JNI_FALSE;
 }
 
 JNIEXPORT jboolean JNICALL
-Java_be_mdw_bagosynths_NativeBridge_nativeMidiOpen(JNIEnv*, jobject) {
+Java_be_mdw_rigalong_NativeBridge_nativeMidiOpen(JNIEnv*, jobject) {
     return engine().midi().isOpen() ? JNI_TRUE : JNI_FALSE;
 }
 
 JNIEXPORT void JNICALL
-Java_be_mdw_bagosynths_NativeBridge_nativeCloseMidi(JNIEnv*, jobject) {
+Java_be_mdw_rigalong_NativeBridge_nativeCloseMidi(JNIEnv*, jobject) {
     engine().midi().close();
 }
 
 JNIEXPORT void JNICALL
-Java_be_mdw_bagosynths_NativeBridge_nativePanic(JNIEnv*, jobject) {
+Java_be_mdw_rigalong_NativeBridge_nativePanic(JNIEnv*, jobject) {
     engine().allNotesOff();
 }
 
 // Called from Kotlin once RECORD_AUDIO has been granted. Optional: the
 // instrument works fully without it, only the latency probe needs input.
 JNIEXPORT jboolean JNICALL
-Java_be_mdw_bagosynths_NativeBridge_nativeEnableInput(JNIEnv*, jobject, jint deviceId) {
+Java_be_mdw_rigalong_NativeBridge_nativeEnableInput(JNIEnv*, jobject, jint deviceId) {
     return engine().openInput(deviceId) ? JNI_TRUE : JNI_FALSE;
 }
 
 JNIEXPORT void JNICALL
-Java_be_mdw_bagosynths_NativeBridge_nativeStartLatencyProbe(JNIEnv*, jobject) {
+Java_be_mdw_rigalong_NativeBridge_nativeStartLatencyProbe(JNIEnv*, jobject) {
     engine().startLatencyProbe();
 }
 
 JNIEXPORT void JNICALL
-Java_be_mdw_bagosynths_NativeBridge_nativeStressChord(JNIEnv*, jobject, jint count) {
+Java_be_mdw_rigalong_NativeBridge_nativeStressChord(JNIEnv*, jobject, jint count) {
     engine().stressChord(count);
 }
 
 JNIEXPORT void JNICALL
-Java_be_mdw_bagosynths_NativeBridge_nativeLogProfile(JNIEnv*, jobject) {
+Java_be_mdw_rigalong_NativeBridge_nativeLogProfile(JNIEnv*, jobject) {
     engine().logProfile();
 }
 
 JNIEXPORT void JNICALL
-Java_be_mdw_bagosynths_NativeBridge_nativeStartNoteProbe(JNIEnv*, jobject) {
+Java_be_mdw_rigalong_NativeBridge_nativeStartNoteProbe(JNIEnv*, jobject) {
     engine().startNoteProbe();
 }
 
 JNIEXPORT jboolean JNICALL
-Java_be_mdw_bagosynths_NativeBridge_nativeStartRecording(JNIEnv*, jobject, jint seconds) {
+Java_be_mdw_rigalong_NativeBridge_nativeStartRecording(JNIEnv*, jobject, jint seconds) {
     return engine().startRecording(seconds) ? JNI_TRUE : JNI_FALSE;
 }
 
 JNIEXPORT jboolean JNICALL
-Java_be_mdw_bagosynths_NativeBridge_nativeWriteRecording(JNIEnv* env, jobject, jstring wav,
+Java_be_mdw_rigalong_NativeBridge_nativeWriteRecording(JNIEnv* env, jobject, jstring wav,
                                                       jstring marks) {
     const char* w = env->GetStringUTFChars(wav, nullptr);
     const char* m = env->GetStringUTFChars(marks, nullptr);
@@ -120,27 +120,27 @@ Java_be_mdw_bagosynths_NativeBridge_nativeWriteRecording(JNIEnv* env, jobject, j
 }
 
 JNIEXPORT jfloat JNICALL
-Java_be_mdw_bagosynths_NativeBridge_nativeRecordedSeconds(JNIEnv*, jobject) {
+Java_be_mdw_rigalong_NativeBridge_nativeRecordedSeconds(JNIEnv*, jobject) {
     return engine().recordedSeconds();
 }
 
 JNIEXPORT jboolean JNICALL
-Java_be_mdw_bagosynths_NativeBridge_nativeIsRecording(JNIEnv*, jobject) {
+Java_be_mdw_rigalong_NativeBridge_nativeIsRecording(JNIEnv*, jobject) {
     return engine().isRecording() ? JNI_TRUE : JNI_FALSE;
 }
 
 JNIEXPORT void JNICALL
-Java_be_mdw_bagosynths_NativeBridge_nativeSetRenderPaused(JNIEnv*, jobject, jboolean p) {
+Java_be_mdw_rigalong_NativeBridge_nativeSetRenderPaused(JNIEnv*, jobject, jboolean p) {
     engine().setRenderPaused(p == JNI_TRUE);
 }
 
 JNIEXPORT void JNICALL
-Java_be_mdw_bagosynths_NativeBridge_nativeSetFillMs(JNIEnv*, jobject, jint ms) {
+Java_be_mdw_rigalong_NativeBridge_nativeSetFillMs(JNIEnv*, jobject, jint ms) {
     engine().setFillMs(ms);
 }
 
 JNIEXPORT void JNICALL
-Java_be_mdw_bagosynths_NativeBridge_nativeSetConcealment(JNIEnv*, jobject, jboolean on) {
+Java_be_mdw_rigalong_NativeBridge_nativeSetConcealment(JNIEnv*, jobject, jboolean on) {
     engine().setConcealment(on == JNI_TRUE);
 }
 
@@ -153,31 +153,31 @@ constexpr int kMidiUrbs = 4;
 std::atomic<int> gHostDevice{0};
 
 JNIEXPORT void JNICALL
-Java_be_mdw_bagosynths_NativeBridge_nativeSetUsbHostDevice(JNIEnv*, jobject, jint id) {
+Java_be_mdw_rigalong_NativeBridge_nativeSetUsbHostDevice(JNIEnv*, jobject, jint id) {
     gHostDevice.store(id, std::memory_order_relaxed);
 }
 
 JNIEXPORT void JNICALL
-Java_be_mdw_bagosynths_NativeBridge_nativeResetPeaks(JNIEnv*, jobject) {
+Java_be_mdw_rigalong_NativeBridge_nativeResetPeaks(JNIEnv*, jobject) {
     engine().resetPeaks();
 }
 
 // Plays a note without MIDI, so the audio path can be verified before the CP-88
 // is even plugged in.
 JNIEXPORT void JNICALL
-Java_be_mdw_bagosynths_NativeBridge_nativeTestNote(JNIEnv*, jobject, jint note, jint velocity) {
+Java_be_mdw_rigalong_NativeBridge_nativeTestNote(JNIEnv*, jobject, jint note, jint velocity) {
     engine().injectNote(note, velocity);
 }
 
 // A controller as if it had arrived over MIDI (tests of controller maps).
 JNIEXPORT void JNICALL
-Java_be_mdw_bagosynths_NativeBridge_nativeTestControl(JNIEnv*, jobject, jint cc, jint value) {
+Java_be_mdw_rigalong_NativeBridge_nativeTestControl(JNIEnv*, jobject, jint cc, jint value) {
     engine().injectMidi(0xB0, static_cast<uint8_t>(cc & 0x7F), static_cast<uint8_t>(value & 0x7F));
 }
 
 // Controller maps, as parallel arrays: cc, graph node index, parameter, range, integer.
 JNIEXPORT void JNICALL
-Java_be_mdw_bagosynths_NativeBridge_nativeSetControlMaps(JNIEnv* env, jobject, jintArray ccs, jintArray nodes,
+Java_be_mdw_rigalong_NativeBridge_nativeSetControlMaps(JNIEnv* env, jobject, jintArray ccs, jintArray nodes,
                                                        jintArray params, jfloatArray mins, jfloatArray maxs,
                                                        jbooleanArray integers) {
     const jsize n = env->GetArrayLength(ccs);
@@ -196,23 +196,23 @@ Java_be_mdw_bagosynths_NativeBridge_nativeSetControlMaps(JNIEnv* env, jobject, j
 }
 
 JNIEXPORT void JNICALL
-Java_be_mdw_bagosynths_NativeBridge_nativeControlLearn(JNIEnv*, jobject, jboolean on) {
+Java_be_mdw_rigalong_NativeBridge_nativeControlLearn(JNIEnv*, jobject, jboolean on) {
     engine().setControlLearn(on == JNI_TRUE);
 }
 
 JNIEXPORT jint JNICALL
-Java_be_mdw_bagosynths_NativeBridge_nativeTakeLearnedControl(JNIEnv*, jobject) {
+Java_be_mdw_rigalong_NativeBridge_nativeTakeLearnedControl(JNIEnv*, jobject) {
     return engine().takeLearnedControl();
 }
 
 JNIEXPORT jlong JNICALL
-Java_be_mdw_bagosynths_NativeBridge_nativeTakeMovedControls(JNIEnv*, jobject) {
+Java_be_mdw_rigalong_NativeBridge_nativeTakeMovedControls(JNIEnv*, jobject) {
     return static_cast<jlong>(engine().takeMovedControls());
 }
 
 // Loads an SFZ instrument on the loader thread. Returns immediately.
 JNIEXPORT void JNICALL
-Java_be_mdw_bagosynths_NativeBridge_nativeLoadInstrument(JNIEnv* env, jobject, jstring id,
+Java_be_mdw_rigalong_NativeBridge_nativeLoadInstrument(JNIEnv* env, jobject, jstring id,
                                                        jstring path) {
     const char* idChars = env->GetStringUTFChars(id, nullptr);
     const char* pathChars = env->GetStringUTFChars(path, nullptr);
@@ -224,7 +224,7 @@ Java_be_mdw_bagosynths_NativeBridge_nativeLoadInstrument(JNIEnv* env, jobject, j
 }
 
 JNIEXPORT jstring JNICALL
-Java_be_mdw_bagosynths_NativeBridge_nativeLoadedInstrument(JNIEnv* env, jobject) {
+Java_be_mdw_rigalong_NativeBridge_nativeLoadedInstrument(JNIEnv* env, jobject) {
     return env->NewStringUTF(engine().loadedInstrument().c_str());
 }
 
@@ -236,36 +236,36 @@ Java_be_mdw_bagosynths_NativeBridge_nativeLoadedInstrument(JNIEnv* env, jobject)
 // that would benefit from one.
 
 JNIEXPORT void JNICALL
-Java_be_mdw_bagosynths_NativeBridge_nativeSetSetBfreeParam(JNIEnv*, jobject, jint index,
+Java_be_mdw_rigalong_NativeBridge_nativeSetSetBfreeParam(JNIEnv*, jobject, jint index,
                                                       jfloat value) {
     if (auto* h = engine().setBfree()) h->setParam(index, value);
 }
 
 JNIEXPORT jfloat JNICALL
-Java_be_mdw_bagosynths_NativeBridge_nativeGetSetBfreeParam(JNIEnv*, jobject, jint index) {
+Java_be_mdw_rigalong_NativeBridge_nativeGetSetBfreeParam(JNIEnv*, jobject, jint index) {
     auto* h = engine().setBfree();
     return h ? h->getParam(index) : 0.0f;
 }
 
 JNIEXPORT jstring JNICALL
-Java_be_mdw_bagosynths_NativeBridge_nativeSetBfreeParamName(JNIEnv* env, jobject, jint index) {
+Java_be_mdw_rigalong_NativeBridge_nativeSetBfreeParamName(JNIEnv* env, jobject, jint index) {
     auto* h = engine().setBfree();
     return env->NewStringUTF(h ? h->paramName(index) : "");
 }
 
 JNIEXPORT void JNICALL
-Java_be_mdw_bagosynths_NativeBridge_nativeSetBfreePreset(JNIEnv*, jobject, jint index,
+Java_be_mdw_rigalong_NativeBridge_nativeSetBfreePreset(JNIEnv*, jobject, jint index,
                                                     jint manual) {
     if (auto* h = engine().setBfree()) h->applyPreset(index, manual);
 }
 
 JNIEXPORT jobjectArray JNICALL
-Java_be_mdw_bagosynths_NativeBridge_nativeSetBfreePresetNames(JNIEnv* env, jobject) {
-    const int count = bagosynths::SetBfreeNode::presetCount();
+Java_be_mdw_rigalong_NativeBridge_nativeSetBfreePresetNames(JNIEnv* env, jobject) {
+    const int count = rigalong::SetBfreeNode::presetCount();
     jclass stringClass = env->FindClass("java/lang/String");
     jobjectArray out = env->NewObjectArray(count, stringClass, nullptr);
     for (int i = 0; i < count; ++i) {
-        jstring name = env->NewStringUTF(bagosynths::SetBfreeNode::presetName(i));
+        jstring name = env->NewStringUTF(rigalong::SetBfreeNode::presetName(i));
         env->SetObjectArrayElement(out, i, name);
         env->DeleteLocalRef(name);
     }
@@ -274,14 +274,14 @@ Java_be_mdw_bagosynths_NativeBridge_nativeSetBfreePresetNames(JNIEnv* env, jobje
 
 // sfizz's level, so the two parts can be balanced against each other.
 JNIEXPORT void JNICALL
-Java_be_mdw_bagosynths_NativeBridge_nativeSetSfizzLevel(JNIEnv*, jobject, jfloat value) {
-    if (auto* s = engine().sfizz()) s->setParam(bagosynths::SfizzNode::kLevel, value);
+Java_be_mdw_rigalong_NativeBridge_nativeSetSfizzLevel(JNIEnv*, jobject, jfloat value) {
+    if (auto* s = engine().sfizz()) s->setParam(rigalong::SfizzNode::kLevel, value);
 }
 
 JNIEXPORT jfloat JNICALL
-Java_be_mdw_bagosynths_NativeBridge_nativeGetSfizzLevel(JNIEnv*, jobject) {
+Java_be_mdw_rigalong_NativeBridge_nativeGetSfizzLevel(JNIEnv*, jobject) {
     auto* s = engine().sfizz();
-    return s ? s->getParam(bagosynths::SfizzNode::kLevel) : 0.0f;
+    return s ? s->getParam(rigalong::SfizzNode::kLevel) : 0.0f;
 }
 
 // ---------------------------------------------------------------- surge xt
@@ -291,7 +291,7 @@ Java_be_mdw_bagosynths_NativeBridge_nativeGetSfizzLevel(JNIEnv*, jobject) {
 // patch library, the eight macros the patch author chose, and a level.
 
 JNIEXPORT void JNICALL
-Java_be_mdw_bagosynths_NativeBridge_nativeInitSurge(JNIEnv* env, jobject, jstring dataPath,
+Java_be_mdw_rigalong_NativeBridge_nativeInitSurge(JNIEnv* env, jobject, jstring dataPath,
                                                   jstring homePath) {
     const char* d = env->GetStringUTFChars(dataPath, nullptr);
     const char* h = env->GetStringUTFChars(homePath, nullptr);
@@ -301,18 +301,18 @@ Java_be_mdw_bagosynths_NativeBridge_nativeInitSurge(JNIEnv* env, jobject, jstrin
 }
 
 JNIEXPORT jboolean JNICALL
-Java_be_mdw_bagosynths_NativeBridge_nativeSurgeReady(JNIEnv*, jobject) {
+Java_be_mdw_rigalong_NativeBridge_nativeSurgeReady(JNIEnv*, jobject) {
     auto* s = engine().surge();
     return s && s->ready() ? JNI_TRUE : JNI_FALSE;
 }
 
 JNIEXPORT jboolean JNICALL
-Java_be_mdw_bagosynths_NativeBridge_nativeSurgeBusy(JNIEnv*, jobject) {
+Java_be_mdw_rigalong_NativeBridge_nativeSurgeBusy(JNIEnv*, jobject) {
     return engine().isSurgeBusy() ? JNI_TRUE : JNI_FALSE;
 }
 
 JNIEXPORT jint JNICALL
-Java_be_mdw_bagosynths_NativeBridge_nativeSurgePatchCount(JNIEnv*, jobject) {
+Java_be_mdw_rigalong_NativeBridge_nativeSurgePatchCount(JNIEnv*, jobject) {
     auto* s = engine().surge();
     return s ? s->patchCount() : 0;
 }
@@ -320,36 +320,36 @@ Java_be_mdw_bagosynths_NativeBridge_nativeSurgePatchCount(JNIEnv*, jobject) {
 // "Category/Name" -- the stable address a saved patch stores. An index would
 // mean something different the moment the library changes underneath it.
 JNIEXPORT jstring JNICALL
-Java_be_mdw_bagosynths_NativeBridge_nativeSurgePatchName(JNIEnv* env, jobject, jint index) {
+Java_be_mdw_rigalong_NativeBridge_nativeSurgePatchName(JNIEnv* env, jobject, jint index) {
     auto* s = engine().surge();
     return env->NewStringUTF(s ? s->patchName(index).c_str() : "");
 }
 
 JNIEXPORT jstring JNICALL
-Java_be_mdw_bagosynths_NativeBridge_nativeSurgePatchShortName(JNIEnv* env, jobject, jint index) {
+Java_be_mdw_rigalong_NativeBridge_nativeSurgePatchShortName(JNIEnv* env, jobject, jint index) {
     auto* s = engine().surge();
     return env->NewStringUTF(s ? s->patchDisplayName(index).c_str() : "");
 }
 
 JNIEXPORT jint JNICALL
-Java_be_mdw_bagosynths_NativeBridge_nativeSurgeCurrentPatch(JNIEnv*, jobject) {
+Java_be_mdw_rigalong_NativeBridge_nativeSurgeCurrentPatch(JNIEnv*, jobject) {
     auto* s = engine().surge();
     return s ? s->currentPatch() : -1;
 }
 
 JNIEXPORT jstring JNICALL
-Java_be_mdw_bagosynths_NativeBridge_nativeSurgeCurrentPatchName(JNIEnv* env, jobject) {
+Java_be_mdw_rigalong_NativeBridge_nativeSurgeCurrentPatchName(JNIEnv* env, jobject) {
     auto* s = engine().surge();
     return env->NewStringUTF(s ? s->currentPatchName().c_str() : "");
 }
 
 JNIEXPORT void JNICALL
-Java_be_mdw_bagosynths_NativeBridge_nativeSurgeLoadPatch(JNIEnv*, jobject, jint index) {
+Java_be_mdw_rigalong_NativeBridge_nativeSurgeLoadPatch(JNIEnv*, jobject, jint index) {
     engine().loadSurgePatchAsync(index);
 }
 
 JNIEXPORT void JNICALL
-Java_be_mdw_bagosynths_NativeBridge_nativeSurgeLoadPatchNamed(JNIEnv* env, jobject, jstring name) {
+Java_be_mdw_rigalong_NativeBridge_nativeSurgeLoadPatchNamed(JNIEnv* env, jobject, jstring name) {
     const char* n = env->GetStringUTFChars(name, nullptr);
     if (n) {
         engine().loadSurgePatchNamedAsync(n);
@@ -358,19 +358,19 @@ Java_be_mdw_bagosynths_NativeBridge_nativeSurgeLoadPatchNamed(JNIEnv* env, jobje
 }
 
 JNIEXPORT jstring JNICALL
-Java_be_mdw_bagosynths_NativeBridge_nativeSurgeMacroName(JNIEnv* env, jobject, jint index) {
+Java_be_mdw_rigalong_NativeBridge_nativeSurgeMacroName(JNIEnv* env, jobject, jint index) {
     auto* s = engine().surge();
     return env->NewStringUTF(s ? s->macroName(index).c_str() : "");
 }
 
 JNIEXPORT void JNICALL
-Java_be_mdw_bagosynths_NativeBridge_nativeSetSurgeParam(JNIEnv*, jobject, jint index,
+Java_be_mdw_rigalong_NativeBridge_nativeSetSurgeParam(JNIEnv*, jobject, jint index,
                                                       jfloat value) {
     if (auto* s = engine().surge()) s->setParam(index, value);
 }
 
 JNIEXPORT jfloat JNICALL
-Java_be_mdw_bagosynths_NativeBridge_nativeGetSurgeParam(JNIEnv*, jobject, jint index) {
+Java_be_mdw_rigalong_NativeBridge_nativeGetSurgeParam(JNIEnv*, jobject, jint index) {
     auto* s = engine().surge();
     return s ? s->getParam(index) : 0.0f;
 }
@@ -382,17 +382,17 @@ Java_be_mdw_bagosynths_NativeBridge_nativeGetSurgeParam(JNIEnv*, jobject, jint i
 // changes underneath it.
 
 JNIEXPORT void JNICALL
-Java_be_mdw_bagosynths_NativeBridge_nativeRescanContent(JNIEnv*, jobject) {
+Java_be_mdw_rigalong_NativeBridge_nativeRescanContent(JNIEnv*, jobject) {
     engine().rescanContentAsync();
 }
 
 JNIEXPORT jstring JNICALL
-Java_be_mdw_bagosynths_NativeBridge_nativeSurgeUserPatchesPath(JNIEnv* env, jobject) {
+Java_be_mdw_rigalong_NativeBridge_nativeSurgeUserPatchesPath(JNIEnv* env, jobject) {
     return env->NewStringUTF(engine().surgeUserPatchesPath().c_str());
 }
 
 JNIEXPORT void JNICALL
-Java_be_mdw_bagosynths_NativeBridge_nativeLoadDexedBanks(JNIEnv* env, jobject,
+Java_be_mdw_rigalong_NativeBridge_nativeLoadDexedBanks(JNIEnv* env, jobject,
                                                        jobjectArray dirs) {
     std::vector<std::string> paths;
     const jsize n = dirs != nullptr ? env->GetArrayLength(dirs) : 0;
@@ -409,42 +409,42 @@ Java_be_mdw_bagosynths_NativeBridge_nativeLoadDexedBanks(JNIEnv* env, jobject,
 }
 
 JNIEXPORT jboolean JNICALL
-Java_be_mdw_bagosynths_NativeBridge_nativeDexedReady(JNIEnv*, jobject) {
+Java_be_mdw_rigalong_NativeBridge_nativeDexedReady(JNIEnv*, jobject) {
     auto* d = engine().dexed();
     return d && d->ready() ? JNI_TRUE : JNI_FALSE;
 }
 
 JNIEXPORT jint JNICALL
-Java_be_mdw_bagosynths_NativeBridge_nativeDexedVoiceCount(JNIEnv*, jobject) {
+Java_be_mdw_rigalong_NativeBridge_nativeDexedVoiceCount(JNIEnv*, jobject) {
     auto* d = engine().dexed();
     return d ? d->voiceCount() : 0;
 }
 
 JNIEXPORT jstring JNICALL
-Java_be_mdw_bagosynths_NativeBridge_nativeDexedVoiceName(JNIEnv* env, jobject, jint index) {
+Java_be_mdw_rigalong_NativeBridge_nativeDexedVoiceName(JNIEnv* env, jobject, jint index) {
     auto* d = engine().dexed();
     return env->NewStringUTF(d ? d->voiceName(index).c_str() : "");
 }
 
 JNIEXPORT jint JNICALL
-Java_be_mdw_bagosynths_NativeBridge_nativeDexedCurrentVoice(JNIEnv*, jobject) {
+Java_be_mdw_rigalong_NativeBridge_nativeDexedCurrentVoice(JNIEnv*, jobject) {
     auto* d = engine().dexed();
     return d ? d->currentVoice() : -1;
 }
 
 JNIEXPORT jstring JNICALL
-Java_be_mdw_bagosynths_NativeBridge_nativeDexedCurrentVoiceName(JNIEnv* env, jobject) {
+Java_be_mdw_rigalong_NativeBridge_nativeDexedCurrentVoiceName(JNIEnv* env, jobject) {
     auto* d = engine().dexed();
     return env->NewStringUTF(d ? d->currentVoiceName().c_str() : "");
 }
 
 JNIEXPORT void JNICALL
-Java_be_mdw_bagosynths_NativeBridge_nativeDexedSelectVoice(JNIEnv*, jobject, jint index) {
+Java_be_mdw_rigalong_NativeBridge_nativeDexedSelectVoice(JNIEnv*, jobject, jint index) {
     if (auto* d = engine().dexed()) d->selectVoice(index);
 }
 
 JNIEXPORT void JNICALL
-Java_be_mdw_bagosynths_NativeBridge_nativeDexedSelectVoiceNamed(JNIEnv* env, jobject,
+Java_be_mdw_rigalong_NativeBridge_nativeDexedSelectVoiceNamed(JNIEnv* env, jobject,
                                                               jstring name) {
     auto* d = engine().dexed();
     if (d == nullptr) return;
@@ -455,23 +455,23 @@ Java_be_mdw_bagosynths_NativeBridge_nativeDexedSelectVoiceNamed(JNIEnv* env, job
 }
 
 JNIEXPORT void JNICALL
-Java_be_mdw_bagosynths_NativeBridge_nativeSetDexedParam(JNIEnv*, jobject, jint index,
+Java_be_mdw_rigalong_NativeBridge_nativeSetDexedParam(JNIEnv*, jobject, jint index,
                                                       jfloat value) {
     if (auto* d = engine().dexed()) d->setParam(index, value);
 }
 
 JNIEXPORT jfloat JNICALL
-Java_be_mdw_bagosynths_NativeBridge_nativeGetDexedParam(JNIEnv*, jobject, jint index) {
+Java_be_mdw_rigalong_NativeBridge_nativeGetDexedParam(JNIEnv*, jobject, jint index) {
     auto* d = engine().dexed();
     return d ? d->getParam(index) : 0.0f;
 }
 
 JNIEXPORT jobjectArray JNICALL
-Java_be_mdw_bagosynths_NativeBridge_nativeDexedEngineNames(JNIEnv* env, jobject) {
+Java_be_mdw_rigalong_NativeBridge_nativeDexedEngineNames(JNIEnv* env, jobject) {
     jclass stringClass = env->FindClass("java/lang/String");
-    jobjectArray out = env->NewObjectArray(bagosynths::DexedNode::kNumEngines, stringClass, nullptr);
-    for (int i = 0; i < bagosynths::DexedNode::kNumEngines; ++i) {
-        jstring name = env->NewStringUTF(bagosynths::DexedNode::engineName(i));
+    jobjectArray out = env->NewObjectArray(rigalong::DexedNode::kNumEngines, stringClass, nullptr);
+    for (int i = 0; i < rigalong::DexedNode::kNumEngines; ++i) {
+        jstring name = env->NewStringUTF(rigalong::DexedNode::engineName(i));
         env->SetObjectArrayElement(out, i, name);
         env->DeleteLocalRef(name);
     }
@@ -479,23 +479,23 @@ Java_be_mdw_bagosynths_NativeBridge_nativeDexedEngineNames(JNIEnv* env, jobject)
 }
 
 JNIEXPORT void JNICALL
-Java_be_mdw_bagosynths_NativeBridge_nativeSetPlaitsParam(JNIEnv*, jobject, jint index,
+Java_be_mdw_rigalong_NativeBridge_nativeSetPlaitsParam(JNIEnv*, jobject, jint index,
                                                        jfloat value) {
     if (auto* p = engine().plaits()) p->setParam(index, value);
 }
 
 JNIEXPORT jfloat JNICALL
-Java_be_mdw_bagosynths_NativeBridge_nativeGetPlaitsParam(JNIEnv*, jobject, jint index) {
+Java_be_mdw_rigalong_NativeBridge_nativeGetPlaitsParam(JNIEnv*, jobject, jint index) {
     auto* p = engine().plaits();
     return p ? p->getParam(index) : 0.0f;
 }
 
 JNIEXPORT jobjectArray JNICALL
-Java_be_mdw_bagosynths_NativeBridge_nativePlaitsEngineNames(JNIEnv* env, jobject) {
+Java_be_mdw_rigalong_NativeBridge_nativePlaitsEngineNames(JNIEnv* env, jobject) {
     jclass stringClass = env->FindClass("java/lang/String");
-    jobjectArray out = env->NewObjectArray(bagosynths::PlaitsNode::kNumEngines, stringClass, nullptr);
-    for (int i = 0; i < bagosynths::PlaitsNode::kNumEngines; ++i) {
-        jstring name = env->NewStringUTF(bagosynths::PlaitsNode::engineName(i));
+    jobjectArray out = env->NewObjectArray(rigalong::PlaitsNode::kNumEngines, stringClass, nullptr);
+    for (int i = 0; i < rigalong::PlaitsNode::kNumEngines; ++i) {
+        jstring name = env->NewStringUTF(rigalong::PlaitsNode::engineName(i));
         env->SetObjectArrayElement(out, i, name);
         env->DeleteLocalRef(name);
     }
@@ -503,12 +503,12 @@ Java_be_mdw_bagosynths_NativeBridge_nativePlaitsEngineNames(JNIEnv* env, jobject
 }
 
 JNIEXPORT jobjectArray JNICALL
-Java_be_mdw_bagosynths_NativeBridge_nativePlaitsParamLabels(JNIEnv* env, jobject, jint engine) {
+Java_be_mdw_rigalong_NativeBridge_nativePlaitsParamLabels(JNIEnv* env, jobject, jint engine) {
     jclass stringClass = env->FindClass("java/lang/String");
     jobjectArray out =
-            env->NewObjectArray(bagosynths::PlaitsNode::kNumLabelled, stringClass, nullptr);
-    for (int i = 0; i < bagosynths::PlaitsNode::kNumLabelled; ++i) {
-        jstring name = env->NewStringUTF(bagosynths::PlaitsNode::paramLabel(engine, i));
+            env->NewObjectArray(rigalong::PlaitsNode::kNumLabelled, stringClass, nullptr);
+    for (int i = 0; i < rigalong::PlaitsNode::kNumLabelled; ++i) {
+        jstring name = env->NewStringUTF(rigalong::PlaitsNode::paramLabel(engine, i));
         env->SetObjectArrayElement(out, i, name);
         env->DeleteLocalRef(name);
     }
@@ -516,7 +516,7 @@ Java_be_mdw_bagosynths_NativeBridge_nativePlaitsParamLabels(JNIEnv* env, jobject
 }
 
 JNIEXPORT jint JNICALL
-Java_be_mdw_bagosynths_NativeBridge_nativePlaitsActiveVoices(JNIEnv*, jobject) {
+Java_be_mdw_rigalong_NativeBridge_nativePlaitsActiveVoices(JNIEnv*, jobject) {
     auto* p = engine().plaits();
     return p ? p->activeVoices() : 0;
 }
@@ -529,7 +529,7 @@ Java_be_mdw_bagosynths_NativeBridge_nativePlaitsActiveVoices(JNIEnv*, jobject) {
 // stores.
 
 JNIEXPORT void JNICALL
-Java_be_mdw_bagosynths_NativeBridge_nativeInitFluid(JNIEnv* env, jobject, jobjectArray dirs) {
+Java_be_mdw_rigalong_NativeBridge_nativeInitFluid(JNIEnv* env, jobject, jobjectArray dirs) {
     std::vector<std::string> paths;
     const jsize n = env->GetArrayLength(dirs);
     for (jsize i = 0; i < n; ++i) {
@@ -543,77 +543,77 @@ Java_be_mdw_bagosynths_NativeBridge_nativeInitFluid(JNIEnv* env, jobject, jobjec
 }
 
 JNIEXPORT jboolean JNICALL
-Java_be_mdw_bagosynths_NativeBridge_nativeFluidReady(JNIEnv*, jobject) {
+Java_be_mdw_rigalong_NativeBridge_nativeFluidReady(JNIEnv*, jobject) {
     auto* f = engine().fluid();
     return f && f->ready() ? JNI_TRUE : JNI_FALSE;
 }
 
 JNIEXPORT jboolean JNICALL
-Java_be_mdw_bagosynths_NativeBridge_nativeFluidBusy(JNIEnv*, jobject) {
+Java_be_mdw_rigalong_NativeBridge_nativeFluidBusy(JNIEnv*, jobject) {
     return engine().isFluidBusy() ? JNI_TRUE : JNI_FALSE;
 }
 
 JNIEXPORT jint JNICALL
-Java_be_mdw_bagosynths_NativeBridge_nativeFluidFontCount(JNIEnv*, jobject) {
+Java_be_mdw_rigalong_NativeBridge_nativeFluidFontCount(JNIEnv*, jobject) {
     auto* f = engine().fluid();
     return f ? f->soundFontCount() : 0;
 }
 
 JNIEXPORT jstring JNICALL
-Java_be_mdw_bagosynths_NativeBridge_nativeFluidFontName(JNIEnv* env, jobject, jint index) {
+Java_be_mdw_rigalong_NativeBridge_nativeFluidFontName(JNIEnv* env, jobject, jint index) {
     auto* f = engine().fluid();
     return env->NewStringUTF(f ? f->soundFontName(index).c_str() : "");
 }
 
 JNIEXPORT jstring JNICALL
-Java_be_mdw_bagosynths_NativeBridge_nativeFluidCurrentFont(JNIEnv* env, jobject) {
+Java_be_mdw_rigalong_NativeBridge_nativeFluidCurrentFont(JNIEnv* env, jobject) {
     auto* f = engine().fluid();
     return env->NewStringUTF(f ? f->currentSoundFontName().c_str() : "");
 }
 
 JNIEXPORT void JNICALL
-Java_be_mdw_bagosynths_NativeBridge_nativeFluidLoadFont(JNIEnv*, jobject, jint index) {
+Java_be_mdw_rigalong_NativeBridge_nativeFluidLoadFont(JNIEnv*, jobject, jint index) {
     engine().loadSoundFontAsync(index);
 }
 
 JNIEXPORT void JNICALL
-Java_be_mdw_bagosynths_NativeBridge_nativeFluidLoadFontNamed(JNIEnv* env, jobject, jstring name) {
+Java_be_mdw_rigalong_NativeBridge_nativeFluidLoadFontNamed(JNIEnv* env, jobject, jstring name) {
     const char* c = env->GetStringUTFChars(name, nullptr);
     if (c != nullptr) engine().loadSoundFontNamedAsync(std::string(c));
     if (c) env->ReleaseStringUTFChars(name, c);
 }
 
 JNIEXPORT jint JNICALL
-Java_be_mdw_bagosynths_NativeBridge_nativeFluidPresetCount(JNIEnv*, jobject) {
+Java_be_mdw_rigalong_NativeBridge_nativeFluidPresetCount(JNIEnv*, jobject) {
     auto* f = engine().fluid();
     return f ? f->presetCount() : 0;
 }
 
 JNIEXPORT jstring JNICALL
-Java_be_mdw_bagosynths_NativeBridge_nativeFluidPresetName(JNIEnv* env, jobject, jint index) {
+Java_be_mdw_rigalong_NativeBridge_nativeFluidPresetName(JNIEnv* env, jobject, jint index) {
     auto* f = engine().fluid();
     return env->NewStringUTF(f ? f->presetName(index).c_str() : "");
 }
 
 JNIEXPORT jint JNICALL
-Java_be_mdw_bagosynths_NativeBridge_nativeFluidCurrentPreset(JNIEnv*, jobject) {
+Java_be_mdw_rigalong_NativeBridge_nativeFluidCurrentPreset(JNIEnv*, jobject) {
     auto* f = engine().fluid();
     return f ? f->currentPreset() : -1;
 }
 
 JNIEXPORT jstring JNICALL
-Java_be_mdw_bagosynths_NativeBridge_nativeFluidCurrentPresetName(JNIEnv* env, jobject) {
+Java_be_mdw_rigalong_NativeBridge_nativeFluidCurrentPresetName(JNIEnv* env, jobject) {
     auto* f = engine().fluid();
     return env->NewStringUTF(f ? f->currentPresetName().c_str() : "");
 }
 
 JNIEXPORT void JNICALL
-Java_be_mdw_bagosynths_NativeBridge_nativeFluidSelectPreset(JNIEnv*, jobject, jint index) {
+Java_be_mdw_rigalong_NativeBridge_nativeFluidSelectPreset(JNIEnv*, jobject, jint index) {
     if (auto* f = engine().fluid()) f->selectPreset(index);
 }
 
 JNIEXPORT void JNICALL
-Java_be_mdw_bagosynths_NativeBridge_nativeFluidSelectPresetNamed(JNIEnv* env, jobject,
+Java_be_mdw_rigalong_NativeBridge_nativeFluidSelectPresetNamed(JNIEnv* env, jobject,
                                                                jstring name) {
     auto* f = engine().fluid();
     const char* c = env->GetStringUTFChars(name, nullptr);
@@ -627,13 +627,13 @@ Java_be_mdw_bagosynths_NativeBridge_nativeFluidSelectPresetNamed(JNIEnv* env, jo
 }
 
 JNIEXPORT void JNICALL
-Java_be_mdw_bagosynths_NativeBridge_nativeSetFluidParam(JNIEnv*, jobject, jint index,
+Java_be_mdw_rigalong_NativeBridge_nativeSetFluidParam(JNIEnv*, jobject, jint index,
                                                       jfloat value) {
     if (auto* f = engine().fluid()) f->setParam(index, value);
 }
 
 JNIEXPORT jfloat JNICALL
-Java_be_mdw_bagosynths_NativeBridge_nativeGetFluidParam(JNIEnv*, jobject, jint index) {
+Java_be_mdw_rigalong_NativeBridge_nativeGetFluidParam(JNIEnv*, jobject, jint index) {
     auto* f = engine().fluid();
     return f ? f->getParam(index) : 0.0f;
 }
@@ -650,26 +650,26 @@ Java_be_mdw_bagosynths_NativeBridge_nativeGetFluidParam(JNIEnv*, jobject, jint i
 // inserts an enum value, so the file must not contain one.
 
 JNIEXPORT jint JNICALL
-Java_be_mdw_bagosynths_NativeBridge_nativeNodeCount(JNIEnv*, jobject) {
+Java_be_mdw_rigalong_NativeBridge_nativeNodeCount(JNIEnv*, jobject) {
     return engine().graph().nodeCount();
 }
 
 JNIEXPORT jstring JNICALL
-Java_be_mdw_bagosynths_NativeBridge_nativeNodeType(JNIEnv* env, jobject, jint index) {
-    bagosynths::Node* n = engine().graph().nodeAt(index);
+Java_be_mdw_rigalong_NativeBridge_nativeNodeType(JNIEnv* env, jobject, jint index) {
+    rigalong::Node* n = engine().graph().nodeAt(index);
     return env->NewStringUTF(n ? n->typeName() : "");
 }
 
 JNIEXPORT jint JNICALL
-Java_be_mdw_bagosynths_NativeBridge_nativeNodeParamCount(JNIEnv*, jobject, jint index) {
-    bagosynths::Node* n = engine().graph().nodeAt(index);
+Java_be_mdw_rigalong_NativeBridge_nativeNodeParamCount(JNIEnv*, jobject, jint index) {
+    rigalong::Node* n = engine().graph().nodeAt(index);
     return n ? n->numParams() : 0;
 }
 
 JNIEXPORT jstring JNICALL
-Java_be_mdw_bagosynths_NativeBridge_nativeNodeParamName(JNIEnv* env, jobject, jint index,
+Java_be_mdw_rigalong_NativeBridge_nativeNodeParamName(JNIEnv* env, jobject, jint index,
                                                       jint param) {
-    bagosynths::Node* n = engine().graph().nodeAt(index);
+    rigalong::Node* n = engine().graph().nodeAt(index);
     return env->NewStringUTF(n ? n->paramName(param) : "");
 }
 
@@ -677,42 +677,42 @@ Java_be_mdw_bagosynths_NativeBridge_nativeNodeParamName(JNIEnv* env, jobject, ji
 
 namespace {
 // The graph ordinal of `n`, which is how every other node call addresses it.
-int ordinalOf(const bagosynths::Node* n) {
-    const bagosynths::Graph& g = engine().graph();
+int ordinalOf(const rigalong::Node* n) {
+    const rigalong::Graph& g = engine().graph();
     for (int k = 0; k < g.nodeCount(); ++k) if (g.nodeAt(k) == n) return k;
     return -1;
 }
 }  // namespace
 
 JNIEXPORT jint JNICALL
-Java_be_mdw_bagosynths_NativeBridge_nativeAddInstance(JNIEnv*, jobject, jint type) {
+Java_be_mdw_rigalong_NativeBridge_nativeAddInstance(JNIEnv*, jobject, jint type) {
     return engine().addInstance(type);
 }
 
 JNIEXPORT jint JNICALL
-Java_be_mdw_bagosynths_NativeBridge_nativeInstanceCount(JNIEnv*, jobject) {
+Java_be_mdw_rigalong_NativeBridge_nativeInstanceCount(JNIEnv*, jobject) {
     return engine().instanceCount();
 }
 
 JNIEXPORT jint JNICALL
-Java_be_mdw_bagosynths_NativeBridge_nativeInstanceType(JNIEnv*, jobject, jint i) {
+Java_be_mdw_rigalong_NativeBridge_nativeInstanceType(JNIEnv*, jobject, jint i) {
     return engine().instanceType(i);
 }
 
 JNIEXPORT jint JNICALL
-Java_be_mdw_bagosynths_NativeBridge_nativeInstanceNode(JNIEnv*, jobject, jint i) {
-    const bagosynths::Node* n = engine().instanceNode(i);
+Java_be_mdw_rigalong_NativeBridge_nativeInstanceNode(JNIEnv*, jobject, jint i) {
+    const rigalong::Node* n = engine().instanceNode(i);
     return n ? ordinalOf(n) : -1;
 }
 
 JNIEXPORT jint JNICALL
-Java_be_mdw_bagosynths_NativeBridge_nativeInstanceFxNode(JNIEnv*, jobject, jint i) {
-    const bagosynths::Node* n = engine().instanceFx(i);
+Java_be_mdw_rigalong_NativeBridge_nativeInstanceFxNode(JNIEnv*, jobject, jint i) {
+    const rigalong::Node* n = engine().instanceFx(i);
     return n ? ordinalOf(n) : -1;
 }
 
 JNIEXPORT void JNICALL
-Java_be_mdw_bagosynths_NativeBridge_nativeInstanceLoadPreset(JNIEnv* env, jobject, jint i, jstring name,
+Java_be_mdw_rigalong_NativeBridge_nativeInstanceLoadPreset(JNIEnv* env, jobject, jint i, jstring name,
                                                             jint program, jstring path) {
     const char* n = env->GetStringUTFChars(name, nullptr);
     const char* p = path ? env->GetStringUTFChars(path, nullptr) : nullptr;
@@ -722,20 +722,20 @@ Java_be_mdw_bagosynths_NativeBridge_nativeInstanceLoadPreset(JNIEnv* env, jobjec
 }
 
 JNIEXPORT jboolean JNICALL
-Java_be_mdw_bagosynths_NativeBridge_nativeInstanceBusy(JNIEnv*, jobject, jint i) {
+Java_be_mdw_rigalong_NativeBridge_nativeInstanceBusy(JNIEnv*, jobject, jint i) {
     return engine().instanceBusy(i) ? JNI_TRUE : JNI_FALSE;
 }
 
 JNIEXPORT jstring JNICALL
-Java_be_mdw_bagosynths_NativeBridge_nativeInstancePreset(JNIEnv* env, jobject, jint i) {
+Java_be_mdw_rigalong_NativeBridge_nativeInstancePreset(JNIEnv* env, jobject, jint i) {
     return env->NewStringUTF(engine().instancePreset(i).c_str());
 }
 
 // A song's insert effect, whole (FxNode::configure): type, then named values.
 JNIEXPORT void JNICALL
-Java_be_mdw_bagosynths_NativeBridge_nativeFxConfigure(JNIEnv* env, jobject, jint index, jint type,
+Java_be_mdw_rigalong_NativeBridge_nativeFxConfigure(JNIEnv* env, jobject, jint index, jint type,
                                                      jobjectArray names, jfloatArray values) {
-    auto* fx = dynamic_cast<bagosynths::FxNode*>(engine().graph().nodeAt(index));
+    auto* fx = dynamic_cast<rigalong::FxNode*>(engine().graph().nodeAt(index));
     if (fx == nullptr) return;
     std::vector<std::string> n;
     const jsize count = env->GetArrayLength(names);
@@ -754,26 +754,26 @@ Java_be_mdw_bagosynths_NativeBridge_nativeFxConfigure(JNIEnv* env, jobject, jint
 // A value as the player reads it ("250 ms", "1/8"), or null where the node has
 // nothing better than the number.
 JNIEXPORT jstring JNICALL
-Java_be_mdw_bagosynths_NativeBridge_nativeNodeParamDisplay(JNIEnv* env, jobject, jint index,
+Java_be_mdw_rigalong_NativeBridge_nativeNodeParamDisplay(JNIEnv* env, jobject, jint index,
                                                          jint param, jfloat value) {
-    bagosynths::Node* n = engine().graph().nodeAt(index);
+    rigalong::Node* n = engine().graph().nodeAt(index);
     char buf[64];
     if (n == nullptr || !n->paramDisplay(param, value, buf, sizeof buf)) return nullptr;
     return env->NewStringUTF(buf);
 }
 
 JNIEXPORT jfloat JNICALL
-Java_be_mdw_bagosynths_NativeBridge_nativeGetNodeParam(JNIEnv*, jobject, jint index,
+Java_be_mdw_rigalong_NativeBridge_nativeGetNodeParam(JNIEnv*, jobject, jint index,
                                                      jint param) {
-    bagosynths::Node* n = engine().graph().nodeAt(index);
+    rigalong::Node* n = engine().graph().nodeAt(index);
     return n ? n->getParam(param) : 0.0f;
 }
 
 // A parameter's range (PLAN.md D6): {min, max, 1 if whole numbers only}.
 JNIEXPORT jfloatArray JNICALL
-Java_be_mdw_bagosynths_NativeBridge_nativeNodeParamRange(JNIEnv* env, jobject, jint index, jint param) {
-    bagosynths::ParamRange r;
-    if (bagosynths::Node* n = engine().graph().nodeAt(index)) r = n->paramRange(param);
+Java_be_mdw_rigalong_NativeBridge_nativeNodeParamRange(JNIEnv* env, jobject, jint index, jint param) {
+    rigalong::ParamRange r;
+    if (rigalong::Node* n = engine().graph().nodeAt(index)) r = n->paramRange(param);
     const jfloat v[3] = {r.min, r.max, r.integer ? 1.0f : 0.0f};
     jfloatArray out = env->NewFloatArray(3);
     env->SetFloatArrayRegion(out, 0, 3, v);
@@ -781,20 +781,20 @@ Java_be_mdw_bagosynths_NativeBridge_nativeNodeParamRange(JNIEnv* env, jobject, j
 }
 
 JNIEXPORT void JNICALL
-Java_be_mdw_bagosynths_NativeBridge_nativeSetNodeParam(JNIEnv*, jobject, jint index,
+Java_be_mdw_rigalong_NativeBridge_nativeSetNodeParam(JNIEnv*, jobject, jint index,
                                                      jint param, jfloat value) {
-    if (bagosynths::Node* n = engine().graph().nodeAt(index)) n->setParam(param, value);
+    if (rigalong::Node* n = engine().graph().nodeAt(index)) n->setParam(param, value);
 }
 
 // Edges as a flat int array, four per edge: fromNode, fromPin, toNode, toPin.
 // Node ids are mapped to ORDINALS, because an id is an allocation counter and
 // means nothing across runs -- an ordinal at least survives a patch file.
 JNIEXPORT jintArray JNICALL
-Java_be_mdw_bagosynths_NativeBridge_nativeEdges(JNIEnv* env, jobject) {
-    const bagosynths::Graph& g = engine().graph();
+Java_be_mdw_rigalong_NativeBridge_nativeEdges(JNIEnv* env, jobject) {
+    const rigalong::Graph& g = engine().graph();
     const auto& edges = g.edges();
 
-    auto ordinalOf = [&g](bagosynths::NodeId id) {
+    auto ordinalOf = [&g](rigalong::NodeId id) {
         for (int i = 0; i < g.nodeCount(); ++i) {
             if (g.idAt(i) == id) return i;
         }
@@ -803,7 +803,7 @@ Java_be_mdw_bagosynths_NativeBridge_nativeEdges(JNIEnv* env, jobject) {
 
     std::vector<jint> flat;
     flat.reserve(edges.size() * 4);
-    for (const bagosynths::Edge& e : edges) {
+    for (const rigalong::Edge& e : edges) {
         flat.push_back(ordinalOf(e.fromNode));
         flat.push_back(e.fromPin);
         flat.push_back(ordinalOf(e.toNode));
@@ -820,12 +820,12 @@ Java_be_mdw_bagosynths_NativeBridge_nativeEdges(JNIEnv* env, jobject) {
 // Stats come back as a float array rather than a formatted string: no allocation
 // or text handling on the native side, and the UI decides how to present them.
 JNIEXPORT void JNICALL
-Java_be_mdw_bagosynths_NativeBridge_nativeSetExclusive(JNIEnv*, jobject, jboolean e) {
+Java_be_mdw_rigalong_NativeBridge_nativeSetExclusive(JNIEnv*, jobject, jboolean e) {
     engine().setExclusive(e == JNI_TRUE);
 }
 
 JNIEXPORT jfloatArray JNICALL
-Java_be_mdw_bagosynths_NativeBridge_nativeGetStats(JNIEnv* env, jobject) {
+Java_be_mdw_rigalong_NativeBridge_nativeGetStats(JNIEnv* env, jobject) {
     const AudioEngine::Stats s = engine().stats();
 
     constexpr int kCount = 43;
@@ -892,12 +892,12 @@ Java_be_mdw_bagosynths_NativeBridge_nativeGetStats(JNIEnv* env, jobject) {
 }  // extern "C"
 
 extern "C" JNIEXPORT void JNICALL
-Java_be_mdw_bagosynths_NativeBridge_nativeSetPreferredRate(JNIEnv*, jobject, jint rate) {
+Java_be_mdw_rigalong_NativeBridge_nativeSetPreferredRate(JNIEnv*, jobject, jint rate) {
     engine().setPreferredRate(rate);
 }
 
 extern "C" JNIEXPORT void JNICALL
-Java_be_mdw_bagosynths_NativeBridge_nativeSetPreferredFormat(JNIEnv*, jobject, jint format) {
+Java_be_mdw_rigalong_NativeBridge_nativeSetPreferredFormat(JNIEnv*, jobject, jint format) {
     engine().setPreferredFormat(format);
 }
 
@@ -910,7 +910,7 @@ Java_be_mdw_bagosynths_NativeBridge_nativeSetPreferredFormat(JNIEnv*, jobject, j
 
 namespace {
 
-namespace usb = bagosynths::usb;
+namespace usb = rigalong::usb;
 
 // The configuration to use: the first that the class planners understand.
 // usbfs returns every configuration, and on the CP-88 the second is Yamaha's
@@ -960,7 +960,7 @@ extern "C" {
 //   then: n, the MIDI "USB interface" interfaces
 //   then: n, every interface of the configuration ("USB device")
 JNIEXPORT jintArray JNICALL
-Java_be_mdw_bagosynths_NativeBridge_nativeUsbPlan(JNIEnv* env, jobject, jbyteArray raw,
+Java_be_mdw_rigalong_NativeBridge_nativeUsbPlan(JNIEnv* env, jobject, jbyteArray raw,
                                                 jboolean preferUmp) {
     usb::Device d;
     std::string why;
@@ -968,7 +968,7 @@ Java_be_mdw_bagosynths_NativeBridge_nativeUsbPlan(JNIEnv* env, jobject, jbyteArr
     v[0] = 0;
     v[12] = 0;
     if (!parseRaw(env, raw, d, &why)) {
-        __android_log_print(ANDROID_LOG_ERROR, "bos-usb", "descriptors: %s", why.c_str());
+        __android_log_print(ANDROID_LOG_ERROR, "rigalong-usb", "descriptors: %s", why.c_str());
         v.push_back(0); v.push_back(0); v.push_back(0);
     } else if (const usb::Config* c = pickConfig(d, true, true)) {
         const usb::AudioOutPlan a = usb::planAudioOut(*c);
@@ -1011,7 +1011,7 @@ Java_be_mdw_bagosynths_NativeBridge_nativeUsbPlan(JNIEnv* env, jobject, jbyteArr
 // Order, as snd-usb-audio does it: clock rate first, with the streaming
 // interface still at alt 0, then the streaming altsetting(s), then the URBs.
 JNIEXPORT jstring JNICALL
-Java_be_mdw_bagosynths_NativeBridge_nativeStartUsbAudio(JNIEnv* env, jobject, jint fd,
+Java_be_mdw_rigalong_NativeBridge_nativeStartUsbAudio(JNIEnv* env, jobject, jint fd,
                                                       jbyteArray raw, jint bufferMs,
                                                       jint preferredRate) {
     usb::Device d;
@@ -1115,7 +1115,7 @@ Java_be_mdw_bagosynths_NativeBridge_nativeStartUsbAudio(JNIEnv* env, jobject, ji
 // clearing it also resets the data toggle and the host controller's endpoint
 // context, which is the cheapest thing left that is not a reset.
 JNIEXPORT jboolean JNICALL
-Java_be_mdw_bagosynths_NativeBridge_nativeUsbClearHalt(JNIEnv* env, jobject, jint fd,
+Java_be_mdw_rigalong_NativeBridge_nativeUsbClearHalt(JNIEnv* env, jobject, jint fd,
                                                       jbyteArray raw) {
     usb::Device d;
     if (fd < 0 || !parseRaw(env, raw, d, nullptr)) return JNI_FALSE;
@@ -1130,7 +1130,7 @@ Java_be_mdw_bagosynths_NativeBridge_nativeUsbClearHalt(JNIEnv* env, jobject, jin
         unsigned fb = p.feedbackEp.address;
         if (ioctl(fd, USBDEVFS_CLEAR_HALT, &fb) != 0) all = false;
     }
-    __android_log_print(ANDROID_LOG_INFO, "bos-usb",
+    __android_log_print(ANDROID_LOG_INFO, "rigalong-usb",
                         "clear halt: out 0x%02x fb 0x%02x -> %s", p.out.address,
                         p.feedbackEp.address, all ? "ok" : "at least one refused");
     return all ? JNI_TRUE : JNI_FALSE;
@@ -1139,7 +1139,7 @@ Java_be_mdw_bagosynths_NativeBridge_nativeUsbClearHalt(JNIEnv* env, jobject, jin
 // Stops the direct-USB output and puts the streaming interfaces back to alt 0,
 // the zero-bandwidth setting, so the bus bandwidth is actually released.
 JNIEXPORT void JNICALL
-Java_be_mdw_bagosynths_NativeBridge_nativeStopUsbAudio(JNIEnv* env, jobject, jint fd,
+Java_be_mdw_rigalong_NativeBridge_nativeStopUsbAudio(JNIEnv* env, jobject, jint fd,
                                                      jbyteArray raw) {
     engine().stop();
     usb::Device d;
@@ -1156,7 +1156,7 @@ Java_be_mdw_bagosynths_NativeBridge_nativeStopUsbAudio(JNIEnv* env, jobject, jin
 // Opens direct-USB MIDI in on `fd` (the MIDI streaming interface claimed).
 // `port` is the cable (1.0) or group (2.0). Null on success.
 JNIEXPORT jstring JNICALL
-Java_be_mdw_bagosynths_NativeBridge_nativeStartUsbMidi(JNIEnv* env, jobject, jint fd,
+Java_be_mdw_rigalong_NativeBridge_nativeStartUsbMidi(JNIEnv* env, jobject, jint fd,
                                                      jbyteArray raw, jboolean preferUmp,
                                                      jint port) {
     usb::Device d;
@@ -1191,7 +1191,7 @@ Java_be_mdw_bagosynths_NativeBridge_nativeStartUsbMidi(JNIEnv* env, jobject, jin
 
 // Whether MIDI out on the direct USB path is running (a device in a direct mode).
 JNIEXPORT jboolean JNICALL
-Java_be_mdw_bagosynths_NativeBridge_nativeUsbMidiOutReady(JNIEnv*, jobject) {
+Java_be_mdw_rigalong_NativeBridge_nativeUsbMidiOutReady(JNIEnv*, jobject) {
     return engine().midi().usbOut().running() ? JNI_TRUE : JNI_FALSE;
 }
 
@@ -1199,11 +1199,11 @@ Java_be_mdw_bagosynths_NativeBridge_nativeUsbMidiOutReady(JNIEnv*, jobject) {
 // the main out, `midi` sends a MIDI Start aligned with it. Returns the delay
 // until the first click is heard, in ns, so the visual beat can fall with it.
 JNIEXPORT jlong JNICALL
-Java_be_mdw_bagosynths_NativeBridge_nativeClickStart(JNIEnv*, jobject, jdouble bpm, jint beatsPerBar,
+Java_be_mdw_rigalong_NativeBridge_nativeClickStart(JNIEnv*, jobject, jdouble bpm, jint beatsPerBar,
                                                       jint beats, jfloat gain, jboolean audio,
                                                       jboolean midi) {
     const int64_t delay = clickDelayNs();
-    bagosynths::Click& c = engine().click();
+    rigalong::Click& c = engine().click();
     c.setGain(audio ? gain : 0.0f);
     c.start(bpm, beatsPerBar, beats);
     if (midi) midiClock().start(delay);
@@ -1211,43 +1211,43 @@ Java_be_mdw_bagosynths_NativeBridge_nativeClickStart(JNIEnv*, jobject, jdouble b
 }
 
 JNIEXPORT void JNICALL
-Java_be_mdw_bagosynths_NativeBridge_nativeClickStop(JNIEnv*, jobject, jboolean midi) {
+Java_be_mdw_rigalong_NativeBridge_nativeClickStop(JNIEnv*, jobject, jboolean midi) {
     engine().click().stop();
     if (midi) midiClock().stop();
 }
 
 JNIEXPORT jboolean JNICALL
-Java_be_mdw_bagosynths_NativeBridge_nativeClickRunning(JNIEnv*, jobject) {
+Java_be_mdw_rigalong_NativeBridge_nativeClickRunning(JNIEnv*, jobject) {
     return engine().click().running() ? JNI_TRUE : JNI_FALSE;
 }
 
 // A tempo change while the click (and the MIDI clock) run.
 JNIEXPORT void JNICALL
-Java_be_mdw_bagosynths_NativeBridge_nativeClickTempo(JNIEnv*, jobject, jdouble bpm) {
+Java_be_mdw_rigalong_NativeBridge_nativeClickTempo(JNIEnv*, jobject, jdouble bpm) {
     engine().click().setBpm(bpm);
 }
 
 // The song's tempo for the engines' tempo-synced parameters (I12.1); 0 = none.
 JNIEXPORT void JNICALL
-Java_be_mdw_bagosynths_NativeBridge_nativeSetTempo(JNIEnv*, jobject, jdouble bpm) {
+Java_be_mdw_rigalong_NativeBridge_nativeSetTempo(JNIEnv*, jobject, jdouble bpm) {
     engine().setTempo(bpm);
 }
 
 // MIDI clock out: 24 ticks a beat at `bpm`; 0 stops it.
 JNIEXPORT void JNICALL
-Java_be_mdw_bagosynths_NativeBridge_nativeMidiClock(JNIEnv*, jobject, jdouble bpm) {
+Java_be_mdw_rigalong_NativeBridge_nativeMidiClock(JNIEnv*, jobject, jdouble bpm) {
     midiClock().setTempo(bpm);
 }
 
 JNIEXPORT jlong JNICALL
-Java_be_mdw_bagosynths_NativeBridge_nativeMidiClockTicks(JNIEnv*, jobject) {
+Java_be_mdw_rigalong_NativeBridge_nativeMidiClockTicks(JNIEnv*, jobject) {
     return static_cast<jlong>(midiClock().ticksSent());
 }
 
 // Sends MIDI bytes (complete messages, SysEx included) to the device's MIDI
 // OUT endpoint in a direct-USB mode. Returns bytes accepted, or -errno.
 JNIEXPORT jint JNICALL
-Java_be_mdw_bagosynths_NativeBridge_nativeUsbMidiSend(JNIEnv* env, jobject, jbyteArray data) {
+Java_be_mdw_rigalong_NativeBridge_nativeUsbMidiSend(JNIEnv* env, jobject, jbyteArray data) {
     const jsize n = env->GetArrayLength(data);
     std::vector<uint8_t> bytes(static_cast<size_t>(n));
     env->GetByteArrayRegion(data, 0, n, reinterpret_cast<jbyte*>(bytes.data()));
@@ -1258,32 +1258,32 @@ Java_be_mdw_bagosynths_NativeBridge_nativeUsbMidiSend(JNIEnv* env, jobject, jbyt
 // and gain of its two wires. Index order: sfizz, setBfree, surge, dexed,
 // plaits, fluid.
 JNIEXPORT void JNICALL
-Java_be_mdw_bagosynths_NativeBridge_nativeRackWire(JNIEnv*, jobject, jint i, jboolean midiOn,
+Java_be_mdw_rigalong_NativeBridge_nativeRackWire(JNIEnv*, jobject, jint i, jboolean midiOn,
                                                   jboolean audioOn, jfloat gain) {
     engine().setRackWire(i, midiOn == JNI_TRUE, audioOn == JNI_TRUE, gain);
 }
 
 JNIEXPORT void JNICALL
-Java_be_mdw_bagosynths_NativeBridge_nativeZoneParam(JNIEnv*, jobject, jint i, jint param, jfloat value) {
-    if (bagosynths::MidiZoneNode* z = engine().zone(i)) z->setParam(param, value);
+Java_be_mdw_rigalong_NativeBridge_nativeZoneParam(JNIEnv*, jobject, jint i, jint param, jfloat value) {
+    if (rigalong::MidiZoneNode* z = engine().zone(i)) z->setParam(param, value);
 }
 
 JNIEXPORT jfloat JNICALL
-Java_be_mdw_bagosynths_NativeBridge_nativeGetZoneParam(JNIEnv*, jobject, jint i, jint param) {
-    bagosynths::MidiZoneNode* z = engine().zone(i);
+Java_be_mdw_rigalong_NativeBridge_nativeGetZoneParam(JNIEnv*, jobject, jint i, jint param) {
+    rigalong::MidiZoneNode* z = engine().zone(i);
     return z ? z->getParam(param) : 0.0f;
 }
 
 // TEST: stall the USB reap loop once for `ms` (a starved IN queue).
 JNIEXPORT void JNICALL
-Java_be_mdw_bagosynths_NativeBridge_nativeUsbTestStall(JNIEnv*, jobject, jint ms) {
+Java_be_mdw_rigalong_NativeBridge_nativeUsbTestStall(JNIEnv*, jobject, jint ms) {
     engine().usbOut().testStall(ms);
 }
 
 // The MIDI monitor (usb/MidiMonitor.h): the newest messages in and out, oldest
 // first, with the running total as the last element.
 JNIEXPORT jintArray JNICALL
-Java_be_mdw_bagosynths_NativeBridge_nativeMidiRecent(JNIEnv* env, jobject) {
+Java_be_mdw_rigalong_NativeBridge_nativeMidiRecent(JNIEnv* env, jobject) {
     uint32_t buf[midimon::kSize + 1];
     uint32_t total = 0;
     const int n = midimon::recent(buf, midimon::kSize, &total);
@@ -1295,7 +1295,7 @@ Java_be_mdw_bagosynths_NativeBridge_nativeMidiRecent(JNIEnv* env, jobject) {
 
 // Which controllers go into the selection ring (I10.4); learn: every one.
 JNIEXPORT void JNICALL
-Java_be_mdw_bagosynths_NativeBridge_nativeWatchControllers(JNIEnv*, jobject, jlong low, jlong high, jboolean learn) {
+Java_be_mdw_rigalong_NativeBridge_nativeWatchControllers(JNIEnv*, jobject, jlong low, jlong high, jboolean learn) {
     engine().midi().usbMutable().watchControllers(static_cast<uint64_t>(low), static_cast<uint64_t>(high),
                                                   learn == JNI_TRUE);
 }
@@ -1303,7 +1303,7 @@ Java_be_mdw_bagosynths_NativeBridge_nativeWatchControllers(JNIEnv*, jobject, jlo
 // Program Changes received on the direct-USB MIDI input, each packed as
 // (channel << 24 | bank msb << 16 | bank lsb << 8 | program); empty if none.
 JNIEXPORT jintArray JNICALL
-Java_be_mdw_bagosynths_NativeBridge_nativeDrainPrograms(JNIEnv* env, jobject) {
+Java_be_mdw_rigalong_NativeBridge_nativeDrainPrograms(JNIEnv* env, jobject) {
     uint32_t buf[64];
     const int n = engine().midi().usb().drainPrograms(buf, 64);
     jintArray out = env->NewIntArray(n);
@@ -1313,7 +1313,7 @@ Java_be_mdw_bagosynths_NativeBridge_nativeDrainPrograms(JNIEnv* env, jobject) {
 
 // One complete SysEx message received on the direct-USB MIDI input, or null.
 JNIEXPORT jbyteArray JNICALL
-Java_be_mdw_bagosynths_NativeBridge_nativeUsbSysexDrain(JNIEnv* env, jobject) {
+Java_be_mdw_rigalong_NativeBridge_nativeUsbSysexDrain(JNIEnv* env, jobject) {
     uint8_t buf[4096];
     int n;
     do { n = engine().midi().usb().drainSysex(buf, sizeof buf); } while (n < 0);
@@ -1324,28 +1324,28 @@ Java_be_mdw_bagosynths_NativeBridge_nativeUsbSysexDrain(JNIEnv* env, jobject) {
 }
 
 JNIEXPORT void JNICALL
-Java_be_mdw_bagosynths_NativeBridge_nativePrepareGraph(JNIEnv*, jobject) {
+Java_be_mdw_rigalong_NativeBridge_nativePrepareGraph(JNIEnv*, jobject) {
     engine().prepareGraph();
 }
 
 JNIEXPORT void JNICALL
-Java_be_mdw_bagosynths_NativeBridge_nativeSetMasterDb(JNIEnv*, jobject, jfloat db) {
+Java_be_mdw_rigalong_NativeBridge_nativeSetMasterDb(JNIEnv*, jobject, jfloat db) {
     engine().setMasterDb(db);
 }
 
 JNIEXPORT jfloat JNICALL
-Java_be_mdw_bagosynths_NativeBridge_nativeGetMasterDb(JNIEnv*, jobject) {
+Java_be_mdw_rigalong_NativeBridge_nativeGetMasterDb(JNIEnv*, jobject) {
     return engine().masterDb();
 }
 
 // GET_INTERFACE: the altsetting the device reports, -1 if it will not say.
 JNIEXPORT jint JNICALL
-Java_be_mdw_bagosynths_NativeBridge_nativeUsbAltSetting(JNIEnv*, jobject, jint fd, jint iface) {
+Java_be_mdw_rigalong_NativeBridge_nativeUsbAltSetting(JNIEnv*, jobject, jint fd, jint iface) {
     return usbctl::currentAltSetting(fd, iface);
 }
 
 JNIEXPORT jboolean JNICALL
-Java_be_mdw_bagosynths_NativeBridge_nativeUsbReconnectKernel(JNIEnv*, jobject, jint fd,
+Java_be_mdw_rigalong_NativeBridge_nativeUsbReconnectKernel(JNIEnv*, jobject, jint fd,
                                                            jint iface) {
     return usbctl::reconnectKernelDriver(fd, iface) ? JNI_TRUE : JNI_FALSE;
 }
@@ -1367,7 +1367,7 @@ Java_be_mdw_bagosynths_NativeBridge_nativeUsbReconnectKernel(JNIEnv*, jobject, j
 // loudest finding of all: it would mean the function is wedged rather than
 // merely quiet.
 JNIEXPORT jintArray JNICALL
-Java_be_mdw_bagosynths_NativeBridge_nativeUsbHealthProbe(JNIEnv* env, jobject, jint fd,
+Java_be_mdw_rigalong_NativeBridge_nativeUsbHealthProbe(JNIEnv* env, jobject, jint fd,
                                                        jbyteArray raw) {
     jint out[4] = {-1, -1, -1, -1};
     usb::Device d;
@@ -1386,7 +1386,7 @@ Java_be_mdw_bagosynths_NativeBridge_nativeUsbHealthProbe(JNIEnv* env, jobject, j
             }
         }
     }
-    __android_log_print(ANDROID_LOG_INFO, "bos-usb",
+    __android_log_print(ANDROID_LOG_INFO, "rigalong-usb",
                         "device health: epHalted=%d clockValid=%d rate=%d alt=%d",
                         out[0], out[1], out[2], out[3]);
     jintArray arr = env->NewIntArray(4);
@@ -1395,14 +1395,14 @@ Java_be_mdw_bagosynths_NativeBridge_nativeUsbHealthProbe(JNIEnv* env, jobject, j
 }
 
 JNIEXPORT jboolean JNICALL
-Java_be_mdw_bagosynths_NativeBridge_nativeUsbReset(JNIEnv*, jobject, jint fd) {
+Java_be_mdw_rigalong_NativeBridge_nativeUsbReset(JNIEnv*, jobject, jint fd) {
     return usbctl::resetDevice(fd) ? JNI_TRUE : JNI_FALSE;
 }
 
 // The ALSA names, so Kotlin never builds one itself and they cannot drift
 // from the rule that is tested in engine/.
 JNIEXPORT jstring JNICALL
-Java_be_mdw_bagosynths_NativeBridge_nativeAlsaCardName(JNIEnv* env, jobject, jstring product,
+Java_be_mdw_rigalong_NativeBridge_nativeAlsaCardName(JNIEnv* env, jobject, jstring product,
                                                      jint vid, jint pid) {
     const char* p = product ? env->GetStringUTFChars(product, nullptr) : nullptr;
     const std::string name = usb::alsaCardName(p ? p : "", static_cast<uint16_t>(vid),
@@ -1412,7 +1412,7 @@ Java_be_mdw_bagosynths_NativeBridge_nativeAlsaCardName(JNIEnv* env, jobject, jst
 }
 
 JNIEXPORT jstring JNICALL
-Java_be_mdw_bagosynths_NativeBridge_nativeAlsaMidiPortName(JNIEnv* env, jobject, jstring card,
+Java_be_mdw_rigalong_NativeBridge_nativeAlsaMidiPortName(JNIEnv* env, jobject, jstring card,
                                                          jstring jack, jint index) {
     const char* c = card ? env->GetStringUTFChars(card, nullptr) : nullptr;
     const char* j = jack ? env->GetStringUTFChars(jack, nullptr) : nullptr;

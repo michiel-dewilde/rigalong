@@ -16,7 +16,7 @@
 #include "sst/effects/Reverb2.h"
 #include "sst/effects/RotarySpeaker.h"
 
-namespace bagosynths {
+namespace rigalong {
 namespace {
 
 namespace sfx = sst::effects;
@@ -335,4 +335,4 @@ void FxNode::process(const ProcessArgs& args) {
     mRenderSeq.fetch_add(1, std::memory_order_seq_cst);   // even: out
 }
 
-}  // namespace bagosynths
+}  // namespace rigalong

@@ -11,11 +11,11 @@
 #include <atomic>
 #include <string>
 
-#define LOG_TAG "bos-sched"
+#define LOG_TAG "rigalong-sched"
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
 #define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, __VA_ARGS__)
 
-namespace bos {
+namespace rigalong {
 
 void raiseRenderPriority(const char* what, int niceValue) {
     // 1. Real-time, properly. Priority 2 rather than something greedy: this is
@@ -143,4 +143,4 @@ void PerfHint::stop() {
     LOGI("performance hints: session closed");
 }
 
-}  // namespace bos
+}  // namespace rigalong

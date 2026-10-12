@@ -296,7 +296,7 @@ private:
 
     // ADPF for this thread: a session stating its deadline (one packet) and
     // what the work cost, so the governor keeps it off a little core.
-    bos::PerfHint mHint;
+    rigalong::PerfHint mHint;
 
     // Written by the reap thread, read by stats().
     std::atomic<int64_t> mFrames{0}, mOutBytes{0}, mHolds{0}, mRestarts{0},

@@ -1,4 +1,4 @@
-# Requirements: Bag-O-Synths, from prototype to usable app
+# Requirements: RigAlong, from prototype to usable app
 
 Collected from Michiel, one round at a time. **This is a requirements list, not
 a plan.** No plan is made until Michiel asks for one explicitly.
@@ -665,7 +665,7 @@ Stated (2026-10-11): the design below
   registry then keeps all of them alive (R8.4), and pulling one tag pulls
   everything it needs. Listing the closure costs only digests, because the
   registry stores each blob once. Media types name the app's object types
-  (e.g. `application/vnd.bagosynths.patch.v1+json`).
+  (e.g. `application/vnd.rigalong.patch.v1+json`).
 * I8.30 Downloadable content that is not the user's to redistribute (I8.3) is
   left out of the closure by default and recorded as "fetch from source".
 * I8.31 **Divergence** between devices (I8.21, I8.23) is found by comparing

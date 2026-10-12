@@ -5,12 +5,12 @@
 #include <string>
 #include <vector>
 
-#include <bagosynths/Gain.h>
-#include <bagosynths/Graph.h>
+#include <rigalong/Gain.h>
+#include <rigalong/Graph.h>
 
 namespace sfz { class Sfizz; }
 
-namespace bagosynths {
+namespace rigalong {
 
 // Entry point for hardware MIDI. The engine writes into this node's output
 // buffer before running the schedule.
@@ -248,4 +248,4 @@ private:
     float mAttack = 0.0f, mRelease = 0.0f;
 };
 
-}  // namespace bagosynths
+}  // namespace rigalong

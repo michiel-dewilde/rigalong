@@ -18,7 +18,7 @@ set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ENGINE="$(cd "$HERE/.." && pwd)"
-OUT="${TMPDIR:-/tmp}/bagosynths-engine-tests"
+OUT="${TMPDIR:-/tmp}/rigalong-engine-tests"
 
 : "${CXX:=g++}"
 

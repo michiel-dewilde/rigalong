@@ -15,7 +15,7 @@
 
 #include "sst/basic-blocks/dsp/LanczosResampler.h"
 
-#define LOGI(...) __android_log_print(ANDROID_LOG_INFO, "bos-plaits", __VA_ARGS__)
+#define LOGI(...) __android_log_print(ANDROID_LOG_INFO, "rigalong-plaits", __VA_ARGS__)
 
 namespace {
 inline double nowSec() {
@@ -29,7 +29,7 @@ const char* const kParamNames[] = {
     "Decay", "Colour", "Aux Mix", "Transpose", "Bend Range", "Mod Depth",
 };
 static_assert(sizeof(kParamNames) / sizeof(kParamNames[0]) ==
-                      static_cast<size_t>(bagosynths::PlaitsNode::kNumParams),
+                      static_cast<size_t>(rigalong::PlaitsNode::kNumParams),
               "parameter names and the Param enum have drifted apart");
 
 // The order is the one Voice::Init registers the engines in, which is the order
@@ -54,7 +54,7 @@ const char* const kEngineNames[] = {
     "HI-HAT",           // 15
 };
 static_assert(sizeof(kEngineNames) / sizeof(kEngineNames[0]) ==
-                      static_cast<size_t>(bagosynths::PlaitsNode::kNumEngines),
+                      static_cast<size_t>(rigalong::PlaitsNode::kNumEngines),
               "engine names and the plaits registry have drifted apart");
 
 // What the three knobs mean in each model.
@@ -85,7 +85,7 @@ const char* const kParamLabels[][4] = {
     {"Tone<>Noise",  "Low Cut",         "Decay Time",     "Variation"},   // 15 hi-hat
 };
 static_assert(sizeof(kParamLabels) / sizeof(kParamLabels[0]) ==
-                      static_cast<size_t>(bagosynths::PlaitsNode::kNumEngines),
+                      static_cast<size_t>(rigalong::PlaitsNode::kNumEngines),
               "the per-engine label table and the plaits registry have drifted apart");
 
 // The native rate, from plaits/dsp/dsp.h. A compile-time constant there, so a
@@ -117,7 +117,7 @@ constexpr int kSilentSubBlocksToRetire = 40;   // 40 * 12 / 48000 = 10 ms
 constexpr float kVoiceHeadroom = 0.25f;
 }  // namespace
 
-namespace bagosynths {
+namespace rigalong {
 
 // Everything that would otherwise drag the eurorack and SIMD headers into
 // PlaitsNode.h.
@@ -554,4 +554,4 @@ void PlaitsNode::process(const ProcessArgs& args) {
     if (ms > mMaxRenderMs) mMaxRenderMs = ms;
 }
 
-}  // namespace bagosynths
+}  // namespace rigalong

@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.22.1)
 # C as well as C++: setBfree's tonewheel engine is C99.
-project(bagosynths LANGUAGES C CXX)
+project(rigalong LANGUAGES C CXX)
 
 find_package(oboe REQUIRED CONFIG)
 
@@ -150,7 +150,7 @@ target_include_directories(msfa PUBLIC
         ${DEXED_DIR}/Source/msfa)
 
 set_target_properties(msfa PROPERTIES POSITION_INDEPENDENT_CODE ON)
-target_compile_definitions(msfa PRIVATE DEXED_ID="bagosynths")
+target_compile_definitions(msfa PRIVATE DEXED_ID="rigalong")
 target_compile_options(msfa PRIVATE -w $<$<CONFIG:Release>:-O3>)
 
 
@@ -194,11 +194,11 @@ target_include_directories(fluidglue PRIVATE ${STB_DIR})
 set_target_properties(fluidglue PROPERTIES POSITION_INDEPENDENT_CODE ON)
 target_compile_options(fluidglue PRIVATE -w $<$<CONFIG:Release>:-O3>)
 
-# BAGOSYNTHS_STB_VORBIS is what the patch keys off. It goes on the FluidSynth target
+# RIGALONG_STB_VORBIS is what the patch keys off. It goes on the FluidSynth target
 # rather than globally, and `libfluidsynth` must link `fluidglue` so that the
 # linker sees the definition after the reference -- static archive order is not
 # something to leave to luck.
-target_compile_definitions(libfluidsynth-OBJ PRIVATE BAGOSYNTHS_STB_VORBIS=1)
+target_compile_definitions(libfluidsynth-OBJ PRIVATE RIGALONG_STB_VORBIS=1)
 
 # NOTE the absence of `target_link_libraries(libfluidsynth ... fluidglue)`.
 #
@@ -209,7 +209,7 @@ target_compile_definitions(libfluidsynth-OBJ PRIVATE BAGOSYNTHS_STB_VORBIS=1)
 # install but not the build-tree export, which is exactly what it excludes.
 #
 # So the dependency is resolved where it actually matters -- at the final link
-# of libbagosynths.so, by listing fluidglue AFTER libfluidsynth below. An archive
+# of librigalong.so, by listing fluidglue AFTER libfluidsynth below. An archive
 # resolves its undefined symbols against what follows it on the link line, which
 # is the oldest rule there is, and it leaves FluidSynth's CMake untouched.
 
@@ -219,7 +219,7 @@ target_compile_definitions(libfluidsynth-OBJ PRIVATE BAGOSYNTHS_STB_VORBIS=1)
 # half: the parts that can only run on the device.
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../../../../engine engine)
 
-# ADDRESS SANITIZER, opt-in with -DBOS_ASAN=ON (gradle: -Pasan).
+# ADDRESS SANITIZER, opt-in with -DRIGALONG_ASAN=ON (gradle: -Pasan).
 #
 # Added 2026-09-25 to find a heap corruption that surfaces as SIGSEGV inside
 # scudo::deallocate under Schedule::~Schedule, reached from startUsb. The
@@ -231,9 +231,9 @@ add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../../../../engine engine)
 # NOT for judging audio: an ASan build is slower still than a debug build, and
 # the standing rule is that performance is only ever read from a release build.
 # The fault reproduces on ROUTING, which is not performance sensitive.
-option(BOS_ASAN "Build with AddressSanitizer" OFF)
+option(RIGALONG_ASAN "Build with AddressSanitizer" OFF)
 
-add_library(bagosynths SHARED
+add_library(rigalong SHARED
         native_bridge.cpp
         AudioEngine.cpp
         MidiInput.cpp
@@ -265,13 +265,13 @@ add_library(bagosynths SHARED
 set_source_files_properties(graph/PlaitsNode.cpp PROPERTIES
         COMPILE_DEFINITIONS TEST=1)
 
-target_include_directories(bagosynths PRIVATE
+target_include_directories(rigalong PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}
         ${SFIZZ_DIR}/src)
 
-target_compile_features(bagosynths PRIVATE cxx_std_20)
+target_compile_features(rigalong PRIVATE cxx_std_20)
 
-target_compile_options(bagosynths PRIVATE
+target_compile_options(rigalong PRIVATE
         -Wall -Wextra -Wno-unused-parameter
         $<$<CONFIG:Release>:-O3>
         # Deliberately NOT -ffast-math: it disables NaN/Inf handling, which hides
@@ -279,8 +279,8 @@ target_compile_options(bagosynths PRIVATE
         # dealt with explicitly via FPCR (see Denormals.h).
         )
 
-target_link_libraries(bagosynths
-        bagosynths::engine
+target_link_libraries(rigalong
+        rigalong::engine
         beatrix
         msfa
         libfluidsynth
@@ -293,8 +293,8 @@ target_link_libraries(bagosynths
         android
         log)
 
-if(BOS_ASAN)
-    target_compile_options(bagosynths PRIVATE -fsanitize=address -fno-omit-frame-pointer)
-    target_link_options(bagosynths PRIVATE -fsanitize=address)
-    message(STATUS "bagosynths: AddressSanitizer ENABLED")
+if(RIGALONG_ASAN)
+    target_compile_options(rigalong PRIVATE -fsanitize=address -fno-omit-frame-pointer)
+    target_link_options(rigalong PRIVATE -fsanitize=address)
+    message(STATUS "rigalong: AddressSanitizer ENABLED")
 endif()

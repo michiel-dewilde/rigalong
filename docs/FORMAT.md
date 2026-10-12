@@ -27,8 +27,8 @@ There are two kinds:
 
 * **RFC 8785 (JSON Canonicalization Scheme)**: UTF-8, no whitespace, object
   members sorted by UTF-16 code units, numbers in ECMAScript shortest form.
-* **Every JSON object has a top-level `"@type"`**: `"bagosynths.<kind>/<schema
-  version>"`, e.g. `"bagosynths.patch/1"`. The type is therefore part of the
+* **Every JSON object has a top-level `"@type"`**: `"rigalong.<kind>/<schema
+  version>"`, e.g. `"rigalong.patch/1"`. The type is therefore part of the
   hash, and two kinds can never share one.
 * **Parameter values are float32.** They are written as the shortest decimal
   that reads back as the same float32 (so `0.3`, never
@@ -43,7 +43,7 @@ There are two kinds:
 A reference to another object is **always** a JSON object of this form:
 
 ```json
-{"@ref": "sha256:9f86d0...", "@type": "bagosynths.patch/1"}
+{"@ref": "sha256:9f86d0...", "@type": "rigalong.patch/1"}
 ```
 
 * `@ref` is required. `@type` is a hint for readers (for binary objects, a
@@ -63,10 +63,10 @@ Each version of an entry is itself a JSON object:
 
 ```json
 {
-  "@type": "bagosynths.entry/1",
+  "@type": "rigalong.entry/1",
   "entry": "sha256:<first version of this entry>",
   "name": "Summer opener",
-  "target": {"@ref": "sha256:...", "@type": "bagosynths.song/1"},
+  "target": {"@ref": "sha256:...", "@type": "rigalong.song/1"},
   "previous": {"@ref": "sha256:<the version this one replaces>"},
   "author": "Michiel De Wilde",
   "time": "2026-10-11T01:30:00Z",
@@ -98,7 +98,7 @@ Each version of an entry is itself a JSON object:
 An external device's own sounds are in its driver's stored form and media
 type (model/devices); the CP-88's:
 
-* **CP-88 Live Set Sound** (`application/vnd.bagosynths.cp88sound.v1`): the
+* **CP-88 Live Set Sound** (`application/vnd.rigalong.cp88sound.v1`): the
   19 SysEx Bulk Dump messages concatenated, in address order (header, the 17
   data blocks in cp-liveset's `DATA_BLOCKS` order, footer), with **device
   number 0** and the header/footer address set to the **Current Sound Buffer
@@ -115,16 +115,16 @@ schema version without changing what existing objects mean.
 
 | `@type` | holds |
 |---|---|
-| `bagosynths.patch/1` | `engine` (factory type name), `engineVersion`, `params` (parameter id -> value), and `state`: a reference to engine-specific bytes where the engine has its own patch format (a Surge patch, a DX7 voice, an SFZ instrument pack, a SoundFont plus preset number). Until packs are in the library (M9), `preset` names installed content instead: an SFZ instrument id, a Surge "Category/Name", a DX7 voice, a SoundFont file, a setBfree registration, a Plaits model |
-| `bagosynths.song/1` | `instances` (name -> {patch ref, island preference by port}), `graph` (nodes, typed pins, wires), `values` (song value per parameter), `recall` (mode per parameter), `liveSets` (ordered refs), `cp88` (optional), `tempo` (optional), `leadSheet` (optional ref), `stageLayout`, `switching` (incoming selection -> live set). Node kinds so far: the engines -- one node per INSTANCE, named by its id (`sfizz`, then `sfizz-2`, ...), with an optional `label` the player gave it --, `midi.zone`, the ports, `reverb` (where the engines meet) and `fx.<type>` (an insert effect, `<engine>.fx` after an engine or `mix.fx` on the whole mix: `delay`, `phaser`, `flanger`, `rotary`, `reverb`; parameters by the effect's own names, `<name> sync` = 1 for tempo sync). An engine node's `params` hold its `Level` and, for each engine parameter a live set gives a value of its own, the song's value of it -- the patch's, or the one the preset had when the live set first differed -- so leaving that live set restores it without touching the patch object |
+| `rigalong.patch/1` | `engine` (factory type name), `engineVersion`, `params` (parameter id -> value), and `state`: a reference to engine-specific bytes where the engine has its own patch format (a Surge patch, a DX7 voice, an SFZ instrument pack, a SoundFont plus preset number). Until packs are in the library (M9), `preset` names installed content instead: an SFZ instrument id, a Surge "Category/Name", a DX7 voice, a SoundFont file, a setBfree registration, a Plaits model |
+| `rigalong.song/1` | `instances` (name -> {patch ref, island preference by port}), `graph` (nodes, typed pins, wires), `values` (song value per parameter), `recall` (mode per parameter), `liveSets` (ordered refs), `cp88` (optional), `tempo` (optional), `leadSheet` (optional ref), `stageLayout`, `switching` (incoming selection -> live set). Node kinds so far: the engines -- one node per INSTANCE, named by its id (`sfizz`, then `sfizz-2`, ...), with an optional `label` the player gave it --, `midi.zone`, the ports, `reverb` (where the engines meet) and `fx.<type>` (an insert effect, `<engine>.fx` after an engine or `mix.fx` on the whole mix: `delay`, `phaser`, `flanger`, `rotary`, `reverb`; parameters by the effect's own names, `<name> sync` = 1 for tempo sync). An engine node's `params` hold its `Level` and, for each engine parameter a live set gives a value of its own, the song's value of it -- the patch's, or the one the preset had when the live set first differed -- so leaving that live set restores it without touching the patch object |
 | (song) `controls` | So far written for a sound's parameters: `id` and `target` "<instance>.<parameter>", `widget` "knob", `midi` {`port` "Keys", `channel` 0 = any, `cc`, `takeover` "pickup"}; `min`/`max` as fractions of the parameter's range (0..1, the whole). Active while the instance plays in the live set selected |
-| `bagosynths.liveset/1` | `name`, `enabled` (node -> bool), `wires` (wire -> on/gain), `overrides` (parameter -> value: zones, levels, effect amounts, and an engine's own parameters, `<instance>.<parameter>`, over the song's value), `recall` (per-parameter override of the song's mode), `transitions`, `onSelect` (MIDI to send), `devices` (per external device, by its name in the environment: `kind` -- the driver, `midi` or `yamaha.cp88` --, `mode` leave / select / own, `address` -- the driver's fields, e.g. `{"page": 3, "set": 5}` or `{"program": 12, "bankMsb": 0}` --, and for own a `sound` ref typed with the driver's media type), `visibleControls`, `leadSheetPage` |
-| `bagosynths.setlist/1` | `songs` (ordered refs); `entries`, per position the song's library entry as a weak link ("" where unknown), so two songs with equal content -- one object -- stay two songs and an edit moves only its own positions |
-| `bagosynths.environment/1` | `ports` (name, kind, width), `bindings` (port -> device match and settings), `externalSynths` (name -- what songs call it --, `kind` -- its driver --, MIDI ports and channel, `reservedAreas` the app writes songs' own sounds into, `selectsLiveSets`), `switchingSources`, `pageTurner`, `clickPort` (null: the visual beat only), `clickContinuous`, `clickLevel`, `midiClockPort`, `stageScreen`, `retimers` (per device pair) |
-| `bagosynths.usbprofile/1` | `match` (vendor, product, optional bcdDevice), `fbx` (the members of `struct fbx_profile`), `measuredOn`, `notes` |
-| `bagosynths.pack/1` | `files` (relative path -> ref), `entry` (the instrument's main file), `licence`, `source` (where to fetch it again) |
-| `bagosynths.catalog/1` | `packs` (refs, with name, size and licence summary) |
-| `bagosynths.midnam/1` | wrapper: `device` (match), `document` (ref to the MIDNAM XML bytes) |
+| `rigalong.liveset/1` | `name`, `enabled` (node -> bool), `wires` (wire -> on/gain), `overrides` (parameter -> value: zones, levels, effect amounts, and an engine's own parameters, `<instance>.<parameter>`, over the song's value), `recall` (per-parameter override of the song's mode), `transitions`, `onSelect` (MIDI to send), `devices` (per external device, by its name in the environment: `kind` -- the driver, `midi` or `yamaha.cp88` --, `mode` leave / select / own, `address` -- the driver's fields, e.g. `{"page": 3, "set": 5}` or `{"program": 12, "bankMsb": 0}` --, and for own a `sound` ref typed with the driver's media type), `visibleControls`, `leadSheetPage` |
+| `rigalong.setlist/1` | `songs` (ordered refs); `entries`, per position the song's library entry as a weak link ("" where unknown), so two songs with equal content -- one object -- stay two songs and an edit moves only its own positions |
+| `rigalong.environment/1` | `ports` (name, kind, width), `bindings` (port -> device match and settings), `externalSynths` (name -- what songs call it --, `kind` -- its driver --, MIDI ports and channel, `reservedAreas` the app writes songs' own sounds into, `selectsLiveSets`), `switchingSources`, `pageTurner`, `clickPort` (null: the visual beat only), `clickContinuous`, `clickLevel`, `midiClockPort`, `stageScreen`, `retimers` (per device pair) |
+| `rigalong.usbprofile/1` | `match` (vendor, product, optional bcdDevice), `fbx` (the members of `struct fbx_profile`), `measuredOn`, `notes` |
+| `rigalong.pack/1` | `files` (relative path -> ref), `entry` (the instrument's main file), `licence`, `source` (where to fetch it again) |
+| `rigalong.catalog/1` | `packs` (refs, with name, size and licence summary) |
+| `rigalong.midnam/1` | wrapper: `device` (match), `document` (ref to the MIDNAM XML bytes) |
 
 Parameter ids are the stable string ids from the native node API (D6), never
 indices.
@@ -137,9 +137,9 @@ objects in the same way.
 * **Blobs** at `blobs/sha256/<hex>`: every object, JSON and binary alike.
 * **One manifest per entry version** (OCI image manifest, schema 2):
   * `artifactType`: the media type of the target, e.g.
-    `application/vnd.bagosynths.song.v1+json`;
+    `application/vnd.rigalong.song.v1+json`;
   * `config`: the entry version object, with media type
-    `application/vnd.bagosynths.entry.v1+json`;
+    `application/vnd.rigalong.entry.v1+json`;
   * `layers`: the **whole closure** of the target, every object its references
     reach, each with its media type, digest and size (I8.29). Content that may
     not be redistributed is left out and stays reachable only by its `source`
@@ -158,14 +158,14 @@ objects in the same way.
 
 | object | media type |
 |---|---|
-| app JSON objects | `application/vnd.bagosynths.<kind>.v<schema>+json` |
-| CP-88 Live Set Sound | `application/vnd.bagosynths.cp88sound.v1` |
-| DX7 voice | `application/vnd.bagosynths.dx7voice.v1` |
-| Surge patch | `application/vnd.bagosynths.surgepatch.v1` |
+| app JSON objects | `application/vnd.rigalong.<kind>.v<schema>+json` |
+| CP-88 Live Set Sound | `application/vnd.rigalong.cp88sound.v1` |
+| DX7 voice | `application/vnd.rigalong.dx7voice.v1` |
+| Surge patch | `application/vnd.rigalong.surgepatch.v1` |
 | lead sheet | `application/pdf` |
 | samples | `audio/wav`, `audio/flac`, `audio/ogg` as the file is |
 | SFZ text | `text/plain` |
-| SoundFont | `application/vnd.bagosynths.soundfont` |
+| SoundFont | `application/vnd.rigalong.soundfont` |
 | MIDNAM | `application/xml` |
 | anything else | `application/octet-stream` |
 

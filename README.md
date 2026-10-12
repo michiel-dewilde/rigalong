@@ -1,10 +1,10 @@
-# Bag-O-Synths
+# RigAlong
 
 Android sound module for the Yamaha CP-88, running on a Galaxy Tab S9 Ultra.
 One USB-C to USB-B cable carries MIDI in and audio out; the app's engines are
 mixed into the CP-88's own outputs.
 
-It is a bag of synths: sfizz (SFZ sampler), setBfree (tonewheel organ), Surge
+It carries a rig of synths: sfizz (SFZ sampler), setBfree (tonewheel organ), Surge
 XT, Dexed (DX7), Plaits (macro oscillator) and FluidSynth (SoundFonts), all playable together
 from one keyboard. Everything is decided against measured numbers, because the
 only thing that matters is whether it can be played live.
@@ -18,11 +18,9 @@ only thing that matters is whether it can be played live.
 * [LICENSING.md](LICENSING.md) — the project is **GPL-3.0-or-later**; what that
   obliges, and the GPL-2-only compatibility trap.
 
-One spelling, everywhere: the display name is **Bag-O-Synths** and every
-identifier is `bagosynths` — repo, package, namespace, native library, Gradle
-project. The single exception is the logcat tags, which are `bos-audio`,
-`bos-fluid` and so on, because those get typed by hand dozens of times a
-session.
+One spelling, everywhere: the display name is **RigAlong** and every
+identifier is `rigalong` — repo, package, namespace, native library, Gradle
+project, and the logcat tags (`rigalong-audio`, `rigalong-fluid` and so on).
 
 ## Status: M3 done, setBfree built (M4)
 
@@ -120,7 +118,7 @@ Builds and runs. Working toolchain: **AGP 8.13.2, Gradle 8.14.5, JDK 21, Kotlin
 2.0.21, NDK 30.0.16248370, CMake 4.1.2, compileSdk/targetSdk 36, Oboe 1.9.3**.
 
 First, check out the upstream engines. They are submodules of forks, on the
-branch `bagosynths/main`, with relative urls — so this works whether the clone
+branch `rigalong/main`, with relative urls — so this works whether the clone
 came over ssh or https, and nothing has to be edited:
 
 ```
@@ -186,7 +184,7 @@ minutes apart, on the same device:
 ## Installing an instrument library
 
 Instruments are folders under
-`/sdcard/Android/data/be.mdw.bagosynths/files/instruments/`, the folder name being
+`/sdcard/Android/data/be.mdw.rigalong/files/instruments/`, the folder name being
 the id a patch refers to. An optional `instrument.json` sets `name` and the entry
 `sfz`.
 
@@ -195,10 +193,10 @@ the id a patch refers to. An optional `instrument.json` sets `name` and the entr
 ```
 # 1. launch the app once so IT creates the instruments folder
 # 2. push the pack
-adb push SalamanderGrandPianoV3_44.1khz16bit     /sdcard/Android/data/be.mdw.bagosynths/files/instruments/salamander-grand
+adb push SalamanderGrandPianoV3_44.1khz16bit     /sdcard/Android/data/be.mdw.rigalong/files/instruments/salamander-grand
 # 3. adb push creates that subfolder as the shell user, mode 770,
 #    which the app cannot traverse. Fix it:
-adb shell chmod -R 777     /sdcard/Android/data/be.mdw.bagosynths/files/instruments/salamander-grand
+adb shell chmod -R 777     /sdcard/Android/data/be.mdw.rigalong/files/instruments/salamander-grand
 # 4. press RESCAN in the app
 ```
 
@@ -223,7 +221,7 @@ reason. Launch the app once first so it creates the files directory.
 ## Getting the dependencies
 
 `third_party/` is over a gigabyte of other people's code, and every directory in
-it is a **submodule of a fork** on the branch `bagosynths/main`.
+it is a **submodule of a fork** on the branch `rigalong/main`.
 
 ```
 tools/init_deps.sh
@@ -341,7 +339,7 @@ property of the room.
 **Every gain here is ramped, never stepped.** The master and each instrument's
 level move to a new value over 15 ms rather than jumping. A jump is a step
 discontinuity in the samples, which is a click -- switching parts while notes
-were sounding used to produce one. See `engine/include/bagosynths/Gain.h`.
+were sounding used to produce one. See `engine/include/rigalong/Gain.h`.
 
 ## Parts
 

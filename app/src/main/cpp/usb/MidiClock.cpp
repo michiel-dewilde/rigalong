@@ -5,7 +5,7 @@
 #include <algorithm>
 #include <ctime>
 
-#define LOG_TAG "bos-clock"
+#define LOG_TAG "rigalong-clock"
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
 
 namespace {

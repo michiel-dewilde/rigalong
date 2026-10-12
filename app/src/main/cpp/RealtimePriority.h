@@ -21,7 +21,7 @@
 // So two things are asked for, in order, and WHAT WAS GRANTED IS LOGGED --
 // because on Android most of this is refused, and a priority you believe you
 // have but do not is worse than none.
-namespace bos {
+namespace rigalong {
 
 // THE TRANSPORT OUTRANKS THE SYNTH, and these two constants are that rule.
 //
@@ -29,7 +29,7 @@ namespace bos {
 // the USB reap thread in the SAME band -- so when sfizz went to 64 voices they
 // fought each other as equals, and the transport lost often enough to matter.
 // Measured in usbhost/: eight EXTERNAL spinners could not move the bare
-// transport's `late` at all (666 -> 666), while Bag-O-Synths under its own
+// transport's `late` at all (666 -> 666), while RigAlong under its own
 // render load reached `late` in the thousands. The competition was never the
 // system. It was us.
 //
@@ -105,4 +105,4 @@ private:
     int64_t mTargetNs = 0;
 };
 
-}  // namespace bos
+}  // namespace rigalong

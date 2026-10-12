@@ -1,9 +1,9 @@
-#include <bagosynths/UsbDescriptors.h>
+#include <rigalong/UsbDescriptors.h>
 
 #include <algorithm>
 #include <cstdio>
 
-namespace bagosynths::usb {
+namespace rigalong::usb {
 
 namespace {
 
@@ -470,4 +470,4 @@ std::string alsaMidiPortName(const std::string& cardName, const std::string& jac
     return alsaTruncate(buf);
 }
 
-}  // namespace bagosynths::usb
+}  // namespace rigalong::usb

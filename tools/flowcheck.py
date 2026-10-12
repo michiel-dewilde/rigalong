@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """flowcheck -- the things a player does often, done on the real app, counted.
 
-Drives Bag-O-Synths on a device over adb, finding controls by the text they
+Drives RigAlong on a device over adb, finding controls by the text they
 show (uiautomator), never by coordinates, so a layout change does not break it
 and a renamed control does. Each flow asserts what the player should see or
 hear happen, and has a TAP BUDGET: an action that is meant to be quick and
@@ -106,14 +106,14 @@ def logcat_clear():
 def logcat_has(pattern, timeout=4.0):
     t0 = time.time()
     while time.time() - t0 < timeout:
-        if re.search(pattern, adb("logcat", "-d", "-s", "bos-stage:I")):
+        if re.search(pattern, adb("logcat", "-d", "-s", "rigalong-stage:I")):
             return True
         time.sleep(0.3)
     return False
 
 
 def broadcast(action, *extras):
-    shell(f"am broadcast -a be.mdw.bagosynths.{action} " + " ".join(extras))
+    shell(f"am broadcast -a be.mdw.rigalong.{action} " + " ".join(extras))
 
 
 # ---------------------------------------------------------------- flows
@@ -391,7 +391,7 @@ def flow_sound_for_live_set(f):
         # From live set 2, where neither setBfree plays: only the new one comes on.
         if not stage_switch(1, r"live set 1 'setBfree'.*setbfree-2\.midi=on"):
             raise AssertionError("live set 1 does not play the new sound")
-        if re.search(r"setbfree\.midi=on", adb("logcat", "-d", "-s", "bos-stage:I")):
+        if re.search(r"setbfree\.midi=on", adb("logcat", "-d", "-s", "rigalong-stage:I")):
             raise AssertionError("live set 1 still plays the old setBfree too")
         # The stage's setBfree panel is the setBfree playing: "setBfree 2" on its fader and the panel here,
         # "setBfree 1" where neither plays.
@@ -492,7 +492,7 @@ def import_device_file(f, fname, count, seen):
         if not see_scrolling(seen):
             raise AssertionError(f"expected to see {seen!r}")
     finally:
-        if "be.mdw.bagosynths" in focused_app():
+        if "be.mdw.rigalong" in focused_app():
             undo_last(fname)
         shell(f"rm -f /sdcard/Download/{fname}")
 
@@ -606,7 +606,7 @@ FLOWS = [
 
 
 def main(argv):
-    if "be.mdw.bagosynths" not in focused_app():
+    if "be.mdw.rigalong" not in focused_app():
         print("the app is not in front; start it first")
         return 2
     want = set(argv) or {name for name, _, _ in FLOWS}

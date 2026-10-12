@@ -1,6 +1,6 @@
 # Licensing
 
-**Decision (2026-09-19): Bag-O-Synths is free software, GPL-3.0-or-later.**
+**Decision (2026-09-19): RigAlong is free software, GPL-3.0-or-later.**
 
 The goal is the best instrument reachable for the stage. The highest-quality free
 engines — setBfree especially — are GPL, and working around that would
@@ -71,7 +71,7 @@ instantiate/init/render sequence, which is what `HammondNode` follows.
 
 | Component | Licence | Notes |
 |---|---|---|
-| Bag-O-Synths' own code | GPL-3.0-or-later | this project |
+| RigAlong' own code | GPL-3.0-or-later | this project |
 | Oboe | Apache-2.0 | permissive, no obligations beyond attribution |
 | **sfizz** | BSD-2 | SFZ sampler, `third_party/sfizz`, linked |
 | **setBfree / Beatrix** | **GPL-2-or-later** | the tonewheel organ and Leslie, `third_party/setbfree`, linked. **This is the dependency the licence decision was made for.** |
@@ -135,7 +135,7 @@ would break it.
 
 **The two FluidSynth modifications are ours and are GPL-3-or-later**, like the
 rest of this project's code. They are two commits on
-`michiel-dewilde/fluidsynth`, branch `bagosynths/main`, each with its reasoning
+`michiel-dewilde/fluidsynth`, branch `rigalong/main`, each with its reasoning
 in the message — so the LGPL work itself stays identifiable, commit by commit,
 which is a stronger separation than a patch file gave.
 `cpp/fluid/fluid_glue.c` is likewise ours.
@@ -191,12 +191,12 @@ Since the whole binary is GPL-3-or-later, this combines. It also means
 including the exact `third_party` revisions.
 
 Every dependency is a **submodule of a fork under `michiel-dewilde`**, on the
-branch `bagosynths/main`, so the pin is recorded by git itself rather than by a
+branch `rigalong/main`, so the pin is recorded by git itself rather than by a
 line in a script that could drift from it. The `.gitmodules` urls are relative
 — `../sfizz.git` and so on — which resolves against whatever origin this
 repository was cloned from, over ssh or https alike.
 
-| dependency | fork, branch `bagosynths/main` | forked from | upstream base | ours? |
+| dependency | fork, branch `rigalong/main` | forked from | upstream base | ours? |
 |---|---|---|---|---|
 | sfizz | michiel-dewilde/sfizz | sfztools/sfizz | `f5c6e29f` (2025-03-17) | 1 commit |
 | setBfree | michiel-dewilde/setbfree | pantherb/setBfree | `2f41983b` (2026-09-08) | unmodified |

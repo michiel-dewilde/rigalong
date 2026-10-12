@@ -96,7 +96,7 @@ keeps the 1 ms pace of the USB completions.
   feedback path.
 
 ### 2. Reap thread pinned to cpu6
-`bos::pinToTransportCore` / `pinOffTransportCore`.
+`rigalong::pinToTransportCore` / `pinOffTransportCore`.
 
 * **Meant to:** stop the render thread competing with the transport.
 * **Measured:** `late` 126/234/155 → 33/97, `starved` → 0, `deficit` → 83 ms.
@@ -309,6 +309,6 @@ next time this file is read, delete it.
 | `INSTANCE` broadcast | **Test hook**: adds an engine instance (`add`), gives instance `i` a `preset` and a `level`, and logs its state -- the engine's instances checked without a song. | The song editor adds instances. |
 | `CC` broadcast | **Test hook**: a controller (`cc`, `value`) as if from the keys, through the render thread's controller maps and MIDI learn -- for flowcheck's knob flows. | A real knob, wheel or pedal. |
 | `RESET_LIBRARY` broadcast | **Test hook**: deletes the library and the saved patches (nothing else) and ends the app, which seeds a fresh library when started. Used once when the engines got their proper names (setBfree, sfizz, ...) and the made-up songs went. | A library reset in Settings, or no further need. |
-| `STAGE` broadcast | **Test hook**: drives the new UI's stage without the screen (`tools/bosstress/stagecheck.py`); `sheet` attaches a PDF from the app's folder to the current song, `page` presses a page-turner key, `instrument` installs a zip from the app's folder, `cc`/`value`, `learn` and `clearcc` feed and assign switching controllers (next, previous, tap, click). | The stage has UI tests. |
-| `DEVICEPRELOADTEST` broadcast (`SongPlayer.devicePreloadTest`) | **Test hook**: three one-live-set songs owning three different sounds of the first device that can own sounds (renamed copies of one if the library has fewer), opened in turn through the rig as the stage does, each preloading the next, then the first again; logs under bos-devices which area each played from and what was written. The copies stay in the store only; no song is saved. | The two-area preload is covered by UI tests. |
+| `STAGE` broadcast | **Test hook**: drives the new UI's stage without the screen (`tools/stress/stagecheck.py`); `sheet` attaches a PDF from the app's folder to the current song, `page` presses a page-turner key, `instrument` installs a zip from the app's folder, `cc`/`value`, `learn` and `clearcc` feed and assign switching controllers (next, previous, tap, click). | The stage has UI tests. |
+| `DEVICEPRELOADTEST` broadcast (`SongPlayer.devicePreloadTest`) | **Test hook**: three one-live-set songs owning three different sounds of the first device that can own sounds (renamed copies of one if the library has fewer), opened in turn through the rig as the stage does, each preloading the next, then the first again; logs under rigalong-devices which area each played from and what was written. The copies stay in the store only; no song is saved. | The two-area preload is covered by UI tests. |
 | `DEVICESELFTEST` broadcast (`SongPlayer.deviceSelfTest`) | **Test hook**: a device's own-sound path end to end on the first device that can own sounds (import, write to the reserved area, select), checked for a CP-88 with `tools/cp88sysex`. It does not touch the library: the test song is never saved. | The CP-88 edit page is checked by hand, or by UI tests. |

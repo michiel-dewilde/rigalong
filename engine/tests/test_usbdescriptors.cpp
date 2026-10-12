@@ -9,12 +9,12 @@
 #include "harness.h"
 #include "fixtures/cp88_descriptors.h"
 
-#include <bagosynths/UsbDescriptors.h>
+#include <rigalong/UsbDescriptors.h>
 
 #include <string>
 #include <vector>
 
-using namespace bagosynths::usb;
+using namespace rigalong::usb;
 
 namespace {
 

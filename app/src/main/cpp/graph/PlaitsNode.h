@@ -6,9 +6,9 @@
 #include <string>
 #include <vector>
 
-#include <bagosynths/Gain.h>
-#include <bagosynths/Graph.h>
-#include <bagosynths/ParamQueue.h>
+#include <rigalong/Gain.h>
+#include <rigalong/Graph.h>
+#include <rigalong/ParamQueue.h>
 
 // Mutable Instruments Plaits as a graph node: sixteen synthesis models, from a
 // two-oscillator virtual analog through granular, speech, physical modelling
@@ -45,7 +45,7 @@
 // model rather than an ADSR of ours bolted on top, and it is the reason the
 // plucked and struck models sound like themselves.
 
-namespace bagosynths {
+namespace rigalong {
 
 struct PlaitsImpl;   // plaits::Voice, the arenas and the resampler
 
@@ -168,4 +168,4 @@ private:
     SmoothedGain mGain;
 };
 
-}  // namespace bagosynths
+}  // namespace rigalong

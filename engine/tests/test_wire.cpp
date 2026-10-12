@@ -1,14 +1,14 @@
 // WireControl: a live set switch changes wires, and must never strand a note
 // or click. REQUIREMENTS S4.8, I4.13, I4.14; PLAN.md D7, D8.
 
-#include <bagosynths/Wire.h>
+#include <rigalong/Wire.h>
 
 #include <cmath>
 #include <vector>
 
 #include "harness.h"
 
-using namespace bagosynths;
+using namespace rigalong;
 
 namespace {
 

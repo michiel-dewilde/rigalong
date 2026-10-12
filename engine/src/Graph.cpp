@@ -1,5 +1,5 @@
-#include "bagosynths/Wire.h"
-#include <bagosynths/Graph.h>
+#include "rigalong/Wire.h"
+#include <rigalong/Graph.h>
 
 #include <algorithm>
 #include <cstring>
@@ -14,7 +14,7 @@ inline double nowSec() {
 }
 }  // namespace
 
-namespace bagosynths {
+namespace rigalong {
 
 // ---------------------------------------------------------------- Schedule
 
@@ -476,4 +476,4 @@ std::unique_ptr<Schedule> Graph::compile(double sampleRate, int maxFrames,
     return sched;
 }
 
-}  // namespace bagosynths
+}  // namespace rigalong

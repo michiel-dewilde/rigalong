@@ -7,13 +7,13 @@
 
 #include "harness.h"
 
-#include <bagosynths/ParamQueue.h>
+#include <rigalong/ParamQueue.h>
 
 #include <cstdint>
 #include <limits>
 #include <vector>
 
-using namespace bagosynths;
+using namespace rigalong;
 
 namespace {
 
