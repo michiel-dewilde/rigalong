@@ -929,7 +929,7 @@ coordinate tapping once sent 18 taps into the launcher and opened random apps,
 because the app had crashed and nothing checked:
 
 ```bash
-adb shell dumpsys window | grep -c "mCurrentFocus.*be.mdw.rigalong"   # 1 = safe
+adb shell dumpsys window | grep -c "mCurrentFocus.*com.rigalong"   # 1 = safe
 ```
 
 `tools/stress.sh` has the guard built in and aborts loudly with the crash buffer

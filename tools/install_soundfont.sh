@@ -28,7 +28,7 @@ export MSYS2_ARG_CONV_EXCL="*"
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 ADB="${ADB:-$LOCALAPPDATA/Android/Sdk/platform-tools/adb.exe}"
-PKG=be.mdw.rigalong
+PKG=com.rigalong
 DEST="/sdcard/Android/data/$PKG/files/soundfonts"
 
 if [ ! -x "$ADB" ] && ! command -v "$ADB" >/dev/null 2>&1; then

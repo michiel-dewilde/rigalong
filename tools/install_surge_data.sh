@@ -15,7 +15,7 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SRC="$ROOT/third_party/surge/resources/data"
-DEST="/sdcard/Android/data/be.mdw.rigalong/files/surge-xt"
+DEST="/sdcard/Android/data/com.rigalong/files/surge-xt"
 ADB="${ADB:-adb}"
 
 # Windows hosts: adb.exe is a native binary, so it needs a Windows source path,

@@ -78,12 +78,11 @@ jobs:
         run: ./gradlew assembleRelease --no-daemon --stacktrace
 
       - name: No stray identifiers
-        # The rename to RigAlong left exactly one legitimate use of "mdw":
-        # the reverse-domain package be.mdw.rigalong. Anything else is a
-        # leftover, and leftovers are how two spellings of one name start.
+        # The package is com.rigalong; "mdw" has no use left in the code or
+        # docs. Anything matching is a leftover, and leftovers are how two
+        # spellings of one name start.
         run: |
-          if git grep -nI "mdw" -- . ':!third_party' ':!.github' \
-               | grep -vE "be\.mdw\.rigalong|be_mdw_rigalong|be/mdw/rigalong"; then
+          if git grep -nI "mdw" -- . ':!third_party' ':!.github'; then
             echo "::error::stray mdw identifier -- see the naming rule in README.md"
             exit 1
           fi

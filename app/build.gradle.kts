@@ -8,11 +8,11 @@ plugins {
 }
 
 android {
-    namespace = "be.mdw.rigalong"
+    namespace = "com.rigalong"
     compileSdk = 36          // Android 16. Costs nothing in device support.
 
     defaultConfig {
-        applicationId = "be.mdw.rigalong"
+        applicationId = "com.rigalong"
         // minSdk is the only setting that limits who can install this. 29 is
         // forced by AMidi (native MIDI), which is non-negotiable here.
         // Android 10+ is ~98% of active devices.

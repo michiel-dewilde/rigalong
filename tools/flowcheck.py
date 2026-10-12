@@ -113,7 +113,7 @@ def logcat_has(pattern, timeout=4.0):
 
 
 def broadcast(action, *extras):
-    shell(f"am broadcast -a be.mdw.rigalong.{action} " + " ".join(extras))
+    shell(f"am broadcast -a com.rigalong.{action} " + " ".join(extras))
 
 
 # ---------------------------------------------------------------- flows
@@ -492,7 +492,7 @@ def import_device_file(f, fname, count, seen):
         if not see_scrolling(seen):
             raise AssertionError(f"expected to see {seen!r}")
     finally:
-        if "be.mdw.rigalong" in focused_app():
+        if "com.rigalong" in focused_app():
             undo_last(fname)
         shell(f"rm -f /sdcard/Download/{fname}")
 
@@ -671,7 +671,7 @@ def export_patch(f, engine, search, pick, name, param, at, ext, check):
                 or wait_for("is installed already", exact=False, timeout=1)):
             raise AssertionError(f"{fname} did not import back into {engine}")
     finally:
-        if "be.mdw.rigalong" in focused_app():
+        if "com.rigalong" in focused_app():
             if saved:
                 undo_last(name)
             broadcast("RESCAN", "--es", "remove", fname)
@@ -734,7 +734,7 @@ FLOWS = [
 
 
 def main(argv):
-    if "be.mdw.rigalong" not in focused_app():
+    if "com.rigalong" not in focused_app():
         print("the app is not in front; start it first")
         return 2
     want = set(argv) or {name for name, _, _ in FLOWS}

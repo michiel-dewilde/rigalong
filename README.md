@@ -184,7 +184,7 @@ minutes apart, on the same device:
 ## Installing an instrument library
 
 Instruments are folders under
-`/sdcard/Android/data/be.mdw.rigalong/files/instruments/`, the folder name being
+`/sdcard/Android/data/com.rigalong/files/instruments/`, the folder name being
 the id a patch refers to. An optional `instrument.json` sets `name` and the entry
 `sfz`.
 
@@ -193,10 +193,10 @@ the id a patch refers to. An optional `instrument.json` sets `name` and the entr
 ```
 # 1. launch the app once so IT creates the instruments folder
 # 2. push the pack
-adb push SalamanderGrandPianoV3_44.1khz16bit     /sdcard/Android/data/be.mdw.rigalong/files/instruments/salamander-grand
+adb push SalamanderGrandPianoV3_44.1khz16bit     /sdcard/Android/data/com.rigalong/files/instruments/salamander-grand
 # 3. adb push creates that subfolder as the shell user, mode 770,
 #    which the app cannot traverse. Fix it:
-adb shell chmod -R 777     /sdcard/Android/data/be.mdw.rigalong/files/instruments/salamander-grand
+adb shell chmod -R 777     /sdcard/Android/data/com.rigalong/files/instruments/salamander-grand
 # 4. press RESCAN in the app
 ```
 
