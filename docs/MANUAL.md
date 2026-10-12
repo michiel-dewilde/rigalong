@@ -207,7 +207,12 @@ Every setlist and song, with its history.
     sounds go into
     **Device sounds**; a sound the library already has is not added twice;
   * an SFZ sample library as a **.zip**. It then appears in every sfizz
-    patch list.
+    patch list;
+  * an engine's own file: a **SoundFont** (.sf2 or .sf3) for FluidSynth, a
+    **DX7 bank** of 32 voices (.syx) for Dexed, a **Surge XT patch** (.fxp).
+    It is installed where the engine looks and appears in its patch lists;
+    whatever plays now keeps playing. A single DX7 voice is refused: Dexed
+    loads banks.
   One Import is one Undo.
 * **Details** (beside a setlist) and the **versions** count (beside a song)
   open an entry:
@@ -271,8 +276,9 @@ Every setlist and song, with its history.
     A song plays from whichever of the two already holds it.
 
   Before the app writes into an area for the first time, it reads back what
-  the area holds and keeps it in the library's **Device sounds** (named
-  after the device and the area), so no sound of your own is lost to it.
+  the area holds and keeps it in the library's **Device sounds**, so no
+  sound of your own is lost to it. This is the app's own doing, so Undo
+  does not take it back.
 * **Footswitches and MIDI controllers**: a controller each for the next and
   the previous live set (or lead-sheet page), tap tempo, and the count-in or
   click. Press **Learn**, then the pedal. A controller does one thing: learning
