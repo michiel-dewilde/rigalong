@@ -361,11 +361,16 @@ private fun stagePanelsMinWidth(player: SongPlayer, s: Float): Float {
 private const val LEVEL_MIN = 110f
 private const val MASTER_MIN = 90f
 
-/** setBfree's panel with drawbars [bar] wide. */
+/** setBfree's panel with drawbars [bar] wide (and 8, scaled, apart). */
 private fun organWidth(bar: Float, s: Float) = 9 * bar + 8 * 8f * s + 2 * 10f * s
 
-/** One panel below the live sets, with the widths it may take (dp). */
-private class StagePanel(val minW: Float, val prefW: Float, val content: @Composable (Modifier) -> Unit)
+/**
+ * One panel below the live sets, with the widths it may take (dp): [minW] is
+ * what it is packed at, [prefW] what it grows to with room to spare, and
+ * [squeezeW] how far it may still give way alone in a row before that scrolls.
+ */
+private class StagePanel(val minW: Float, val prefW: Float, val squeezeW: Float = minW,
+                         val content: @Composable (Modifier) -> Unit)
 
 /**
  * The levels, setBfree's drawbars and the master, as panels of bounded size
@@ -404,8 +409,10 @@ private fun StagePanels(player: SongPlayer, host: EngineHost, s: Float, modifier
         }
     }
     if (sounds.any { it.engine == RackEngine.SETBFREE }) {
-        // Nine drawbars, each a fingertip wide at least and 72 (scaled) at most.
-        panels += StagePanel(organWidth(DRAWBAR_MIN_DP, s), organWidth(maxOf(DRAWBAR_MIN_DP, 72f * s), s)) { m ->
+        // Nine drawbars, each a fingertip wide and 72 (scaled) at most; on a phone held
+        // upright, down to [DRAWBAR_SQUEEZE_DP] apart rather than scrolling.
+        panels += StagePanel(organWidth(DRAWBAR_MIN_DP, s), organWidth(maxOf(DRAWBAR_MIN_DP, 72f * s), s),
+            9 * DRAWBAR_SQUEEZE_DP + 2 * pad) { m ->
             SetBfreePanel(player, s, m)
         }
     }
@@ -425,18 +432,23 @@ private fun StagePanels(player: SongPlayer, host: EngineHost, s: Float, modifier
         val rowH = ((maxHeight.value - gap * (rows.size - 1)) / rows.size).coerceAtMost(maxRowH)
         Column(verticalArrangement = Arrangement.spacedBy(gap.dp)) {
             for (row in rows) {
-                // The spare width goes to the panels up to their preferred widths, shared as they need it.
-                val spare = (w - gap * (row.size - 1) - row.sumOf { it.minW.toDouble() }.toFloat()).coerceAtLeast(0f)
+                // The spare width goes to the panels up to their preferred widths, shared as they need it;
+                // a shortfall is taken from what they may give way, as far as they can.
+                val spare = w - gap * (row.size - 1) - row.sumOf { it.minW.toDouble() }.toFloat()
                 val want = row.sumOf { (it.prefW - it.minW).toDouble() }.toFloat()
-                val share = if (want > 0f) minOf(1f, spare / want) else 0f
-                // Only a row wider than the screen (one panel too wide for it) scrolls.
-                val over = row.sumOf { it.minW.toDouble() } + gap * (row.size - 1) > w
+                val give = row.sumOf { (it.minW - it.squeezeW).toDouble() }.toFloat()
+                fun width(p: StagePanel) = when {
+                    spare >= 0f -> p.minW + (p.prefW - p.minW) * (if (want > 0f) minOf(1f, spare / want) else 0f)
+                    else -> p.minW - (p.minW - p.squeezeW) * (if (give > 0f) minOf(1f, -spare / give) else 0f)
+                }
+                // Only a row wider than the screen even so scrolls.
+                val over = spare < -give
                 Row(Modifier.fillMaxWidth().height(rowH.dp).then(if (over) Modifier.horizontalScroll(rememberScrollState()) else Modifier),
                     horizontalArrangement = Arrangement.spacedBy(gap.dp)) {
                     for (p in row) {
                         // The master keeps the right-hand end of its row.
                         if (p === master && row.size > 1 && !over) Spacer(Modifier.weight(1f))
-                        p.content(Modifier.width((p.minW + (p.prefW - p.minW) * share).dp).fillMaxHeight())
+                        p.content(Modifier.width(width(p).dp).fillMaxHeight())
                     }
                 }
             }
@@ -476,6 +488,15 @@ private val FADER_MAX = 400.dp
 /** The narrowest a drawbar gets: a fingertip (Material's smallest touch target). */
 private const val DRAWBAR_MIN_DP = 48f
 
+/**
+ * ...except alone in a row too narrow for nine of those (a phone held upright):
+ * then 36 apart (5.7 mm), the whole column touchable. Measured on sw411 against
+ * the alternatives: two rows of drawbars halve the stroke (to about 60 dp), and
+ * every fader on its side leaves twelve lanes of about 38 dp; one squeezed row
+ * keeps 41 dp apart and the full stroke.
+ */
+private const val DRAWBAR_SQUEEZE_DP = 36f
+
 private val DRAWBAR_LABELS = listOf("16'", "5⅓'", "8'", "4'", "2⅔'", "2'", "1⅗'", "1⅓'", "1'")
 private val DRAWBAR_COLOURS = listOf(Color(0xFF8B4A2B), Color(0xFF8B4A2B), Color(0xFFE6E2D6), Color(0xFFE6E2D6),
     Color(0xFF2B2B2B), Color(0xFFE6E2D6), Color(0xFF2B2B2B), Color(0xFF2B2B2B), Color(0xFFE6E2D6))
@@ -508,8 +529,9 @@ private fun SetBfreePanel(player: SongPlayer, s: Float, modifier: Modifier) {
             }
         }
         Spacer(Modifier.height((8f * s).dp))
-        // The nine share the panel's width; each column, gap and all, takes the touch.
-        Row(Modifier.weight(1f).fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy((8f * s).dp)) {
+        // The nine share the panel's width; each column, gap and all, takes the touch
+        // (the fader draws its own margin), so squeezed they lose no target.
+        Row(Modifier.weight(1f).fillMaxWidth()) {
             for (i in 0..8) {
                 val v = (player.setBfree[i] ?: 0f) / 8f
                 Column(Modifier.weight(1f).fillMaxHeight(), horizontalAlignment = Alignment.CenterHorizontally) {
