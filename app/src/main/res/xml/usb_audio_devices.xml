@@ -1,8 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <!-- Any device with a USB Audio class interface: audio streaming or MIDI
-         streaming. Android matches the class against the device's interfaces
-         as well as the device itself, which is what catches the CP-88:
-         its device class is 0xEF (interface association), not audio. -->
-    <usb-device class="1" />
+    <!-- The devices RigAlong has a profile for and drives directly: the
+         Yamaha CP88/CP73 (0499:172b). Not every USB audio device: a dock's
+         or a headset's own sound card plugged in would ask "Open RigAlong?"
+         too, and RigAlong has no business with it. -->
+    <usb-device vendor-id="1177" product-id="5931" />
 </resources>

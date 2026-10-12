@@ -374,9 +374,11 @@ Every setlist and song, with its history.
    through a USB-C adapter or a hub if needed.
 2. Start RigAlong. Out of the box it plays through Android (ALSA) and asks
    for nothing.
-3. In Setup, set audio and MIDI to **USB device**, and allow RigAlong to use
-   the keyboard when Android asks ("always", so that a replugged keyboard
-   comes back without asking in the middle of a set). Both sound and notes
+3. In Setup, set audio and MIDI to **USB device**. RigAlong asks once for the
+   microphone: Android offers "Always" for a USB audio device only to apps
+   allowed to record (RigAlong records only when you measure latency). Then
+   allow RigAlong to use the keyboard and choose **Always**, so that a
+   replugged keyboard comes back without asking in the middle of a set. Both sound and notes
    then travel over that single cable, and the tablet's sound comes out of
    the keyboard's own outputs.
 4. Mind the volume: the direct modes bypass Android's volume. Use the Master

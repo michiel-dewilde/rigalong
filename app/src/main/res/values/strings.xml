@@ -87,6 +87,7 @@
     <string name="pick_song">Pick a song, or add one.</string>
     <string name="add_song">Add a song</string>
     <string name="setlist_named">Setlist: %1$s</string>
+    <string name="usb_record_why">Android remembers a USB audio device ("Always") only for apps allowed to record. Allow the microphone, then choose Always: the CP88/CP73 then comes back without asking. RigAlong records only when you measure latency.</string>
     <string name="back_to_setlist">← Setlist</string>
     <string name="hear">Hear</string>
     <string name="hearing">Hearing</string>

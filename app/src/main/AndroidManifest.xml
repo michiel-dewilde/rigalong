@@ -93,9 +93,12 @@
           prototype measured what a second instance does: it fights the first
           for the interfaces and kills its stream.
 
-          Off until a direct-USB mode is chosen (MainActivity.syncUsbAttach):
-          with it on, plugging in any USB audio device asks "Open RigAlong?",
-          and a player on ALSA has no use for that dialog.
+          Off until a direct-USB mode is chosen (MainActivity.syncUsbAttach),
+          and only for the devices RigAlong has a profile for (the CP88/CP73):
+          a player on ALSA, or a dock's own sound card, gets no "Open RigAlong?".
+          "Always" needs the microphone permission (asked when direct USB is
+          chosen): Android greys it out for an app that may not record when the
+          device has audio input.
         -->
         <activity-alias
             android:name=".UsbAttach"

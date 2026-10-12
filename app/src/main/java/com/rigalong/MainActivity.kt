@@ -490,7 +490,8 @@ class MainActivity : androidx.activity.ComponentActivity() {
         permissions.forEachIndexed { i, permission ->
             val ok = grantResults.getOrNull(i) ==
                 android.content.pm.PackageManager.PERMISSION_GRANTED
-            if (ok && permission == android.Manifest.permission.RECORD_AUDIO) {
+            // Only the measurement's request opens the input: the one for USB "Always" does not.
+            if (ok && permission == android.Manifest.permission.RECORD_AUDIO && requestCode == 1) {
                 NativeBridge.nativeEnableInput(findBuiltinMicDeviceId())
             }
         }
@@ -1867,7 +1868,25 @@ class MainActivity : androidx.activity.ComponentActivity() {
         deniedDevices.clear()
         saveModePrefs()
         android.util.Log.i("rigalong-ui", "mode: audio=${a.label} midi=${m.label} (same device: $same)")
+        if (a.direct || m.direct) askRecordForUsbAlways()
         applyRouting("mode change")
+    }
+
+    /**
+     * Choosing a direct-USB mode asks once for the microphone. Android lets an
+     * app become the one that opens a USB device ("Always") only if it may
+     * record when the device has audio input, as the CP88/CP73 does; without it
+     * "Always" is greyed out and every replug asks again. Asked once, when the
+     * player opts in, never at start-up.
+     */
+    private fun askRecordForUsbAlways() {
+        if (checkSelfPermission(android.Manifest.permission.RECORD_AUDIO) ==
+            android.content.pm.PackageManager.PERMISSION_GRANTED) return
+        val p = prefs()
+        if (p.getBoolean("usb.askedRecord", false)) return
+        p.edit().putBoolean("usb.askedRecord", true).apply()
+        android.widget.Toast.makeText(this, R.string.usb_record_why, android.widget.Toast.LENGTH_LONG).show()
+        requestPermissions(arrayOf(android.Manifest.permission.RECORD_AUDIO), 2)
     }
 
     /**
@@ -2826,6 +2845,7 @@ class MainActivity : androidx.activity.ComponentActivity() {
                 .putString("chosenMidiName", chosenMidiName).apply()
             saveModePrefs()
             deniedDevices.clear()
+            if (audioMode.direct || midiMode.direct) askRecordForUsbAlways()
             applyRouting("environment")
         }
         override fun availableDevices(): Set<String> =
