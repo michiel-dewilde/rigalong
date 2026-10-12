@@ -77,6 +77,7 @@
     <string name="pick_song">Pick a song, or add one.</string>
     <string name="add_song">Add a song</string>
     <string name="setlist_named">Setlist: %1$s</string>
+    <string name="back_to_setlist">← Setlist</string>
     <string name="removed_song">(removed)</string>
     <string name="song">Song</string>
     <string name="save">Save</string>

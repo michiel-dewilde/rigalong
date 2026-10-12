@@ -581,6 +581,8 @@ private fun SongsScreen(player: SongPlayer, lib: Library, host: EngineHost) {
     var editing by remember { mutableStateOf<Pair<Digest?, RackSong>?>(null) }
     var editName by remember { mutableStateOf("") }
     var focus by remember { mutableStateOf<SongPlayer.EditRequest?>(null) }
+    // A phone shows the setlist or the editor: whether the list is back in front of an open song.
+    var listShown by remember { mutableStateOf(false) }
     // The song as it was opened: what its slots' library patches were before editing.
     var original by remember { mutableStateOf<RackSong?>(null) }
     var originalName by remember { mutableStateOf("") }
@@ -588,6 +590,7 @@ private fun SongsScreen(player: SongPlayer, lib: Library, host: EngineHost) {
     val newSongName = stringResource(R.string.new_song)
     fun open(id: Digest) {
         selected = id
+        listShown = false
         val e = lib.store.entry(id)
         val song = lib.songs().firstOrNull { it.entry.id == id }?.song
         val rack = song?.let { lib.rackSong(it) }
@@ -619,8 +622,10 @@ private fun SongsScreen(player: SongPlayer, lib: Library, host: EngineHost) {
         val wide = maxWidth > 900.dp
         val list = @Composable {
             SetlistPanel(lib, setlistId, revision, selected,
-                onSelect = { id -> focus = null; open(id) },
+                // On a phone the song still open is only brought back, unsaved changes and all.
+                onSelect = { id -> focus = null; if (!wide && id == editing?.first) listShown = false else open(id) },
                 onNew = {
+                    listShown = false
                     editing = null to RackSong.starter(preset = host.currentInstrument())
                     original = null
                     editName = newSongName
@@ -675,10 +680,13 @@ private fun SongsScreen(player: SongPlayer, lib: Library, host: EngineHost) {
                 Spacer(Modifier.width(12.dp))
                 Box(Modifier.weight(1f).fillMaxHeight()) { editor() }
             }
+        } else if (listShown || editing == null) {
+            // A phone: the setlist, or the song open in the editor -- each the whole height.
+            Box(Modifier.fillMaxSize()) { list() }
         } else {
             Column(Modifier.fillMaxSize()) {
-                Box(Modifier.fillMaxWidth().height(260.dp)) { list() }
-                Spacer(Modifier.height(8.dp))
+                // Back to the list; the song stays open as it is, unsaved changes and all.
+                TextButton(onClick = { listShown = true }) { Text(stringResource(R.string.back_to_setlist)) }
                 Box(Modifier.weight(1f)) { editor() }
             }
         }
@@ -739,32 +747,47 @@ private fun SongEditor(song: RackSong, name: String, host: EngineHost, player: S
     var fxEditor by remember { mutableStateOf<String?>(null) }
     var renaming by remember { mutableStateOf<String?>(null) }
     var masterFxEditor by remember { mutableStateOf(false) }
+    // A phone: the song's buttons wrap under its name, and each sound takes two lines.
+    BoxWithConstraints(Modifier.fillMaxSize()) {
+    val narrow = maxWidth < 700.dp
     Column(Modifier.fillMaxSize().background(Panel, RoundedCornerShape(10.dp)).padding(12.dp)
         .verticalScroll(rememberScrollState())) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
+        val nameField = @Composable { m: Modifier ->
             OutlinedTextField(value = name, onValueChange = onName, label = { Text(stringResource(R.string.song)) },
-                singleLine = true, modifier = Modifier.weight(1f))
-            Spacer(Modifier.width(12.dp))
+                singleLine = true, modifier = m)
+        }
+        val songButtons = @Composable {
             LeadSheetButton(song, player, onChange)
-            Spacer(Modifier.width(12.dp))
             OutlinedButton(onClick = { reverbEditor = true }) {
                 Text(stringResource(R.string.reverb_button), color = if (song.reverb.isEmpty()) Color.White else Accent)
             }
-            Spacer(Modifier.width(12.dp))
             OutlinedButton(onClick = { masterFxEditor = true }) {
                 Text(song.masterFx?.let { stringResource(R.string.master_fx_is, stringResource(fxLabel(it.type))) }
                     ?: stringResource(R.string.master_fx_button), color = if (song.masterFx == null) Color.White else Accent)
             }
             // A device's song sounds as its own file (a CP-88 page as .X9P), for its USB stick.
             for (d in player.devices.withSounds()) if (song.liveSets.any { it.devices[d.name]?.mode == "own" }) {
-                Spacer(Modifier.width(12.dp))
                 DeviceAreaFileButton(song, name, d, player)
             }
-            Spacer(Modifier.width(12.dp))
-            // "Save •" while there is something to save: a library patch picked or
-            // saved in a dialog belongs to the song only once the song is saved.
+        }
+        // "Save •" while there is something to save: a library patch picked or
+        // saved in a dialog belongs to the song only once the song is saved.
+        val saveButton = @Composable {
             Button(onClick = onSave, modifier = Modifier.height(56.dp)) {
                 Text(stringResource(if (unsaved) R.string.save_unsaved else R.string.save))
+            }
+        }
+        if (narrow) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                nameField(Modifier.weight(1f))
+                saveButton()
+            }
+            androidx.compose.foundation.layout.FlowRow(horizontalArrangement = Arrangement.spacedBy(12.dp)) { songButtons() }
+        } else {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                nameField(Modifier.weight(1f))
+                songButtons()
+                saveButton()
             }
         }
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -789,14 +812,17 @@ private fun SongEditor(song: RackSong, name: String, host: EngineHost, player: S
         Text(stringResource(R.string.engines), fontWeight = FontWeight.SemiBold)
         for (inst in song.instances) {
             val slot = inst.slot
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                // Its name: tap to rename ("Bright", "Pad").
+            // Its name: tap to rename ("Bright", "Pad").
+            val label = @Composable { m: Modifier ->
                 Text(song.displayName(inst), color = if (inst.label != null) Accent else Color.White, maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.width(120.dp).clickable { renaming = inst.id }.padding(vertical = 8.dp))
-                OutlinedButton(onClick = { picker = inst.id }, modifier = Modifier.weight(1f)) {
+                    overflow = TextOverflow.Ellipsis, modifier = m.clickable { renaming = inst.id }.padding(vertical = 8.dp))
+            }
+            val preset = @Composable { m: Modifier ->
+                OutlinedButton(onClick = { picker = inst.id }, modifier = m) {
                     Text(slot.preset ?: stringResource(R.string.as_loaded_paren), maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
+            }
+            val edits = @Composable {
                 TextButton(onClick = { soundEditor = inst.id to null }) {
                     Text(stringResource(R.string.edit_patch) + if (slot.params.isNotEmpty()) " ●" else "")
                 }
@@ -804,10 +830,32 @@ private fun SongEditor(song: RackSong, name: String, host: EngineHost, player: S
                     Text(slot.fx?.let { stringResource(fxLabel(it.type)) } ?: stringResource(R.string.fx_button))
                 }
                 Text(stringResource(R.string.level), color = Dim)
+            }
+            val level = @Composable { m: Modifier ->
                 Slider(value = slot.level.toFloat(), onValueChange = { v ->
                     onChange(song.withSlot(inst.id, slot.copy(level = v.toDouble())))
-                }, modifier = Modifier.width(160.dp))
-                TextButton(onClick = { onChange(song.minus(inst.id)) }) { Text("✕", color = Danger) }
+                }, modifier = m)
+            }
+            val remove = @Composable { TextButton(onClick = { onChange(song.minus(inst.id)) }) { Text("✕", color = Danger) } }
+            if (narrow) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    label(Modifier.weight(1f))
+                    preset(Modifier.weight(1.5f))
+                    remove()
+                }
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    edits()
+                    Spacer(Modifier.width(8.dp))
+                    level(Modifier.weight(1f))
+                }
+            } else {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    label(Modifier.width(120.dp))
+                    preset(Modifier.weight(1f))
+                    edits()
+                    level(Modifier.width(160.dp))
+                    remove()
+                }
             }
         }
         // Another sound, of any engine -- a second sfizz is a second instance.
@@ -830,6 +878,7 @@ private fun SongEditor(song: RackSong, name: String, host: EngineHost, player: S
             LiveSetCard(song, i, ls, player, lib, focused = focus?.liveSet == i, onChange,
                 onSound = { id -> soundEditor = id to i })
         }
+    }
     }
     fxEditor?.let { id ->
         song.instance(id)?.let { inst ->
