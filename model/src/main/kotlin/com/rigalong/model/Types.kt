@@ -129,8 +129,19 @@ data class StageCell(val control: String, val x: Int, val y: Int, val w: Int = 1
 @Serializable
 data class StageLayout(val columns: Int = 8, val cells: List<StageCell> = emptyList())
 
+/**
+ * A song's tempo and metre (S12.1, S12.5), or a live set's own: [bpm] counts
+ * [beatUnit] notes (6/8 at 120 is 120 eighths a minute); null is no tempo, the
+ * metre still meant. [countInBars]: the count-in's length, where the song names
+ * one.
+ */
 @Serializable
-data class Tempo(val bpm: Double, val beatsPerBar: Int = 4, val countInBars: Int? = null)
+data class Tempo(val bpm: Double? = null, val beatsPerBar: Int = 4, val countInBars: Int? = null, val beatUnit: Int = 4) {
+    /** Quarter notes a minute, as the engines' synced parameters and MIDI clock count (I12.1). */
+    val quarterBpm: Double? get() = bpm?.let { it * 4.0 / beatUnit.coerceAtLeast(1) }
+    /** "6/8". */
+    val metre: String get() = "$beatsPerBar/$beatUnit"
+}
 
 @Serializable
 data class Song(
@@ -189,6 +200,8 @@ data class LiveSet(
     /** Stage cells shown in this live set; empty means all. */
     val visible: List<String> = emptyList(),
     val leadSheetPage: Int? = null,
+    /** A tempo and metre of its own, in place of the song's while it is selected (S12.5); null: the song's. */
+    val tempo: Tempo? = null,
     @SerialName("@type") @EncodeDefault val type: String = TYPE,
 ) {
     companion object { const val TYPE = "rigalong.liveset/1" }
@@ -282,8 +295,12 @@ data class Environment(
     val halfTurn: Boolean = true,
     /** The port the audio click goes to; null = the visual beat only (S12.4, I12.2). */
     val clickPort: String? = null,
-    /** Count-in only, or continuous (S12.2). */
+    /** Count-in only, or continuous (S12.2); superseded by [clickMode] where that is set. */
     val clickContinuous: Boolean = false,
+    /** What the metronome does when started (S12.6): "CONTINUOUS", "COUNT_IN", "COUNT_IN_VISUAL"; null: by [clickContinuous]. */
+    val clickMode: String? = null,
+    /** The count-in's bars where a song names none; null: 1. */
+    val countInBars: Int? = null,
     /** The click's level, 0-1. */
     val clickLevel: Double = 0.5,
     /** The MIDI port that MIDI clock goes out to, or null (I12.2). */

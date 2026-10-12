@@ -152,6 +152,8 @@ data class RackLiveSet(
     val parts: Map<String, RackPart> = emptyMap(),
     /** Per external device, by its name in the environment: what selecting this live set does to it. */
     val devices: Map<String, RackDevicePart> = emptyMap(),
+    /** Its own tempo and metre, in place of the song's (S12.5); null: the song's. */
+    val tempo: Tempo? = null,
 )
 
 /** A rack song as the form edits it. */
@@ -332,8 +334,8 @@ data class RackSong(
                     else -> null
                 }
             }.toMap()
-            RefJ.of(store.putTyped(LiveSet(name = ls.name, overrides = overrides, wires = wireStates, devices = devices)),
-                LiveSet.TYPE)
+            RefJ.of(store.putTyped(LiveSet(name = ls.name, overrides = overrides, wires = wireStates, devices = devices,
+                tempo = ls.tempo)), LiveSet.TYPE)
         }
         // Controls (I6.1): min and max as fractions of the parameter's range; channel 0 is any.
         val controls = instances.flatMap { inst ->
@@ -393,7 +395,7 @@ data class RackSong(
                     RackDevicePart(a.kind, a.mode, a.address, d,
                         d?.let { store.get(it) }?.let { Devices.driver(a.kind)?.sounds?.name(it) })
                 }
-                RackLiveSet(ls.name, parts, devices)
+                RackLiveSet(ls.name, parts, devices, ls.tempo)
             }
             return RackSong(instances, liveSets, song.tempo, song.leadSheet?.toRef()?.digest,
                 song.nodes["mix"]?.params ?: emptyMap(),

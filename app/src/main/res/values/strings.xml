@@ -32,10 +32,8 @@
     <string name="leslie_fast">Fast</string>
     <string name="percussion">Perc</string>
 
-    <string name="bpm">%1$.0f BPM</string>
     <string name="no_tempo">no tempo</string>
     <string name="tap">TAP</string>
-    <string name="save_tempo">save</string>
     <string name="reverb">Reverb</string>
     <string name="fx_button">FX…</string>
     <string name="fx_in_live_set">effect</string>
@@ -56,13 +54,25 @@
     <string name="beats_per_bar">beats/bar</string>
     <string name="count_in_bars">count-in bars</string>
     <string name="click">Click</string>
-    <string name="click_continuous">Continuous click (otherwise: a count-in only)</string>
-    <string name="click_audio">Click in the main out (otherwise: the beat on the screen only)</string>
-    <string name="click_level">Click level</string>
     <string name="midi_clock">MIDI clock out to the keyboard (USB device or interface mode)</string>
     <string name="click_note">With the keyboard as the only output, the click reaches the audience too. MIDI clock (24 a beat, with Start at the click) lets gear that follows it, such as tempo-synced delays, keep the song\'s tempo.</string>
     <string name="tempo">Tempo</string>
     <string name="bpm_short">BPM</string>
+    <string name="beat_unit">beat</string>
+    <string name="own_tempo">Own tempo</string>
+    <string name="bpm_metre">%1$s BPM · %2$s</string>
+    <string name="tempo_and_click">Tempo and click</string>
+    <string name="tempo_session">tapped or typed</string>
+    <string name="tempo_set">Set</string>
+    <string name="tempo_none">No tempo</string>
+    <string name="tempo_back">Back to the stored tempo</string>
+    <string name="tempo_save_song">Save into the song</string>
+    <string name="tempo_save_live_set">Save into this live set</string>
+    <string name="click_mode_continuous">Click until stopped</string>
+    <string name="click_mode_count_in">Count in, then stop</string>
+    <string name="click_mode_count_in_visual">Count in, then the beat on screen only</string>
+    <string name="count_in_from_song">(the song\'s)</string>
+    <string name="click_sound">Click sound</string>
 
     <!-- engines -->
     <string name="engine_sfizz">sfizz</string>
@@ -78,6 +88,8 @@
     <string name="add_song">Add a song</string>
     <string name="setlist_named">Setlist: %1$s</string>
     <string name="back_to_setlist">← Setlist</string>
+    <string name="hear">Hear</string>
+    <string name="hearing">Hearing</string>
     <string name="removed_song">(removed)</string>
     <string name="song">Song</string>
     <string name="save">Save</string>

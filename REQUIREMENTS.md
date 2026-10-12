@@ -820,6 +820,20 @@ Stated (2026-10-10)
 * S12.2 Count-in only, or continuous: an environment setting.
 * S12.3 Tap tempo, to set it easily.
 
+Stated (2026-10-12)
+
+* S12.5 The tempo is a first-class song item **together with the metre** (beats
+  per bar and beat unit, e.g. 6/8), and a **live set may override** both. A
+  song may also have no tempo; it can be set back to none.
+* S12.6 On the stage the **metronome starts and stops**, with: the sound on or
+  off; continuous, or a **count-in only** (a number of bars), or a count-in
+  that **goes on visually**. This supersedes S12.2 being an environment-only
+  setting (the environment still remembers it).
+* S12.7 Wherever a tempo is shown it can be **tapped or typed**.
+* S12.8 Tempo affects speed only (synced delays and LFO rates, MIDI clock);
+  nothing is synced to the position in the bar, and nothing is designed for
+  that until something uses it.
+
 Interpreted
 
 * I12.1 The song's tempo drives tempo-synced parameters (delay times, LFO
@@ -1006,6 +1020,10 @@ Stated (2026-10-11)
   view.
 * S20.4 Kept: an **on-screen test keyboard**, in the environment and live set
   views, to check a binding or a song with no keyboard attached.
+  (2026-10-12, Michiel) Shown in **every view, the stage included, if and
+  only if no MIDI controller is attached**. In the song editor a live set can
+  be **heard** -- the song as edited, at that live set -- so the keys (real
+  or on screen) play exactly it.
 * S20.5 New: a **MIDI monitor** showing incoming and outgoing MIDI per port.
 
 Stated (2026-10-11): the long-standing project rules, confirmed

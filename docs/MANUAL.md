@@ -60,12 +60,20 @@ What you play from.
   knob can be a setBfree drawbar in one live set and a Surge XT filter in
   the next. After a switch it **picks up**: it does nothing until you turn it
   past the setting's value, so nothing jumps.
-* **Tempo**: the song's tempo with a blinking beat. TAP sets a tempo by
-  tapping, four times or more; "save" keeps it in the song.
-* **Click**: COUNT plays a count-in of the song's count-in bars (one if it
-  names none); with a continuous click (Setup) the button is CLICK and runs
-  until STOP. While it runs, the beat shows its number in the bar, in step
-  with what you hear. Another song stops it.
+* **Tempo**: the tempo in force (the live set's own, or the song's) and its
+  metre, with a blinking beat. TAP sets a tempo by tapping, four times or
+  more. **Tap the tempo itself** for the tempo dialog: type a tempo, choose
+  **No tempo**, go **Back to the stored tempo**, or **Save** it into the song
+  (or into the live set, when it has its own). A tapped or typed tempo is
+  amber and holds until another song opens.
+* **Click**: the button starts and stops the metronome. The tempo dialog sets
+  what it does: **click until stopped** (CLICK), **count in, then stop**, or
+  **count in, then the beat on screen only** (COUNT), the count-in's bars
+  where the song names none, and whether the click is heard, and how loud.
+  While it runs, the beat shows its number in the bar, in step with what you
+  hear. Another song stops it.
+* **On-screen keys**: when no MIDI controller is attached, a keyboard at the
+  bottom of every screen plays what the current live set plays.
 * **Lead sheet**: when the song has one, it takes the left part of the screen
   (the top in portrait), one or two pages at a time.
 
@@ -112,14 +120,20 @@ song being edited:
   * **FX…** puts an effect after that sound: Delay, Phaser, Flanger, Rotary
     or Hall, from Surge XT. Times and rates can **sync** to the song's tempo,
     in note values (1/4, 1/8 dotted…).
-* **Tempo**, if the song has one, with its beats per bar and count-in bars,
-  and a **Lead sheet…** (a PDF).
+* **Tempo** (typed, stepped or tapped, or none) and the **metre** -- beats per
+  bar and the beat unit, so 6/8 counts eighths -- and the count-in's bars;
+  and a **Lead sheet…** (a PDF). Synced effects and MIDI clock follow the
+  tempo in quarter notes.
 * **Reverb…**: the room all of the song's sounds meet in (size, damping,
   width, mix), heard at once while you move it. A song that sets nothing gets
   the default room.
 * **Master FX…**: one more effect on the whole mix, after the room, such as
   a Hall or a delay over everything.
-* **Live sets**: for each live set and each sound:
+* **Live sets**: each can be **heard** (Hear): the song as you have it now,
+  saved or not, plays at that live set, on the keys and the on-screen keys,
+  and follows your edits; leaving Songs brings the stage's song back. A live
+  set may have its **own tempo** and metre, in place of the song's. For each
+  live set and each sound:
   * whether it **plays**;
   * a **key range**, from low to high, which makes a split;
   * **transposition** in semitones;
@@ -272,7 +286,9 @@ Every setlist and song, with its history.
   * **ALSA** goes through Android.
   * **USB interface** and **USB device** let the app drive the USB device
     directly, for the lowest latency. These are needed for sending anything
-    to the CP88/CP73, and "USB device" is the one to prefer.
+    to the CP88/CP73, and "USB device" is the one to prefer. Only these
+    ask Android for permission to use the device; with ALSA the app never
+    does, and plugging a USB device in raises no dialog.
 * **USB buffer**: 6 or 8 ms of audio queued on the wire, in the direct modes.
 * **Devices**: the keyboards and sound modules the app drives over MIDI.
   A device the app knows by name (a CP88/CP73) is added the first time it is
@@ -300,8 +316,9 @@ Every setlist and song, with its history.
 * **Stage**: Do Not Disturb while the app is in front. Notifications and
   calls are silenced; alarms and media are not. Android asks you once to
   allow it.
-* **Click**:
-  * a count-in only, or a continuous click;
+* **Click** (also in the stage's tempo dialog):
+  * click until stopped, count in and stop, or count in and go on as the beat
+    on the screen only; the count-in's bars where a song names none;
   * whether it is heard in the main out, and how loud. With the CP88/CP73 as
     the only output, the audience hears it too; otherwise the beat is on the
     screen only;
@@ -355,10 +372,13 @@ Every setlist and song, with its history.
 
 1. Connect the keyboard's USB TO HOST port to the tablet with a USB A-B cable,
    through a USB-C adapter or a hub if needed.
-2. Start RigAlong and allow it to use the USB device ("always allow").
-3. In Setup, set audio and MIDI to **USB device**. Both sound and notes then
-   travel over that single cable, and the tablet's sound comes out of the
-   keyboard's own outputs.
+2. Start RigAlong. Out of the box it plays through Android (ALSA) and asks
+   for nothing.
+3. In Setup, set audio and MIDI to **USB device**, and allow RigAlong to use
+   the keyboard when Android asks ("always", so that a replugged keyboard
+   comes back without asking in the middle of a set). Both sound and notes
+   then travel over that single cable, and the tablet's sound comes out of
+   the keyboard's own outputs.
 4. Mind the volume: the direct modes bypass Android's volume. Use the Master
    fader on the stage.
 5. Save the setup as an environment, for example "Stage".

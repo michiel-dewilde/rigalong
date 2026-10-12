@@ -42,6 +42,8 @@ data class Routing(
     val audioDevice: String, val audioMode: String,
     val midiDevice: String, val midiMode: String,
     val usbBufferMs: Int, val usbBufferChoices: List<Int>,
+    /** A MIDI input is there to play from (a device, its use not switched off): no on-screen keys needed. */
+    val midiIn: Boolean = false,
 )
 
 /**
@@ -162,18 +164,8 @@ fun SetupScreen(player: SongPlayer, host: EngineHost, lib: Library) {
             SetupToggle(stringResource(R.string.stage_dnd), dnd, accent, dim) { host.setStageDnd(it); dnd = host.stageDnd() }
             Spacer(Modifier.height(6.dp))
             Text(stringResource(R.string.click), fontWeight = FontWeight.SemiBold)
-            SetupToggle(stringResource(R.string.click_continuous), player.clickContinuous, accent, dim) {
-                player.clickContinuous = it; player.saveClickSettings()
-            }
-            SetupToggle(stringResource(R.string.click_audio), player.clickAudio, accent, dim) {
-                player.clickAudio = it; player.saveClickSettings()
-            }
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(stringResource(R.string.click_level), color = dim, modifier = Modifier.width(140.dp))
-                androidx.compose.material3.Slider(value = player.clickLevel, valueRange = 0.05f..1f,
-                    onValueChange = { player.clickLevel = it }, onValueChangeFinished = player::saveClickSettings,
-                    modifier = Modifier.weight(1f))
-            }
+            // The same options as the stage's tempo dialog.
+            ClickOptions(player)
             SetupToggle(stringResource(R.string.midi_clock), player.midiClock, accent, dim) {
                 player.midiClock = it; player.saveClickSettings()
             }
@@ -226,8 +218,6 @@ fun SetupScreen(player: SongPlayer, host: EngineHost, lib: Library) {
         }
     })
     }
-    Spacer(Modifier.height(8.dp))
-    TestKeys()
     }
     // Read so that the +/- buttons above, which change plain preferences, recompose.
     if (tick < 0) Text("")

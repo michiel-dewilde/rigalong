@@ -103,14 +103,22 @@ fun BagoTheme(content: @Composable () -> Unit) {
 fun AppUi(player: SongPlayer, lib: Library, host: EngineHost) {
     var screen by remember { mutableIntStateOf(0) }
     var health by remember { mutableStateOf("") }
+    // The on-screen keys whenever there is no MIDI input to play from (S20.4), on every screen.
+    var keys by remember { mutableStateOf(false) }
     LaunchedEffect(Unit) {
+        var n = 0
         while (true) {
             health = runCatching { host.healthLine() }.getOrDefault("")
             player.diagnostics?.tick(host)
+            if (n++ % 2 == 0) keys = runCatching { !host.routing().midiIn }.getOrDefault(true)
             delay(500)
         }
     }
-    LaunchedEffect(screen) { player.onStage = screen == 0 }
+    LaunchedEffect(screen) {
+        player.onStage = screen == 0
+        // The editor's song is heard only while the editor is open.
+        if (screen != 1) player.stopHearing()
+    }
     LaunchedEffect(Unit) { player.backToStage = { screen = 0 } }
     LaunchedEffect(Unit) { player.showSongs = { screen = 1 } }
     LaunchedEffect(Unit) { player.watchControllers() }
@@ -126,15 +134,17 @@ fun AppUi(player: SongPlayer, lib: Library, host: EngineHost) {
         Column(Modifier.fillMaxSize().safeDrawingPadding().padding(12.dp)) {
             TopBar(player, health, screen, onScreen = { screen = it }, onPrototype = host::showPrototype)
             Spacer(Modifier.height(8.dp))
-            when (screen) {
-                0 -> StageScreen(player, host)
-                1 -> Column(Modifier.fillMaxSize()) {
-                    Box(Modifier.weight(1f)) { SongsScreen(player, lib, host) }
-                    Spacer(Modifier.height(8.dp))
-                    TestKeys()
+            Box(Modifier.weight(1f)) {
+                when (screen) {
+                    0 -> StageScreen(player, host)
+                    1 -> SongsScreen(player, lib, host)
+                    2 -> LibraryScreen(player, lib, host, onOpened = { screen = 0 })
+                    else -> SetupScreen(player, host, lib)
                 }
-                2 -> LibraryScreen(player, lib, host, onOpened = { screen = 0 })
-                else -> SetupScreen(player, host, lib)
+            }
+            if (keys) {
+                Spacer(Modifier.height(8.dp))
+                TestKeys()
             }
         }
     }
@@ -611,7 +621,19 @@ private fun SongsScreen(player: SongPlayer, lib: Library, host: EngineHost) {
         originalName = editName
         selected = id
         revision++
+        val wasHeard = player.heard?.takeIf { it.first == ed.first }?.second
         player.reload()
+        wasHeard?.let { player.hear(id, ed.second, it) }
+    }
+    // While a live set of the open song is heard, the engine follows the edits (after a pause).
+    LaunchedEffect(editing) {
+        val ed = editing ?: return@LaunchedEffect
+        val h = player.heard ?: return@LaunchedEffect
+        // Another song opened: the stage's comes back until one of its live sets is heard.
+        if (h.first != ed.first) { player.stopHearing(); return@LaunchedEffect }
+        val i = h.second
+        delay(300)
+        player.hear(ed.first, ed.second, i.coerceAtMost(ed.second.liveSets.size - 1))
     }
     // Quick edit from the stage: the song, scrolled to its live set or with its patch open.
     LaunchedEffect(player.editRequest) {
@@ -651,6 +673,8 @@ private fun SongsScreen(player: SongPlayer, lib: Library, host: EngineHost) {
                     }
                     SongEditor(ed.second, editName, host, player, lib, focus?.takeIf { it.song == ed.first },
                         unsaved = ed.first == null || ed.second != original || editName != originalName,
+                        hearing = player.heard?.takeIf { it.first == ed.first }?.second,
+                        onHear = { i -> player.hear(ed.first, ed.second, i) },
                         onName = { editName = it },
                         onChange = { editing = ed.first to it },
                         onSave = {
@@ -736,7 +760,8 @@ private fun move(lib: Library, setlistId: Digest, ids: List<Digest>, i: Int, by:
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun SongEditor(song: RackSong, name: String, host: EngineHost, player: SongPlayer, lib: Library,
-                       focus: SongPlayer.EditRequest?, unsaved: Boolean, onName: (String) -> Unit,
+                       focus: SongPlayer.EditRequest?, unsaved: Boolean, hearing: Int?, onHear: (Int) -> Unit,
+                       onName: (String) -> Unit,
                        onChange: (RackSong) -> Unit, onSave: () -> Unit) {
     // Instance ids: which sound's preset list, patch or effect is open.
     var picker by remember { mutableStateOf<String?>(null) }
@@ -790,22 +815,9 @@ private fun SongEditor(song: RackSong, name: String, host: EngineHost, player: S
                 saveButton()
             }
         }
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            androidx.compose.material3.Checkbox(checked = song.tempo != null, onCheckedChange = { on ->
-                onChange(song.copy(tempo = if (on) com.rigalong.model.Tempo(bpm = 120.0) else null))
-            })
-            Text(stringResource(R.string.tempo))
-            song.tempo?.let { t ->
-                NumberField(stringResource(R.string.bpm_short), t.bpm.toInt(), 20..300) {
-                    onChange(song.copy(tempo = t.copy(bpm = it.toDouble())))
-                }
-                NumberField(stringResource(R.string.beats_per_bar), t.beatsPerBar, 1..16) {
-                    onChange(song.copy(tempo = t.copy(beatsPerBar = it)))
-                }
-                NumberField(stringResource(R.string.count_in_bars), t.countInBars ?: 1, 1..8) {
-                    onChange(song.copy(tempo = t.copy(countInBars = it)))
-                }
-            }
+        // The song's tempo and metre (S12.1, S12.5); a live set may have its own.
+        TempoFields(song.tempo ?: com.rigalong.model.Tempo(), countIn = true) { t ->
+            onChange(song.copy(tempo = t.takeIf { it != com.rigalong.model.Tempo() }))
         }
         Spacer(Modifier.height(12.dp))
         // The song's sounds: instances, first class -- several of one engine if it wants (two sfizz instances).
@@ -875,8 +887,8 @@ private fun SongEditor(song: RackSong, name: String, host: EngineHost, player: S
             }) { Text(stringResource(R.string.add_live_set)) }
         }
         song.liveSets.forEachIndexed { i, ls ->
-            LiveSetCard(song, i, ls, player, lib, focused = focus?.liveSet == i, onChange,
-                onSound = { id -> soundEditor = id to i })
+            LiveSetCard(song, i, ls, player, lib, focused = focus?.liveSet == i, heard = hearing == i, onChange,
+                onSound = { id -> soundEditor = id to i }, onHear = { onHear(i) })
         }
     }
     }
@@ -934,7 +946,7 @@ private fun SongEditor(song: RackSong, name: String, host: EngineHost, player: S
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun LiveSetCard(song: RackSong, i: Int, ls: RackLiveSet, player: SongPlayer, lib: Library, focused: Boolean,
-                        onChange: (RackSong) -> Unit, onSound: (String) -> Unit) {
+                        heard: Boolean, onChange: (RackSong) -> Unit, onSound: (String) -> Unit, onHear: () -> Unit) {
     fun put(n: RackLiveSet) = onChange(song.copy(liveSets = song.liveSets.toMutableList().also { it[i] = n }))
     val copyName = stringResource(R.string.copy_of, ls.name)
     // Opened from the stage on this live set: scrolled into view and outlined.
@@ -947,6 +959,9 @@ private fun LiveSetCard(song: RackSong, i: Int, ls: RackLiveSet, player: SongPla
         Row(verticalAlignment = Alignment.CenterVertically) {
             OutlinedTextField(value = ls.name, onValueChange = { put(ls.copy(name = it)) }, singleLine = true,
                 label = { Text(stringResource(R.string.live_set_n, i + 1)) }, modifier = Modifier.weight(1f))
+            // The keys (and the on-screen ones) play this live set of this song, as edited.
+            if (heard) Button(onClick = onHear) { Text(stringResource(R.string.hearing)) }
+            else OutlinedButton(onClick = onHear) { Text(stringResource(R.string.hear)) }
             TextButton(onClick = {
                 onChange(song.copy(liveSets = song.liveSets.toMutableList().also { it.add(i + 1, ls.copy(name = copyName)) }))
             }) { Text(stringResource(R.string.copy)) }
@@ -957,6 +972,14 @@ private fun LiveSetCard(song: RackSong, i: Int, ls: RackLiveSet, player: SongPla
                 onChange(song.copy(liveSets = song.liveSets.toMutableList().also { it.removeAt(i) }))
             }) { Text("✕", color = Danger) }
         }
+        // Its own tempo and metre, in place of the song's while it is selected (S12.5).
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Checkbox(checked = ls.tempo != null, onCheckedChange = { on ->
+                put(ls.copy(tempo = if (on) (song.tempo ?: com.rigalong.model.Tempo()) else null))
+            })
+            Text(stringResource(R.string.own_tempo), color = if (ls.tempo != null) Color.White else Dim)
+        }
+        ls.tempo?.let { t -> TempoFields(t, countIn = false) { put(ls.copy(tempo = it)) } }
         for (inst in song.instances) {
             val p = ls.parts[inst.id] ?: RackPart(plays = false)
             fun putPart(np: RackPart) = put(ls.copy(parts = ls.parts + (inst.id to np)))
@@ -999,12 +1022,16 @@ private fun LiveSetCard(song: RackSong, i: Int, ls: RackLiveSet, player: SongPla
 }
 
 /**
- * The song's tempo, a visual beat (I12.2), tap tempo and saving a tapped one
- * (S12.3, I12.3), and the click: a count-in, or on and off (S12.2). While the
- * click runs the beat shows its number in the bar, in step with what is heard.
+ * The tempo in force and its metre, a visual beat (I12.2), tap tempo (S12.3,
+ * I12.3), and the metronome's start and stop (S12.6). A tap on the tempo opens
+ * [TempoDialog]: typed, none, back to the stored one or saved, and the click's
+ * options. While the click runs (or its beat goes on visually) the beat shows
+ * its number in the bar, in step with what is heard.
  */
 @Composable
 private fun TempoBox(player: SongPlayer, s: Float = 1f) {
+    var dialog by remember { mutableStateOf(false) }
+    if (dialog) TempoDialog(player) { dialog = false }
     var now by remember { mutableStateOf(System.nanoTime()) }
     LaunchedEffect(Unit) { while (true) { now = System.nanoTime(); delay(16) } }
     val bpm = player.bpm
@@ -1023,18 +1050,20 @@ private fun TempoBox(player: SongPlayer, s: Float = 1f) {
             Box(Modifier.size((22f * s).dp).background(if (lit) Accent else Panel, RoundedCornerShape((11f * s).dp)))
         }
         Spacer(Modifier.width((8f * s).dp))
-        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            Text(bpm?.let { stringResource(R.string.bpm, it) } ?: stringResource(R.string.no_tempo), fontSize = (18f * s).sp)
-            if (player.bpmTapped) TextButton(onClick = player::saveTempo) { Text(stringResource(R.string.save_tempo)) }
+        Column(horizontalAlignment = Alignment.CenterHorizontally,
+            modifier = Modifier.clickable { dialog = true }.padding(horizontal = (6f * s).dp, vertical = (4f * s).dp)) {
+            Text(bpm?.let { bpmText(it) + " BPM" } ?: stringResource(R.string.no_tempo), fontSize = (18f * s).sp,
+                color = if (player.bpmTapped) Warn else Color.White)
+            Text(player.tempo?.metre ?: "", fontSize = (13f * s).sp, color = Dim)
         }
         Spacer(Modifier.width((8f * s).dp))
         BigButton(stringResource(R.string.tap), enabled = true, width = 88, scale = s) { player.tap() }
         Spacer(Modifier.width((8f * s).dp))
         BigButton(stringResource(when {
             player.clickRunning -> R.string.click_stop
-            player.clickContinuous -> R.string.click_on
+            player.clickMode == SongPlayer.ClickMode.CONTINUOUS -> R.string.click_on
             else -> R.string.count_in
-        }), enabled = bpm != null, width = 104, selected = player.clickRunning,
+        }), enabled = bpm != null || player.clickRunning, width = 104, selected = player.clickRunning,
             fontSize = 22, scale = s) { player.toggleClick() }
     }
 }

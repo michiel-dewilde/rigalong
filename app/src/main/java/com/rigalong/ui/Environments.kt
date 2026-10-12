@@ -38,7 +38,9 @@ object Environments {
             halfTurn = player.sheetHalfTurn,
             keysTurnPages = player.keysTurnPages,
             clickPort = MAIN_OUT.takeIf { player.clickAudio },
-            clickContinuous = player.clickContinuous,
+            clickContinuous = player.clickMode == SongPlayer.ClickMode.CONTINUOUS,
+            clickMode = player.clickMode.name,
+            countInBars = player.countInBars,
             clickLevel = player.clickLevel.toDouble(),
             midiClockPort = KEYS.takeIf { player.midiClock },
             doNotDisturb = host.stageDnd(),
@@ -62,7 +64,9 @@ object Environments {
         player.keysTurnPages = env.keysTurnPages
         player.saveSheetSettings()
         player.clickAudio = env.clickPort != null
-        player.clickContinuous = env.clickContinuous
+        player.clickMode = env.clickMode?.let { runCatching { SongPlayer.ClickMode.valueOf(it) }.getOrNull() }
+            ?: if (env.clickContinuous) SongPlayer.ClickMode.CONTINUOUS else SongPlayer.ClickMode.COUNT_IN
+        player.countInBars = env.countInBars ?: 1
         player.clickLevel = env.clickLevel.toFloat()
         player.midiClock = env.midiClockPort != null
         player.saveClickSettings()

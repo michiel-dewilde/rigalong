@@ -187,6 +187,7 @@ class MainActivity : androidx.activity.ComponentActivity() {
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         // Before buildUi, so the buttons are built with the right faces on them.
         loadPrefs()
+        syncUsbAttach()
         // Two screens in one frame while M3 is under way: the new UI (Compose,
         // ui/AppUi.kt) and the prototype's, which still owns routing and the
         // engine panels. The new one is the default; each has a way to the other.
@@ -1088,6 +1089,23 @@ class MainActivity : androidx.activity.ComponentActivity() {
             .putString("midiMode", midiMode.name)
             .putInt("usbBufferMs", usbBufferMs)
             .apply()
+        syncUsbAttach()
+    }
+
+    /**
+     * The USB attach filter (the manifest's UsbAttach alias) on only while a
+     * direct-USB mode is chosen. Off, plugging in a USB audio device raises no
+     * "Open RigAlong?" dialog, and the app never asks for USB permission:
+     * ALSA needs none. Choosing a direct mode is the opt-in to both.
+     */
+    private fun syncUsbAttach() {
+        val on = audioMode.direct || midiMode.direct
+        val state = if (on) android.content.pm.PackageManager.COMPONENT_ENABLED_STATE_ENABLED else android.content.pm.PackageManager.COMPONENT_ENABLED_STATE_DISABLED
+        val alias = android.content.ComponentName(this, "$packageName.UsbAttach")
+        runCatching {
+            if (packageManager.getComponentEnabledSetting(alias) != state)
+                packageManager.setComponentEnabledSetting(alias, state, android.content.pm.PackageManager.DONT_KILL_APP)
+        }.onFailure { android.util.Log.w("rigalong-ui", "usb attach filter: ${it.message}") }
     }
 
     // --------------------------------------------------------------- choices
@@ -2709,11 +2727,13 @@ class MainActivity : androidx.activity.ComponentActivity() {
         override fun statusLines(): List<String> = statusView.text.toString().lines()
         override fun resetCounts() = this@MainActivity.resetCounts()
         override fun routing(): com.rigalong.ui.Routing {
-            val (a, m) = effectiveModes(resolveAudio(), resolveMidi())
+            val midi = resolveMidi()
+            val (a, m) = effectiveModes(resolveAudio(), midi)
             return com.rigalong.ui.Routing(
                 audioDevice = shortName(chosenOutputName), audioMode = a.name,
                 midiDevice = shortName(chosenMidiName), midiMode = m.name,
-                usbBufferMs = usbBufferMs, usbBufferChoices = UsbBuffers.choicesMs.toList())
+                usbBufferMs = usbBufferMs, usbBufferChoices = UsbBuffers.choicesMs.toList(),
+                midiIn = midi != null && !m.off)
         }
         override fun installEngineFile(kind: com.rigalong.model.EngineFiles.Kind, fileName: String, bytes: ByteArray): String? {
             val dir = when (kind) {

@@ -36,6 +36,23 @@ class RackTest {
     }
 
     @Test
+    fun aTempoIsTheSongsAndALiveSetMayHaveItsOwn() {
+        // 6/8 at 120 counts eighths: 60 quarter notes a minute for the engines and MIDI clock.
+        assertEquals(60.0, Tempo(bpm = 120.0, beatsPerBar = 6, beatUnit = 8).quarterBpm)
+        assertEquals("6/8", Tempo(bpm = 120.0, beatsPerBar = 6, beatUnit = 8).metre)
+        assertEquals(null, Tempo(beatsPerBar = 3).quarterBpm, "a metre without a tempo")
+        // What was stored before keeps its encoding (and so its digest): new fields at their defaults stay out.
+        assertEquals("""{"bpm":120}""", Types.toJson(Tempo(bpm = 120.0)).canonical())
+        assertEquals(store.putTyped(LiveSet(name = "Verse")), store.putTyped(LiveSet(name = "Verse", tempo = null)))
+        val d = draft.copy(tempo = Tempo(bpm = 96.0, countInBars = 2),
+            liveSets = draft.liveSets.mapIndexed { i, ls -> if (i == 1) ls.copy(tempo = Tempo(bpm = 140.0, beatsPerBar = 6, beatUnit = 8)) else ls })
+        val back = assertNotNull(RackSong.fromObjects(store, d.toObjects(store)))
+        assertEquals(d.tempo, back.tempo)
+        assertEquals(null, back.liveSets[0].tempo)
+        assertEquals(Tempo(bpm = 140.0, beatsPerBar = 6, beatUnit = 8), back.liveSets[1].tempo)
+    }
+
+    @Test
     fun aRackSongSwitchesLikeAnySong() {
         val song = draft.toObjects(store)
         val liveSets = song.liveSets.map { store.getTyped<LiveSet>(it.toRef().digest) }

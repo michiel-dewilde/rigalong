@@ -16,6 +16,7 @@ import com.rigalong.model.LiveSetSwitcher.Change
 import com.rigalong.model.RackEngine
 import com.rigalong.model.RackSong
 import com.rigalong.model.Song
+import com.rigalong.model.Tempo
 import com.rigalong.model.getTyped
 
 /** Routing by the devices' own names; null name = automatic. Modes are IoMode names. */
@@ -98,6 +99,15 @@ class SongPlayer(private val lib: Library, private val host: EngineHost, private
     var rack: RackSong? by mutableStateOf(null); private set
     val liveSetNames = mutableStateListOf<String>()
     var liveSetIndex by mutableIntStateOf(-1); private set
+    /**
+     * While the song editor is heard ([hear]): which song (its entry, null for
+     * a new one) and which of its live sets the engine plays; null when the
+     * engine plays the stage's song.
+     */
+    var heard by mutableStateOf<Pair<Digest?, Int>?>(null); private set
+    /** The stage's song and live set, to come back to after [hear]. */
+    private var stageSong = -1
+    private var stageLiveSet = 0
     /** Instance levels as they are now, by instance id, for the stage faders. */
     val levels = androidx.compose.runtime.mutableStateMapOf<String, Float>()
     val playing = androidx.compose.runtime.mutableStateMapOf<String, Boolean>()
@@ -136,7 +146,8 @@ class SongPlayer(private val lib: Library, private val host: EngineHost, private
     }
 
     fun reload() {
-        setlistId?.let { openSetlist(it, songIndex.coerceAtLeast(0), liveSetIndex.coerceAtLeast(0)) }
+        val (song, liveSet) = if (heard != null) stageSong to stageLiveSet else songIndex to liveSetIndex
+        setlistId?.let { openSetlist(it, song.coerceAtLeast(0), liveSet.coerceAtLeast(0)) }
     }
 
     fun nextSong() { if (songIndex + 1 < songs.size) selectSong(songIndex + 1) }
@@ -144,33 +155,60 @@ class SongPlayer(private val lib: Library, private val host: EngineHost, private
 
     fun selectSong(index: Int, liveSet: Int = 0) {
         val s = songs.getOrNull(index) ?: return
+        heard = null
+        play(s, lib.rackSong(s), index, liveSet)
+    }
+
+    /**
+     * The song open in the editor, as it is now (saved or not), on the engine
+     * at its live set [liveSet], so that the keys -- the on-screen ones too --
+     * play it (S20.4). [entry] is the song's library entry, null for a new
+     * song. The stage's song comes back with [stopHearing].
+     */
+    fun hear(entry: Digest?, draft: RackSong, liveSet: Int) {
+        if (liveSet !in draft.liveSets.indices) return
+        if (heard == null) {
+            stageSong = songIndex; stageLiveSet = liveSetIndex
+            sessionBpm.keys.removeAll { it.startsWith("edit/") }
+        }
+        heard = entry to liveSet
+        play(draft.toObjects(lib.store), draft, null, liveSet)
+    }
+
+    /** Back to the stage's song and live set after [hear]. */
+    fun stopHearing() {
+        if (heard == null) return
+        if (songs.getOrNull(stageSong) != null) selectSong(stageSong, stageLiveSet) else heard = null
+    }
+
+    /** [s] on the engine and the devices, at live set [liveSet]: song [index] of the setlist, or (null) the editor's. */
+    private fun play(s: Song, r: RackSong?, index: Int?, liveSet: Int) {
         // The last song's live set values off its engines first, so none stays
         // on into a song that leaves that parameter to its preset.
         restoreSongValues()
         touched.clear()
-        // The same song again (a reload after saving): a tapped tempo holds for
+        // The same song again (a reload after saving): tapped tempos hold for
         // the session (I12.3) and a running click goes on. Another song stops it.
-        val sameSong = index == songIndex && bpmTapped
+        val sameSong = index != null && index == songIndex
         if (index != songIndex && clickRunning) stopClick()
-        songIndex = index
+        if (index != null) songIndex = index
         song = s
-        rack = lib.rackSong(s)
+        rack = r
         val liveSets = s.liveSets.map { lib.store.getTyped<LiveSet>(it.toRef().digest) }
         liveSetNames.clear()
         liveSetNames.addAll(liveSets.map { it.name })
         switcher = LiveSetSwitcher(s, liveSets)
-        prefs.edit().putInt("stage.song", index).apply()
-        note("song ${index + 1} '${songNames.getOrNull(index)}': instances ${rack?.instances?.map { it.id }}, " +
-                "live sets ${liveSets.map { it.name }}")
+        if (index != null) prefs.edit().putInt("stage.song", index).apply()
+        note((if (index != null) "song ${index + 1} '${songNames.getOrNull(index)}'" else "the editor's song") +
+                ": instances ${rack?.instances?.map { it.id }}, live sets ${liveSets.map { it.name }}")
         // The tempo before the engines: a synced effect is created at the song's
         // tempo, instead of gliding to it from the last song's over seconds.
         if (!sameSong) {
-            if (clickRunning) retempo(s.tempo?.bpm) else bpm = s.tempo?.bpm
-            bpmTapped = false
+            if (index != null) sessionBpm.clear()
             if (!clickRunning) beatOrigin = System.nanoTime()
             taps.clear()
         }
-        applyMidiClock()
+        updateTempo(liveSet)
         setUpEngines()
         // A preset loading in the background resets its engine when it lands:
         // then the song's values go on again ([settle]).
@@ -183,7 +221,7 @@ class SongPlayer(private val lib: Library, private val host: EngineHost, private
         devices.writeSong(liveSets)
         if (liveSets.isNotEmpty()) selectLiveSet(liveSet.coerceIn(0, liveSets.size - 1))
         // The next song's device sounds into the other reserved area, while this one plays.
-        devices.preload(nextLiveSets())
+        if (index != null) devices.preload(nextLiveSets())
     }
 
     /** The setlist's next song's live sets, for the devices to preload; null at the end. */
@@ -206,7 +244,9 @@ class SongPlayer(private val lib: Library, private val host: EngineHost, private
                     is Change.WireSet -> "${c.wire}=${if (c.on) "on" else "off"}"
                     else -> c.toString()
                 } })
-        prefs.edit().putInt("stage.liveSet", index).apply()
+        if (heard == null) prefs.edit().putInt("stage.liveSet", index).apply()
+        // Its own tempo and metre, or back to the song's.
+        updateTempo(index)
         touched.clear()
         // The stage's setBfree is the one playing here, its drawbars as this live set has them.
         setBfreeId = rack?.instances.orEmpty().filter { it.engine == RackEngine.SETBFREE }
@@ -261,13 +301,44 @@ class SongPlayer(private val lib: Library, private val host: EngineHost, private
 
     // ------------------------------------------------------------------ tempo
 
-    /** The song's tempo (S12.1); a tapped one holds for the session (I12.3). */
-    var bpm by mutableStateOf<Double?>(null); private set
+    /**
+     * The tempo and metre in force (S12.1, S12.5): the current live set's own
+     * if it has one, else the song's -- with what was tapped or typed on the
+     * stage for that one this session (I12.3). Null: neither has one.
+     */
+    var tempo by mutableStateOf<Tempo?>(null); private set
+    /** [tempo]'s BPM, in its beat unit; null is no tempo. */
+    val bpm: Double? get() = tempo?.bpm
     /** When beat one of the visual beat fell, System.nanoTime(). */
     var beatOrigin by mutableStateOf(0L); private set
+    /** The tempo in force was tapped or typed this session, not as stored: it can be saved, or let go. */
     var bpmTapped by mutableStateOf(false); private set
     private val taps = ArrayDeque<Long>()
     private var songEntries: List<Digest?> = emptyList()
+    /**
+     * Tempos tapped or typed this session, by where they belong ([tempoKey]):
+     * the song's, or one live set's own. A key with null is "no tempo". The
+     * stage song's hold until another song opens; the editor's song has its own.
+     */
+    private val sessionBpm = HashMap<String, Double?>()
+
+    /** Where live set [ls]'s tempo comes from: its own, or the song's. */
+    private fun tempoKey(ls: Int): String =
+        (if (heard != null) "edit/" else "song/") + (if (rack?.liveSets?.getOrNull(ls)?.tempo != null) "ls$ls" else "song")
+
+    /** The tempo as stored for live set [ls]: its own, or the song's. */
+    private fun storedTempo(ls: Int): Tempo? = rack?.liveSets?.getOrNull(ls)?.tempo ?: rack?.tempo
+
+    /** Works out [tempo] for live set [ls] and gives it to the click, the engines and MIDI clock. */
+    private fun updateTempo(ls: Int = liveSetIndex) {
+        val key = tempoKey(ls)
+        val stored = storedTempo(ls)
+        val b = if (key in sessionBpm) sessionBpm[key] else stored?.bpm
+        val t = if (b == null && stored == null) null else (stored ?: Tempo()).copy(bpm = b)
+        retempo(t)
+        bpmTapped = key in sessionBpm
+        applyMidiClock()
+    }
 
     /** One tap; four or more taps less than 2 s apart set the tempo. */
     fun tap() {
@@ -277,76 +348,127 @@ class SongPlayer(private val lib: Library, private val host: EngineHost, private
         while (taps.size > 6) taps.removeFirst()
         if (taps.size >= 4) {
             val span = (taps.last() - taps.first()) / (taps.size - 1).toDouble()
-            retempo(Math.round(60e9 / span * 10) / 10.0)
-            bpmTapped = true
-            applyMidiClock()
+            sessionBpm[tempoKey(liveSetIndex)] = Math.round(60e9 / span * 10) / 10.0
+            updateTempo()
         }
         // The visual beat falls on the tap, unless the click is counting: then
         // it stays with what is heard.
         if (!clickRunning) beatOrigin = now
     }
 
+    /** A tempo typed on the stage, or null for none: holds for the session like a tapped one. */
+    fun typeTempo(newBpm: Double?) {
+        sessionBpm[tempoKey(liveSetIndex)] = newBpm?.coerceIn(20.0, 400.0)
+        if (newBpm == null && clickRunning) stopClick()
+        updateTempo()
+    }
+
+    /** The tempo in force is the current live set's own, not the song's. */
+    fun tempoIsLiveSets(): Boolean = rack?.liveSets?.getOrNull(liveSetIndex)?.tempo != null
+
+    /** Back to the stored tempo, letting go of what was tapped or typed. */
+    fun revertTempo() {
+        sessionBpm.remove(tempoKey(liveSetIndex))
+        updateTempo()
+    }
+
     /** A new tempo; while the click runs, the visual beat bends with it instead of jumping. */
-    private fun retempo(newBpm: Double?) {
+    private fun retempo(newTempo: Tempo?) {
         val old = bpm
+        val newBpm = newTempo?.bpm
         if (clickRunning && old != null && newBpm != null) {
             val now = System.nanoTime()
             val beats = (now - beatOrigin) / (60e9 / old)
             beatOrigin = now - (beats * 60e9 / newBpm).toLong()
             NativeBridge.nativeClickTempo(newBpm)
         }
-        bpm = newBpm
+        tempo = newTempo
     }
 
     // ------------------------------------------------------------------ click
 
-    /** Count-in only, or continuous (S12.2): an environment setting. */
-    var clickContinuous by mutableStateOf(prefs.getBoolean("click.continuous", false))
+    /**
+     * What the metronome does when started (S12.2, S12.6): click on until
+     * stopped, count in and stop, or count in and go on as the visual beat
+     * alone.
+     */
+    enum class ClickMode { CONTINUOUS, COUNT_IN, COUNT_IN_VISUAL }
+
+    var clickMode by mutableStateOf(prefs.getString("click.mode", null)?.let { runCatching { ClickMode.valueOf(it) }.getOrNull() }
+        ?: if (prefs.getBoolean("click.continuous", false)) ClickMode.CONTINUOUS else ClickMode.COUNT_IN)
+    /** The count-in's length in bars, where the song names none. */
+    var countInBars by mutableIntStateOf(prefs.getInt("click.countInBars", 1))
     /** The click is heard in the main out (R12.1: on the CP-88 alone, by the audience too); else visual only. */
     var clickAudio by mutableStateOf(prefs.getBoolean("click.audio", true))
     var clickLevel by mutableStateOf(prefs.getFloat("click.level", 0.5f))
     /** MIDI clock out to the keyboard (I12.2), for its tempo-synced effects. */
     var midiClock by mutableStateOf(prefs.getBoolean("click.midiClock", false))
     var clickRunning by mutableStateOf(false); private set
+    /** Past the count-in, the beat goes on visually only (COUNT_IN_VISUAL). */
+    var clickVisualOnly by mutableStateOf(false); private set
 
     fun saveClickSettings() {
-        prefs.edit().putBoolean("click.continuous", clickContinuous).putBoolean("click.audio", clickAudio)
+        prefs.edit().putString("click.mode", clickMode.name).putInt("click.countInBars", countInBars)
+            .putBoolean("click.audio", clickAudio)
             .putFloat("click.level", clickLevel).putBoolean("click.midiClock", midiClock).apply()
         applyMidiClock()
     }
 
     fun toggleClick() = if (clickRunning) stopClick() else startClick()
 
-    /** A count-in of the song's bars (one if it names none), or the click until stopped. */
+    /** The count-in's beats: the song's bars (or the stage's), of the metre in force. */
+    private fun countInBeats(): Int {
+        val t = tempo
+        return t.barBeats() * (t?.countInBars ?: countInBars).coerceAtLeast(1)
+    }
+
+    private fun Tempo?.barBeats() = (this?.beatsPerBar ?: 4).coerceAtLeast(1)
+
+    /** The metronome, as [clickMode] says; needs a tempo. */
     fun startClick() {
         val b = bpm ?: return
-        val t = song?.tempo
-        val bar = (t?.beatsPerBar ?: 4).coerceAtLeast(1)
-        val beats = if (clickContinuous) 0 else bar * (t?.countInBars ?: 1).coerceAtLeast(1)
-        val delay = NativeBridge.nativeClickStart(b, bar, beats, clickLevel, clickAudio, midiClock)
+        val beats = if (clickMode == ClickMode.CONTINUOUS) 0 else countInBeats()
+        val delay = NativeBridge.nativeClickStart(b, tempo.barBeats(), beats, clickLevel, clickAudio, midiClock)
         beatOrigin = System.nanoTime() + delay
         clickRunning = true
-        Log.i(TAG, "click: ${if (beats > 0) "$beats beats" else "continuous"} at $b BPM, heard in ${delay / 1_000_000} ms")
+        clickVisualOnly = false
+        Log.i(TAG, "click: ${clickMode.name.lowercase()}, ${if (beats > 0) "$beats beats" else "continuous"} at $b BPM " +
+            "(${tempo?.metre}), sound ${if (clickAudio) "on" else "off"}, heard in ${delay / 1_000_000} ms")
     }
 
     fun stopClick() {
         NativeBridge.nativeClickStop(midiClock)
         clickRunning = false
+        clickVisualOnly = false
         Log.i(TAG, "click stopped; MIDI clock ${NativeBridge.nativeMidiClockTicks()} ticks sent")
     }
 
-    /** The beat being heard, 1-based within the bar, while the click runs; 0 otherwise. */
+    /** The beat being heard (or seen), 1-based within the bar, while the click runs; 0 otherwise. */
     fun clickBeat(now: Long): Int {
         val b = bpm ?: return 0
         if (!clickRunning || now < beatOrigin) return 0
-        val bar = (song?.tempo?.beatsPerBar ?: 4).coerceAtLeast(1)
-        return ((now - beatOrigin) / (60e9 / b)).toLong().mod(bar) + 1
+        return ((now - beatOrigin) / (60e9 / b)).toLong().mod(tempo.barBeats()) + 1
     }
 
-    /** The tempo goes to the engines (I12.1) and, when it is on, out as MIDI clock. */
+    /** A count-in ends on its own: the beat stops with the last click heard, or goes on visually. */
+    private fun followClick() {
+        if (!clickRunning || clickVisualOnly || NativeBridge.nativeClickRunning()) return
+        when (clickMode) {
+            ClickMode.CONTINUOUS -> clickRunning = false
+            ClickMode.COUNT_IN_VISUAL -> clickVisualOnly = true
+            ClickMode.COUNT_IN -> {
+                val b = bpm
+                val end = beatOrigin + if (b != null) (countInBeats() * 60e9 / b).toLong() else 0L
+                if (System.nanoTime() >= end) clickRunning = false
+            }
+        }
+    }
+
+    /** The tempo goes to the engines (I12.1) and, when it is on, out as MIDI clock -- both in quarter notes. */
     private fun applyMidiClock() {
-        runCatching { NativeBridge.nativeSetTempo(bpm ?: 0.0) }
-        runCatching { NativeBridge.nativeMidiClock(if (midiClock) bpm ?: 0.0 else 0.0) }
+        val q = tempo?.quarterBpm
+        runCatching { NativeBridge.nativeSetTempo(q ?: 0.0) }
+        runCatching { NativeBridge.nativeMidiClock(if (midiClock) q ?: 0.0 else 0.0) }
     }
 
     /**
@@ -486,14 +608,24 @@ class SongPlayer(private val lib: Library, private val host: EngineHost, private
         done?.invoke(cc)
     }
 
-    /** Writes a tapped tempo into the song (I12.3): a new version of its entry. */
+    /**
+     * Writes the tempo tapped or typed (or "no tempo") where it belongs (I12.3):
+     * into the current live set's own tempo if it has one, else the song's -- a
+     * new version of the song's entry.
+     */
     fun saveTempo() {
+        if (heard != null) return
         val id = songEntries.getOrNull(songIndex) ?: return
         val r = rack ?: return
-        val b = bpm ?: return
         val name = songNames.getOrNull(songIndex) ?: return
-        lib.saveSong(id, name, r.copy(tempo = com.rigalong.model.Tempo(bpm = b)))
-        bpmTapped = false
+        val i = liveSetIndex
+        val b = bpm
+        fun with(t: Tempo?) = (t ?: Tempo()).copy(bpm = b).takeIf { it.bpm != null || it != Tempo() }
+        val own = r.liveSets.getOrNull(i)?.tempo
+        val saved = if (own != null) r.copy(liveSets = r.liveSets.toMutableList().also { it[i] = it[i].copy(tempo = with(own) ?: Tempo()) })
+            else r.copy(tempo = with(r.tempo))
+        lib.saveSong(id, name, saved)
+        sessionBpm.remove(tempoKey(i))
         reload()
     }
 
@@ -778,13 +910,7 @@ class SongPlayer(private val lib: Library, private val host: EngineHost, private
         settle()
         pollControls()
         pollLearn()
-        // A count-in ends on its own; the visual beat stops with the last click heard.
-        if (clickRunning && !NativeBridge.nativeClickRunning()) {
-            val b = bpm
-            val end = beatOrigin + if (b != null) ((song?.tempo?.let { (it.beatsPerBar.coerceAtLeast(1)) *
-                (it.countInBars ?: 1).coerceAtLeast(1) } ?: 4) * 60e9 / b).toLong() else 0L
-            if (clickContinuous || System.nanoTime() >= end) clickRunning = false
-        }
+        followClick()
         val pcs = runCatching { NativeBridge.nativeDrainPrograms() }.getOrNull() ?: return
         for (v in pcs) {
             if (v ushr 31 == 1) {

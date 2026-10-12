@@ -39,6 +39,13 @@ def shell(cmd):
     return adb("shell", cmd)
 
 
+def hide_keyboard():
+    """The on-screen keyboard down if it is up: without a hardware keyboard it covers a dialog's buttons."""
+    if "mInputShown=true" in shell("dumpsys input_method"):
+        shell("input keyevent KEYCODE_BACK")
+        time.sleep(0.6)
+
+
 # ------------------------------------------------------------------ the screen
 
 class Node:
@@ -200,7 +207,7 @@ def flow_count_in(f):
     logcat_clear()
     f.tap("TAP", times=4)          # found once: four taps a beat apart, not a screen read apart
     f.tap("COUNT")
-    assert logcat_has(r"click: 4 beats"), "no count-in"
+    assert logcat_has(r"click: count_in, 4 beats"), "no count-in"
 
 
 def type_text(text):
@@ -572,6 +579,7 @@ def flow_cp88_yaml_edit(f):
         shell("input keycombination KEYCODE_CTRL_LEFT KEYCODE_A")
         shell("input text 'name:%sFlow%sYaml'")
         f.see("Reads as “Flow Yaml” •")
+        hide_keyboard()
         f.tap("Save")
         saves += 1
         f.see("Flow Yaml")

@@ -9,6 +9,9 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.Button
@@ -65,7 +68,9 @@ fun DeviceSoundEditor(device: String, title: String, sound: ByteArray, driver: D
             context.contentResolver.openOutputStream(uri)!!.use { it.write(f.second) }
         }.fold({ context.getString(R.string.exported, 1) }, { context.getString(R.string.export_failed, it.message ?: "") })
     }
-    Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
+    // The on-screen keyboard takes its share of the height: the text shrinks, the buttons stay in view.
+    Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)) {
+        androidx.compose.foundation.layout.Box(Modifier.fillMaxSize().systemBarsPadding().imePadding(), contentAlignment = Alignment.Center) {
         Column(Modifier.fillMaxWidth(0.92f).fillMaxHeight(0.92f)
             .background(Color(0xFF1A1D23), RoundedCornerShape(12.dp)).padding(16.dp)) {
             Text(stringResource(R.string.device_sound_title, device, title), fontWeight = FontWeight.SemiBold, fontSize = 18.sp)
@@ -94,6 +99,7 @@ fun DeviceSoundEditor(device: String, title: String, sound: ByteArray, driver: D
                     Text(stringResource(R.string.save))
                 }
             }
+        }
         }
     }
 }
