@@ -223,6 +223,8 @@
     <string name="add_to_setlist">Add to setlist</string>
     <string name="exported">Exported %1$d entries.</string>
     <string name="export_failed">Export failed: %1$s</string>
+    <string name="patch_file_making">Making the %1$s file…</string>
+    <string name="patch_file_saved">Saved “%1$s”: %2$s can load it.</string>
     <string name="imported">Imported %1$d objects: %2$s</string>
     <string name="import_failed">Import failed: %1$s</string>
 

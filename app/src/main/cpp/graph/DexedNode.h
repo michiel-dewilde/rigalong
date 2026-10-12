@@ -98,6 +98,9 @@ public:
     int voiceCount() const;
     std::string voiceName(int index) const;      // "Bank/NAME"
     std::string voiceShortName(int index) const; // "NAME"
+    // The voice selectVoiceNamed(name) would pick, as the cartridge has it:
+    // 128 packed bytes. Empty if there is none. For export (a .syx).
+    std::vector<uint8_t> voicePacked(const std::string& name) const;
 
     bool selectVoice(int index);
     bool selectVoiceNamed(const std::string& name);

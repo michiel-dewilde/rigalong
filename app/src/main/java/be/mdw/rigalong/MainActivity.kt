@@ -268,6 +268,7 @@ class MainActivity : androidx.activity.ComponentActivity() {
         filter.addAction("be.mdw.rigalong.DEVICESELFTEST")
         filter.addAction("be.mdw.rigalong.DEVICEPRELOADTEST")
         filter.addAction("be.mdw.rigalong.DEVICEWRITESELECT")
+        filter.addAction("be.mdw.rigalong.RESCAN")
         if (Build.VERSION.SDK_INT >= 33) {
             registerReceiver(debugReceiver, filter, Context.RECEIVER_EXPORTED)
         } else {
@@ -1910,6 +1911,20 @@ class MainActivity : androidx.activity.ComponentActivity() {
                 // TEST: one stall of the USB reap loop (a starved IN queue):
                 //   adb shell am broadcast -a be.mdw.rigalong.USBSTALL --ei ms 600
                 "be.mdw.rigalong.USBSTALL" -> NativeBridge.nativeUsbTestStall(intent.getIntExtra("ms", 600))
+                // TEST: the engines look at their folders again, after a flow took
+                // out what it imported (a bare file name, from the import folders):
+                //   adb shell am broadcast -a be.mdw.rigalong.RESCAN --es remove FlowSurge.fxp
+                "be.mdw.rigalong.RESCAN" -> {
+                    intent.getStringExtra("remove")?.takeIf { it.isNotEmpty() && '/' !in it && it != ".." }?.let { name ->
+                        val dirs = listOf(java.io.File(getExternalFilesDir(null), "soundfonts"),
+                            java.io.File(getExternalFilesDir(null), "dx7")) +
+                            listOfNotNull(NativeBridge.nativeSurgeUserPatchesPath().takeIf { it.isNotEmpty() }?.let { java.io.File(it, "Imported") })
+                        for (d in dirs) java.io.File(d, name).takeIf { it.isFile }?.let {
+                            android.util.Log.i("rigalong-ui", "removed ${it.path}: ${it.delete()}")
+                        }
+                    }
+                    NativeBridge.nativeRescanContent()
+                }
                 // TEST (PROVISIONAL.md): engine instances without a song.
                 //   ... INSTANCE --ei add 2                      a new Surge instance
                 //   ... INSTANCE --ei i 6 --es preset NAME --ef level 0.8
@@ -2717,6 +2732,34 @@ class MainActivity : androidx.activity.ComponentActivity() {
             require(part.renameTo(target)) { "could not put ${target.name} in place" }
             NativeBridge.nativeRescanContent()
             return target.nameWithoutExtension
+        }
+
+        override fun exportPatch(patch: be.mdw.rigalong.model.Patch, name: String): Pair<String, ByteArray>? {
+            val export = be.mdw.rigalong.model.PatchExport
+            val kind = export.kind(patch.engine) ?: return null
+            // A patch "as loaded" names no sound of its own: what plays now is it.
+            val p = if (!patch.preset.isNullOrEmpty()) patch else when (kind) {
+                be.mdw.rigalong.model.EngineFiles.Kind.DX7_BANK -> patch.copy(preset = NativeBridge.nativeDexedCurrentVoiceName())
+                be.mdw.rigalong.model.EngineFiles.Kind.SURGE_PATCH -> patch.copy(preset = NativeBridge.nativeSurgeCurrentPatchName())
+                else -> patch.copy(preset = NativeBridge.nativeFluidCurrentFont(),
+                    program = patch.program ?: NativeBridge.nativeFluidCurrentPreset().coerceAtLeast(0))
+            }
+            val preset = p.preset?.takeIf { it.isNotEmpty() } ?: error("${kind.engine} has no sound loaded")
+            return when (kind) {
+                be.mdw.rigalong.model.EngineFiles.Kind.DX7_BANK -> {
+                    val voice = NativeBridge.nativeDexedVoicePacked(preset) ?: error("Dexed has no voice “$preset”")
+                    export.fileName(name, kind) to export.dexed(p, name, voice)
+                }
+                be.mdw.rigalong.model.EngineFiles.Kind.SURGE_PATCH -> {
+                    val path = NativeBridge.nativeSurgePatchPath(preset).ifEmpty { error("Surge XT has no patch “$preset”") }
+                    export.fileName(name, kind) to export.surge(p, name, java.io.File(path).readBytes())
+                }
+                be.mdw.rigalong.model.EngineFiles.Kind.SOUNDFONT -> {
+                    val font = java.io.File(NativeBridge.nativeFluidFontPath(preset).ifEmpty { error("FluidSynth has no font “$preset”") })
+                    export.fileName(name, kind, sf3 = font.extension.equals("sf3", ignoreCase = true)) to export.fluid(p, name, font)
+                }
+                be.mdw.rigalong.model.EngineFiles.Kind.DX7_VOICE -> null
+            }
         }
 
         override fun importInstrumentZip(input: java.io.InputStream, fileName: String): String {

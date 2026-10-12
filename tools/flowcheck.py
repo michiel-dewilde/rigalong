@@ -581,6 +581,131 @@ def flow_cp88_yaml_edit(f):
         shell(f"rm -f /sdcard/Download/{X9P}")
 
 
+# A library patch saved as its engine's own file -- Surge XT's .fxp, a DX7
+# bank for Dexed, a SoundFont for FluidSynth -- and the file imported back.
+# Counted: the patch's save button and the file picker's Save.
+SAVE_BUTTONS = ("OPSLAAN", "SAVE", "Save", "Opslaan")
+
+
+def make_patch(engine, search, pick, name, param, at):
+    """Setup, not counted: library patch [name], an [engine] sound of song 3 set to [pick], [param] moved."""
+    s = Flow("setup", 99)
+    to_songs()
+    s.tap("3. Surge XT and sfizz")
+    if engine != "Surge XT":
+        s.tap("+ " + engine)
+        time.sleep(1.5)
+    end = find_all("Add a sound:")[0].y
+    row = [n for n in find_all(engine) if n.y < end and n.x < 900][-1]
+    choice = [n for n in screen() if abs(n.y - row.y) < 12 and 1200 < n.x < 1900][0]
+    shell(f"input tap {choice.x} {choice.y}")
+    time.sleep(1.2)
+    if search:                         # a short list is tapped as it is
+        s.tap("Search")
+        type_text(search)
+    s.tap(pick, pick="last")
+    time.sleep(1.5)
+    patch = [n for n in find_all("Patch…") if abs(n.y - row.y) < 12][0]
+    shell(f"input tap {patch.x} {patch.y}")
+    time.sleep(1.2)
+    s.slide(param, at)
+    s.tap("Save as library patch…")
+    s.tap("Patch name")
+    shell("input keyevent KEYCODE_MOVE_END")
+    for _ in range(40):
+        shell("input keyevent KEYCODE_DEL")
+    type_text(name)
+    s.tap("Save")
+    s.see(f"Library patch “{name}”", exact=False)
+    s.tap("Done")
+
+
+def pull_download(fname):
+    r = subprocess.run([ADB, "exec-out", "cat", "/sdcard/Download/" + fname], capture_output=True, timeout=60)
+    return r.stdout
+
+
+def export_patch(f, engine, search, pick, name, param, at, ext, check):
+    fname = f"{name}.{ext}"
+    shell(f"rm -f /sdcard/Download/{fname}")
+    saved = False
+    try:
+        make_patch(engine, search, pick, name, param, at)
+        saved = True
+        to_library()
+        if not see_scrolling(name):
+            raise AssertionError(f"no patch {name!r} in the Library")
+        row = find_all(name)[0]
+        button = [n for n in find_all("." + ext) if abs(n.y - row.y) < 15]
+        if not button:
+            raise AssertionError(f"no .{ext} beside {name!r}")
+        shell(f"input tap {button[0].x} {button[0].y}")
+        f.taps += 1
+        for _ in range(20):
+            if any(find_all(t) for t in SAVE_BUTTONS):
+                break
+            time.sleep(0.5)
+        f.tap(next(t for t in SAVE_BUTTONS if find_all(t)))
+        f.see(f"Saved “{fname}”", exact=False, timeout=10)
+        data = pull_download(fname)
+        why = check(data)
+        if why:
+            raise AssertionError(f"{fname}: {why}")
+        # Back in through Import: the engine takes its own file.
+        for n in find_all("Import…"):
+            shell(f"input tap {n.x} {n.y}")
+        time.sleep(2.0)
+        if not wait_for(fname, timeout=2):
+            for t in ("Show roots", "Roots tonen"):
+                for n in find_all(t):
+                    shell(f"input tap {n.x} {n.y}")
+                    time.sleep(1.0)
+            for n in find_all("Downloads"):
+                shell(f"input tap {n.x} {n.y}")
+                break
+            time.sleep(1.5)
+        for n in find_all(fname):
+            shell(f"input tap {n.x} {n.y}")
+            break
+        if not (wait_for(f"for {engine}: it is now in its patch lists", exact=False, timeout=10)
+                or wait_for("is installed already", exact=False, timeout=1)):
+            raise AssertionError(f"{fname} did not import back into {engine}")
+    finally:
+        if "be.mdw.rigalong" in focused_app():
+            if saved:
+                undo_last(name)
+            broadcast("RESCAN", "--es", "remove", fname)
+        shell(f"rm -f /sdcard/Download/{fname}")
+
+
+def check_fxp(name):
+    return lambda b: None if b[:4] == b"CcnK" and b[16:20] == b"cjs3" and b[28:28 + len(name)] == name.encode() \
+        else "not a Surge XT patch of that name"
+
+
+def check_syx(name):
+    return lambda b: None if len(b) == 4104 and b[:6] == bytes([0xF0, 0x43, 0, 9, 0x20, 0]) and \
+        b[6 + 118:6 + 118 + len(name)] == name[:10].encode() else "not a DX7 bank with that voice first"
+
+
+def check_soundfont(name):
+    return lambda b: None if b[:4] == b"RIFF" and b[8:12] == b"sfbk" and b"INAM" in b[:400] and \
+        name.encode() in b[:400] else "not a SoundFont of that name"
+
+
+def flow_export_surge_patch(f):
+    export_patch(f, "Surge XT", "Behemoth", "Basses/Behemoth", "FlowSurge", "Macro 1", 0.3, "fxp", check_fxp("FlowSurge"))
+
+
+def flow_export_dexed_patch(f):
+    export_patch(f, "Dexed", "PHAROH", "Dexed_01/PHAROH", "FlowDexed", "Transpose", 0.25, "syx", check_syx("FlowDexed"))
+
+
+def flow_export_fluid_patch(f):
+    export_patch(f, "FluidSynth", None, "VintageDreamsWaves-v2.sf3", "FlowFluid", "Transpose", 0.66, "sf3",
+                 check_soundfont("FlowFluid"))
+
+
 FLOWS = [
     # name, budget (taps), function
     ("select-live-set", 1, flow_select_live_set),
@@ -602,6 +727,9 @@ FLOWS = [
     ("import-cp88-json", 4, flow_import_cp88_json),
     ("cp88-sound-from-library", 5, flow_cp88_sound_from_library),
     ("cp88-yaml-edit", 3, flow_cp88_yaml_edit),
+    ("export-surge-patch", 2, flow_export_surge_patch),
+    ("export-dexed-patch", 2, flow_export_dexed_patch),
+    ("export-fluid-patch", 2, flow_export_fluid_patch),
 ]
 
 

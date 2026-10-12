@@ -98,6 +98,8 @@ public:
     int soundFontCount() const;
     std::string soundFontName(int index) const;     // the file's stem
     std::string currentSoundFontName() const;
+    // The file of the font loadSoundFontNamed(name) would load; empty if none.
+    std::string soundFontPath(const std::string& name) const;
 
     // Opens a SoundFont. Megabytes of file IO, and for SF3 a Vorbis decode of
     // every sample, so it parks the render thread exactly as sfizz and Surge do.

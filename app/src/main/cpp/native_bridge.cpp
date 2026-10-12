@@ -326,6 +326,36 @@ Java_be_mdw_rigalong_NativeBridge_nativeSurgePatchName(JNIEnv* env, jobject, jin
 }
 
 JNIEXPORT jstring JNICALL
+Java_be_mdw_rigalong_NativeBridge_nativeSurgePatchPath(JNIEnv* env, jobject, jstring name) {
+    auto* s = engine().surge();
+    const char* n = env->GetStringUTFChars(name, nullptr);
+    const std::string path = s ? s->patchPath(n) : std::string();
+    env->ReleaseStringUTFChars(name, n);
+    return env->NewStringUTF(path.c_str());
+}
+
+JNIEXPORT jbyteArray JNICALL
+Java_be_mdw_rigalong_NativeBridge_nativeDexedVoicePacked(JNIEnv* env, jobject, jstring name) {
+    auto* d = engine().dexed();
+    const char* n = env->GetStringUTFChars(name, nullptr);
+    const std::vector<uint8_t> v = d ? d->voicePacked(n) : std::vector<uint8_t>();
+    env->ReleaseStringUTFChars(name, n);
+    if (v.empty()) return nullptr;
+    jbyteArray out = env->NewByteArray(static_cast<jsize>(v.size()));
+    env->SetByteArrayRegion(out, 0, static_cast<jsize>(v.size()), reinterpret_cast<const jbyte*>(v.data()));
+    return out;
+}
+
+JNIEXPORT jstring JNICALL
+Java_be_mdw_rigalong_NativeBridge_nativeFluidFontPath(JNIEnv* env, jobject, jstring name) {
+    auto* f = engine().fluid();
+    const char* n = env->GetStringUTFChars(name, nullptr);
+    const std::string path = f ? f->soundFontPath(n) : std::string();
+    env->ReleaseStringUTFChars(name, n);
+    return env->NewStringUTF(path.c_str());
+}
+
+JNIEXPORT jstring JNICALL
 Java_be_mdw_rigalong_NativeBridge_nativeSurgePatchShortName(JNIEnv* env, jobject, jint index) {
     auto* s = engine().surge();
     return env->NewStringUTF(s ? s->patchDisplayName(index).c_str() : "");

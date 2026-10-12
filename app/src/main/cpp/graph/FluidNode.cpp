@@ -274,6 +274,14 @@ bool FluidNode::loadSoundFont(int index) {
     return true;
 }
 
+std::string FluidNode::soundFontPath(const std::string& name) const {
+    std::lock_guard<std::mutex> lock(mLock);
+    for (size_t i = 0; i < mFontNames.size(); ++i) {
+        if (mFontNames[i] == name) return mFontPaths[i];
+    }
+    return {};
+}
+
 bool FluidNode::loadSoundFontNamed(const std::string& name) {
     int index = -1;
     {
@@ -537,7 +545,9 @@ void FluidNode::process(const ProcessArgs& args) {
     // so splitting would cost four extra calls to buy a precision the engine
     // does not offer. The quantisation is 64 frames -- 1.45 ms, under half a
     // render block, and below what the 89-frame USB burst already imposes.
-    const int transpose = std::clamp(static_cast<int>(mParams[kTranspose] + 0.5f), -24, 24);
+    // Rounded to nearest both ways: + 0.5 and truncation made every negative
+    // transpose a semitone short (-12 played as -11).
+    const int transpose = std::clamp(static_cast<int>(std::lround(mParams[kTranspose])), -24, 24);
     if (args.numMidiIn > 0 && args.midiIn[0] != nullptr) {
         const MidiBuffer& midi = *args.midiIn[0];
         for (int i = 0; i < midi.size(); ++i) {

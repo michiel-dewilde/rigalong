@@ -116,6 +116,8 @@ object NativeBridge {
     /** "Category/Name" — the stable address a saved patch stores. */
     external fun nativeSurgePatchName(index: Int): String
     external fun nativeSurgePatchShortName(index: Int): String
+    /** The file of the patch [nativeSurgeLoadPatchNamed] would load; empty if none. For export. */
+    external fun nativeSurgePatchPath(name: String): String
     external fun nativeSurgeCurrentPatch(): Int
     external fun nativeSurgeCurrentPatchName(): String
 
@@ -141,6 +143,8 @@ object NativeBridge {
     external fun nativeDexedReady(): Boolean
     external fun nativeDexedVoiceCount(): Int
     external fun nativeDexedVoiceName(index: Int): String
+    /** The voice [nativeDexedSelectVoiceNamed] would pick, as its cartridge has it (128 packed bytes); null if none. */
+    external fun nativeDexedVoicePacked(name: String): ByteArray?
     external fun nativeDexedCurrentVoice(): Int
     external fun nativeDexedCurrentVoiceName(): String
     external fun nativeDexedSelectVoice(index: Int)
@@ -171,6 +175,8 @@ object NativeBridge {
     external fun nativeFluidFontCount(): Int
     external fun nativeFluidFontName(index: Int): String
     external fun nativeFluidCurrentFont(): String
+    /** The file of the font [nativeFluidLoadFontNamed] would load; empty if none. For export. */
+    external fun nativeFluidFontPath(name: String): String
     /** Both are asynchronous: a font is megabytes of samples, decoded for SF3. */
     external fun nativeFluidLoadFont(index: Int)
     external fun nativeFluidLoadFontNamed(name: String)

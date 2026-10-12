@@ -242,7 +242,21 @@ Every setlist and song, with its history.
   are dropped and put back.
 * **Patches**: the library patches, with Details: the songs using each one
   (and "Update to the latest version" for a song left behind), where it was
-  forked from, its history.
+  forked from, its history. A Surge XT, Dexed or FluidSynth patch saves as
+  its engine's own file, for that engine on a computer or on another
+  tablet's Import:
+  * **.fxp** for Surge XT: its patch with the macros as the library patch
+    has them;
+  * **.syx** for Dexed: a bank of 32 with the patch's voice first and INIT
+    VOICE in the other slots, the transpose in the voice;
+  * **.sf2** (or **.sf3**, from an SF3) for FluidSynth: a SoundFont of the
+    patch's one preset and the samples it plays, with the source's credits
+    and licence, transposed as it plays here: a key sounds the note its
+    Transpose makes of it, samples and all.
+
+  Each is called what the patch is. Level, bend range, engine mode and
+  effect sends stay behind: they are how this rig plays the sound, and the
+  files have no place for them.
 * **Forget history (hold)** in an entry's Details keeps what it is now and
   stops carrying its earlier versions along in exports. It cannot be undone.
 * **Undo** at the top takes back the last action.

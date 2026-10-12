@@ -242,6 +242,21 @@ bool SurgeNode::loadPatch(int index) {
     return true;
 }
 
+std::string SurgeNode::patchPath(const std::string& name) const {
+    std::lock_guard<std::recursive_mutex> list(mListLock);
+    SurgeSynthesizer* s = mSynth.load(std::memory_order_acquire);
+    if (!s || name.empty()) return {};
+    const int n = static_cast<int>(s->storage.patch_list.size());
+    for (int pass = 0; pass < 2; ++pass) {
+        for (int i = 0; i < n; ++i) {
+            if ((pass == 0 ? patchName(i) : s->storage.patch_list[i].name) == name) {
+                return s->storage.patch_list[i].path.u8string();
+            }
+        }
+    }
+    return {};
+}
+
 bool SurgeNode::loadPatchNamed(const std::string& name) {
     std::lock_guard<std::recursive_mutex> list(mListLock);
     SurgeSynthesizer* s = mSynth.load(std::memory_order_acquire);

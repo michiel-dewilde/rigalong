@@ -94,6 +94,16 @@ fun LibraryScreen(player: SongPlayer, lib: Library, host: EngineHost, onOpened: 
             }.start()
         }
     }
+    // A patch as its engine's file: made first (it reads the engine's content), then saved where the player picks.
+    var patchFile by remember { mutableStateOf<Pair<String, ByteArray>?>(null) }
+    val patchSaver = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/octet-stream")) { uri ->
+        val (fileName, bytes) = patchFile ?: return@rememberLauncherForActivityResult
+        patchFile = null
+        if (uri != null) message = runCatching { context.contentResolver.openOutputStream(uri)!!.use { it.write(bytes) } }
+            .fold({ context.getString(R.string.patch_file_saved, fileName,
+                be.mdw.rigalong.model.EngineFiles.kind(bytes)?.engine ?: "") },
+                { context.getString(R.string.export_failed, it.message ?: "") })
+    }
     val soundSaver = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/octet-stream")) { uri ->
         val (id, format) = exportSound ?: return@rememberLauncherForActivityResult
         if (uri != null) message = runCatching {
@@ -200,6 +210,20 @@ fun LibraryScreen(player: SongPlayer, lib: Library, host: EngineHost, onOpened: 
                             Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
                                 Text(e.version.name, modifier = Modifier.weight(1f))
                                 Text(p.engine, color = DimColor, fontSize = 12.sp)
+                                be.mdw.rigalong.model.PatchExport.kind(p.engine)?.let { kind ->
+                                    val ext = if (kind == be.mdw.rigalong.model.EngineFiles.Kind.SOUNDFONT &&
+                                        p.preset?.endsWith(".sf3", ignoreCase = true) == true) "sf3" else kind.extension
+                                    TextButton(onClick = {
+                                        message = context.getString(R.string.patch_file_making, kind.engine)
+                                        Thread {
+                                            val r = runCatching { host.exportPatch(p, e.version.name.trim()) ?: error(kind.engine) }
+                                            android.os.Handler(android.os.Looper.getMainLooper()).post {
+                                                r.fold({ file -> patchFile = file; message = ""; patchSaver.launch(file.first) },
+                                                    { message = context.getString(R.string.export_failed, it.message ?: "") })
+                                            }
+                                        }.start()
+                                    }) { Text(stringResource(R.string.save_ext, ext)) }
+                                }
                                 TextButton(onClick = { detail = e.id }) { Text(stringResource(R.string.details)) }
                             }
                         }

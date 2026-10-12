@@ -362,6 +362,21 @@ bool DexedNode::selectVoice(int index) {
     return true;
 }
 
+std::vector<uint8_t> DexedNode::voicePacked(const std::string& name) const {
+    std::lock_guard<std::mutex> lock(mBankLock);
+    for (int pass = 0; pass < 2; ++pass) {
+        for (const Bank& b : mBanks) {
+            for (int v = 0; v < kVoicesPerBank; ++v) {
+                if ((pass == 0 ? b.name + "/" + b.voiceNames[v] : b.voiceNames[v]) == name) {
+                    const auto* p = b.packed.data() + v * kPackedVoiceBytes;
+                    return {p, p + kPackedVoiceBytes};
+                }
+            }
+        }
+    }
+    return {};
+}
+
 bool DexedNode::selectVoiceNamed(const std::string& name) {
     if (name.empty()) return false;
     const int n = voiceCount();

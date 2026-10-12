@@ -59,6 +59,12 @@ interface EngineHost {
      * that file was installed already. Call off the UI thread.
      */
     fun installEngineFile(kind: be.mdw.rigalong.model.EngineFiles.Kind, fileName: String, bytes: ByteArray): String?
+    /**
+     * [patch] as its engine's own file ([be.mdw.rigalong.model.PatchExport]),
+     * called [name]: the file name and its bytes, or null where the engine's
+     * sound is not one file. Reads the engine's content: call off the UI thread.
+     */
+    fun exportPatch(patch: be.mdw.rigalong.model.Patch, name: String): Pair<String, ByteArray>?
     /** The routing in force, by the devices' own names (for environments). */
     fun routingSpec(): RoutingSpec
     fun applyRoutingSpec(spec: RoutingSpec)

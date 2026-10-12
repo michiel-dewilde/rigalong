@@ -93,6 +93,8 @@ public:
 
     int patchCount() const;
     std::string patchName(int index) const;       // "Category/Name"
+    // The file of the patch loadPatchNamed(name) would load; empty if none.
+    std::string patchPath(const std::string& name) const;
 
     // Where Surge keeps the player's own patches (its user data folder's
     // Patches), as it worked that folder out; empty before init.
