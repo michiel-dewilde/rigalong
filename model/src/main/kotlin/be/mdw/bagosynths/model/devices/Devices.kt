@@ -94,8 +94,12 @@ interface DeviceSounds {
     /** What a slot holds that the app leaves to the device: its own neutral sound. */
     val neutral: ByteArray
 
-    /** Asks for the device's current sound; the reply goes to [collect]. */
-    fun dumpRequest(): ByteArray
+    /**
+     * Asks for the device's current sound, or with [area] for what [slot] of
+     * it holds (to keep a copy before the app first writes there); the reply
+     * goes to [collect].
+     */
+    fun dumpRequest(area: Int? = null, slot: Int = 1): ByteArray
     /** The reply so far as one sound, or null while it is incomplete; messages that are not part of one are ignored. */
     fun collect(messages: List<ByteArray>): ByteArray?
 

@@ -94,6 +94,13 @@ public:
     int patchCount() const;
     std::string patchName(int index) const;       // "Category/Name"
 
+    // Where Surge keeps the player's own patches (its user data folder's
+    // Patches), as it worked that folder out; empty before init.
+    std::string userPatchesPath() const;
+    // Scans the patch folders again (a patch was added), keeping the current
+    // patch by name: Surge numbers patches by their place in the list.
+    void refreshPatches();
+
     // What the PATCH AUTHOR called this macro. Surge stores eight labels with
     // every patch, and they are the difference between eight faders called
     // "M1".."M8" and eight faders called "Drive", "Cutoff", "Air". Empty when
@@ -144,6 +151,9 @@ private:
     std::string mCurrentName;      // guarded by mNameLock
     std::string mWantedName;       // guarded by mNameLock
     mutable std::mutex mNameLock;
+    // The patch list and categories: read from the UI thread (names, counts),
+    // rebuilt by refreshPatches(). Recursive: loadPatch() reads names too.
+    mutable std::recursive_mutex mListLock;
 
     // Surge's loadPatch() opens and parses a file on the calling thread. Same
     // handshake as SfizzNode: the loader raises mLoadRequested and waits for the

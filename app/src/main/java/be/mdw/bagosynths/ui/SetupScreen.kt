@@ -121,8 +121,13 @@ fun SetupScreen(player: SongPlayer, host: EngineHost, lib: Library) {
                 Stepper(stringResource(R.string.device_channel), d.channel, 1..16, dim) { put(d.copy(channel = it)) }
                 drv.sounds?.let { s ->
                     val area = d.reservedAreas.firstOrNull() ?: s.area.range.last
+                    val two = d.reservedAreas.distinct().size >= 2
+                    // The second area is always the first one's neighbour (DeviceRig.pairOf).
+                    fun areas(first: Int, both: Boolean) = if (both) DeviceRig.pairOf(first, s.area.range) else listOf(first)
                     Stepper(stringResource(R.string.reserved_area, s.area.label), area, s.area.range, dim,
-                        note = stringResource(R.string.reserved_area_note)) { put(d.copy(reservedAreas = listOf(it))) }
+                        note = stringResource(R.string.reserved_area_note)) { put(d.copy(reservedAreas = areas(it, two))) }
+                    SetupToggle(stringResource(R.string.preload_area, s.area.label, DeviceRig.pairOf(area, s.area.range).last()),
+                        two, accent, dim) { put(d.copy(reservedAreas = areas(area, it))) }
                     SetupToggle(stringResource(R.string.device_follows, s.area.label), d.selectsLiveSets, accent, dim) {
                         put(d.copy(selectsLiveSets = it))
                     }

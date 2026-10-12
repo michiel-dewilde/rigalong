@@ -274,6 +274,18 @@ int DexedNode::loadBanks(const std::vector<std::string>& dirs) {
     {
         std::lock_guard<std::mutex> lock(mBankLock);
         mBanks = std::move(found);
+        // Loaded again (a bank was imported): the voice playing keeps its
+        // name, and its number follows it to its new place in the list.
+        int at = -1;
+        for (size_t b = 0; b < mBanks.size() && at < 0; ++b) {
+            for (int v = 0; v < kVoicesPerBank; ++v) {
+                if (mBanks[b].name + "/" + mBanks[b].voiceNames[v] == mCurrentName) {
+                    at = static_cast<int>(b) * kVoicesPerBank + v;
+                    break;
+                }
+            }
+        }
+        if (mCurrentVoice.load(std::memory_order_relaxed) >= 0) mCurrentVoice.store(at, std::memory_order_relaxed);
     }
     mReady.store(true, std::memory_order_release);
 

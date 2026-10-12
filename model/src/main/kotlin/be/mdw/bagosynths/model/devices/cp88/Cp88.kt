@@ -123,6 +123,27 @@ object Cp88 {
         return out.toByteArray()
     }
 
+    /**
+     * One sound out of what came in, or null while it is incomplete: from the
+     * latest header to its footer, every dump that is not one of a sound's 17
+     * blocks left out. After slots are written the CP-88 sends dumps of its
+     * own at 0B 10 00 (LOG.md 2026-10-12), which arrive ahead of a reply.
+     */
+    fun collect(messages: List<ByteArray>): ByteArray? {
+        val dumps = messages.filter { m -> parse(m)?.address?.let { it[0] == HEADER || it[0] == FOOTER || isBlock(it) } == true }
+        val start = dumps.indexOfLast { parse(it)!!.address[0] == HEADER }
+        if (start < 0) return null
+        val sound = dumps.drop(start)
+        val end = sound.indexOfFirst { parse(it)!!.address[0] == FOOTER }
+        return if (end < 0) null else normalize(sound.take(end + 1))
+    }
+
+    private fun isBlock(a: IntArray): Boolean {
+        val b = Cp88X9Tables.BLOCKS
+        // The current buffer's soundmondo block is at 00 7F 00 too; a slot's at 00 pp 0n.
+        return (0 until b.size / 4).any { i -> a[0] == b[4 * i] && (i == 0 || (a[1] == b[4 * i + 1] && a[2] == b[4 * i + 2])) }
+    }
+
     /** A stored sound as the dumps that write it into slot page:set (1-based). */
     fun retarget(sound: ByteArray, page: Int, set: Int): List<ByteArray> {
         val (pp, n) = slot(page, set)

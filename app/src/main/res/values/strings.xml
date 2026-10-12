@@ -134,6 +134,7 @@
     <string name="device_channel">MIDI channel</string>
     <string name="reserved_area">Reserved %1$s</string>
     <string name="reserved_area_note">songs write their own sounds here</string>
+    <string name="preload_area">A second %1$s, %2$d, for the next song of the setlist: it is written while the current song plays, so changing songs writes nothing</string>
     <string name="device_follows">Its own selections choose the song\'s live sets. Its reserved %1$s then gets a silent sound wherever a live set does not give it one, so it never mixes in sounds of its own.</string>
     <string name="rewrite_area">Rewrite the reserved %1$s</string>
     <string name="remove_device">Remove</string>
@@ -200,6 +201,9 @@
     <string name="import_archive">Import…</string>
     <string name="import_instrument">Install instrument (zip)…</string>
     <string name="installing">Installing…</string>
+    <string name="engine_file_installed">Installed “%1$s” for %2$s: it is now in its patch lists.</string>
+    <string name="engine_file_present">That %1$s file is installed already.</string>
+    <string name="dx7_single_voice">A single DX7 voice: Dexed loads banks of 32 voices. Import it as part of a bank.</string>
     <string name="installed_instrument">Installed "%1$s": it is now in every sfizz patch list.</string>
     <string name="install_failed">Installing failed: %1$s</string>
     <string name="export_setlist">Export this setlist…</string>

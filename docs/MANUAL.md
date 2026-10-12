@@ -264,7 +264,15 @@ Every setlist and song, with its history.
     songs write their sounds into -- for a CP88/CP73, a page (40 by default),
     whose eight sounds are overwritten -- and whether its **own selections
     choose the app's live sets**; **Rewrite the reserved page** writes it all
-    again.
+    again;
+  * **a second area for the next song** (on by default; for a CP88/CP73 the
+    page below, 39): while a song plays, the setlist's next song is written
+    into the other area, so changing songs only selects, and writes nothing.
+    A song plays from whichever of the two already holds it.
+
+  Before the app writes into an area for the first time, it reads back what
+  the area holds and keeps it in the library's **Device sounds** (named
+  after the device and the area), so no sound of your own is lost to it.
 * **Footswitches and MIDI controllers**: a controller each for the next and
   the previous live set (or lead-sheet page), tap tempo, and the count-in or
   click. Press **Learn**, then the pedal. A controller does one thing: learning

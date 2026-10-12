@@ -52,6 +52,13 @@ interface EngineHost {
      * Returns the new instrument's id.
      */
     fun importInstrumentZip(input: java.io.InputStream, fileName: String): String
+    /**
+     * An engine's own file ([be.mdw.bagosynths.model.EngineFiles]: a SoundFont,
+     * a DX7 bank, a Surge XT patch) installed where its engine looks, and the
+     * engines told to look again. Returns the name it got, or null if exactly
+     * that file was installed already. Call off the UI thread.
+     */
+    fun installEngineFile(kind: be.mdw.bagosynths.model.EngineFiles.Kind, fileName: String, bytes: ByteArray): String?
     /** The routing in force, by the devices' own names (for environments). */
     fun routingSpec(): RoutingSpec
     fun applyRoutingSpec(spec: RoutingSpec)
@@ -169,6 +176,13 @@ class SongPlayer(private val lib: Library, private val host: EngineHost, private
         liveSetObjects = liveSets
         devices.writeSong(liveSets)
         if (liveSets.isNotEmpty()) selectLiveSet(liveSet.coerceIn(0, liveSets.size - 1))
+        // The next song's device sounds into the other reserved area, while this one plays.
+        devices.preload(nextLiveSets())
+    }
+
+    /** The setlist's next song's live sets, for the devices to preload; null at the end. */
+    private fun nextLiveSets(): List<LiveSet>? = songs.getOrNull(songIndex + 1)?.let { n ->
+        runCatching { n.liveSets.map { lib.store.getTyped<LiveSet>(it.toRef().digest) } }.getOrNull()
     }
 
     fun selectLiveSet(index: Int) {
@@ -565,9 +579,62 @@ class SongPlayer(private val lib: Library, private val host: EngineHost, private
                     liveSetNames.clear(); liveSetNames.addAll(liveSets.map { it.name })
                     devices.writeSong(liveSets)
                     selectLiveSet(liveSet - 1)
-                    Log.i(TAG, "selftest: live set $liveSet selected; ${devices.status}")
+                    Thread { devices.settle(); Log.i(TAG, "selftest: live set $liveSet selected; ${devices.status}") }.start()
                 }
             }.onFailure { Log.e(TAG, "selftest failed: $it") }
+        }.start()
+    }
+
+    /**
+     * DEBUG HOOK (PROVISIONAL.md): three songs of one live set each, owning
+     * three different sounds of the first device that has them, opened in turn
+     * through the rig as the stage would -- each preloading the next -- and
+     * then the first again. Logs under bos-devices which area each plays from
+     * and what was written; the stage's own song is left as it was.
+     */
+    fun devicePreloadTest() {
+        Thread {
+            runCatching {
+                val d = devices.withSounds().firstOrNull() ?: error("no device that can own a sound")
+                val type = devices.driver(d).sounds!!.mediaType
+                val sounds = lib.deviceSounds(type).mapNotNull { it.version.target?.digest }.distinct().take(3).toMutableList()
+                check(sounds.isNotEmpty()) { "no device sound in the library" }
+                // Short of three: renamed copies of the first, through its text form (kept only in the store).
+                val text = devices.driver(d).sounds!!.formats.firstOrNull { it.editable }
+                while (sounds.size < 3) {
+                    val f = text ?: error("need three different device sounds, have ${sounds.size}")
+                    val renamed = f.toText(lib.store.get(sounds[0])!!).replaceFirst(Regex("(?m)^name: .*$"), "name: Preload ${sounds.size + 1}")
+                    sounds += lib.store.put(f.fromText(renamed))
+                }
+                val songs = sounds.mapIndexed { i, digest ->
+                    val draft = RackSong(instances = listOf(be.mdw.bagosynths.model.RackInstance("sfizz", RackEngine.SFIZZ,
+                        be.mdw.bagosynths.model.RackSlot(level = 0.0))), liveSets = listOf(be.mdw.bagosynths.model.RackLiveSet("Own ${i + 1}",
+                        devices = mapOf(d.name to be.mdw.bagosynths.model.RackDevicePart(d.kind, "own", sound = digest)))))
+                    draft.toObjects(lib.store).liveSets.map { lib.store.getTyped<LiveSet>(it.toRef().digest) }
+                }
+                for (k in listOf(0, 1, 2, 0)) {
+                    devices.writeSong(songs[k])
+                    devices.liveSetSelected(0, songs[k][0])
+                    devices.preload(songs.getOrNull(k + 1))
+                    devices.settle()
+                    Log.i("bos-devices", "preloadtest: song ${k + 1} done; ${devices.status}")
+                }
+            }.onFailure { Log.e("bos-devices", "preloadtest failed: $it") }
+        }.start()
+    }
+
+    /** DEBUG HOOK (PROVISIONAL.md): [DeviceRig.writeSelectTest] with two renamed copies of a library sound. */
+    fun deviceWriteSelectTest(delays: List<Int>) {
+        Thread {
+            runCatching {
+                val d = devices.withSounds().firstOrNull() ?: error("no device that can own a sound")
+                val f = devices.driver(d).sounds!!.formats.first { it.editable }
+                val base = lib.deviceSounds(devices.driver(d).sounds!!.mediaType).firstNotNullOf { e ->
+                    e.version.target?.let { lib.store.get(it.digest) } }
+                fun named(n: String) = f.fromText(f.toText(base).replaceFirst(Regex("(?m)^name: .*$"), "name: $n"))
+                for (line in devices.writeSelectTest(d, named("Write test A"), named("Write test B"), delays))
+                    Log.i("bos-devices", "writeselect: $line")
+            }.onFailure { Log.e("bos-devices", "writeselect failed: $it") }
         }.start()
     }
 
@@ -689,7 +756,7 @@ class SongPlayer(private val lib: Library, private val host: EngineHost, private
         if (ready && !midiOutWasReady && songIndex >= 0) {
             // It may be another unit than before (the stage's spare, a rental):
             // what this tablet wrote to the last one says nothing.
-            devices.midiOutReady(liveSetObjects, liveSetIndex)
+            devices.midiOutReady(liveSetObjects, liveSetIndex, nextLiveSets())
         }
         midiOutWasReady = ready
     }

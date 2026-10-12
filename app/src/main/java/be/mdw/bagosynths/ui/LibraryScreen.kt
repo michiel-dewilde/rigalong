@@ -142,8 +142,10 @@ fun LibraryScreen(player: SongPlayer, lib: Library, host: EngineHost, onOpened: 
             }
         }, second = { m ->
             Column(m.background(PanelColor, RoundedCornerShape(10.dp)).padding(10.dp)) {
-                Text(stringResource(R.string.all_songs), fontWeight = FontWeight.SemiBold)
+                // One list for the panel, its sections one after the other: a library with
+                // many device sounds or patches can still reach every one of them.
                 LazyColumn(Modifier.weight(1f)) {
+                    item { Text(stringResource(R.string.all_songs), fontWeight = FontWeight.SemiBold) }
                     items(songs) { s ->
                         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()
                             .padding(vertical = 4.dp)) {
@@ -160,12 +162,10 @@ fun LibraryScreen(player: SongPlayer, lib: Library, host: EngineHost, onOpened: 
                             }) { Text(stringResource(R.string.add_to_setlist)) }
                         }
                     }
-                }
-                // External devices' own sounds (model/devices), by driver: from the device or its
-                // files; heard on it, saved as its files, edited as text where its driver can.
-                if (deviceSounds.isNotEmpty()) {
-                    Text(stringResource(R.string.device_sounds), fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(top = 8.dp))
-                    LazyColumn(Modifier.heightIn(max = 220.dp)) {
+                    // External devices' own sounds (model/devices), by driver: from the device or its
+                    // files; heard on it, saved as its files, edited as text where its driver can.
+                    if (deviceSounds.isNotEmpty()) {
+                        item { Text(stringResource(R.string.device_sounds), fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(top = 8.dp)) }
                         for ((drv, entries) in deviceSounds.groupBy { be.mdw.bagosynths.model.devices.Devices.forSounds(it.version.target?.type ?: "") }) {
                             if (drv == null) continue
                             val sounds = drv.sounds!!
@@ -193,11 +193,9 @@ fun LibraryScreen(player: SongPlayer, lib: Library, host: EngineHost, onOpened: 
                             }
                         }
                     }
-                }
-                // Library patches, shared between songs (M9).
-                if (patches.isNotEmpty()) {
-                    Text(stringResource(R.string.patches), fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(top = 8.dp))
-                    LazyColumn(Modifier.heightIn(max = 220.dp)) {
+                    // Library patches, shared between songs (M9).
+                    if (patches.isNotEmpty()) {
+                        item { Text(stringResource(R.string.patches), fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(top = 8.dp)) }
                         items(patches) { (e, p) ->
                             Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
                                 Text(e.version.name, modifier = Modifier.weight(1f))
@@ -382,6 +380,13 @@ private fun importFile(context: android.content.Context, lib: Library, host: Eng
         }
         starts("PK\u0003\u0004") ->
             context.getString(R.string.installed_instrument, java.io.ByteArrayInputStream(bytes).use { host.importInstrumentZip(it, name) })
+        // An engine's own file: a SoundFont, a DX7 bank, a Surge XT patch.
+        be.mdw.bagosynths.model.EngineFiles.kind(bytes) != null -> {
+            val kind = be.mdw.bagosynths.model.EngineFiles.kind(bytes)!!
+            if (kind == be.mdw.bagosynths.model.EngineFiles.Kind.DX7_VOICE) error(context.getString(R.string.dx7_single_voice))
+            host.installEngineFile(kind, name, bytes)?.let { context.getString(R.string.engine_file_installed, it, kind.engine) }
+                ?: context.getString(R.string.engine_file_present, kind.engine)
+        }
         // A device's own file, as its driver recognises it.
         else -> {
             val (drv, sounds) = be.mdw.bagosynths.model.devices.Devices.readFile(name, bytes)

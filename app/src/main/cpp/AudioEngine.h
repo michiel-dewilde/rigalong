@@ -161,6 +161,12 @@ public:
     // Selecting a voice afterwards is cheap enough to do inline: it unpacks 128
     // bytes and hands them over through a single-slot atomic.
     void loadDexedBanksAsync(const std::vector<std::string>& dirs);
+    // Content was added to the engines' folders (an imported SoundFont, DX7
+    // bank or Surge patch): every FluidSynth, Dexed and Surge in the rack looks
+    // again, off the audio and UI threads. Their current sounds stay.
+    void rescanContentAsync();
+    // Surge's folder for the player's own patches, as Surge worked it out; empty before it is up.
+    std::string surgeUserPatchesPath() const;
     bool isDexedBusy() const { return mDexedBusy.load(std::memory_order_relaxed); }
 
     // Builds FluidSynth and lists the SoundFonts in `dirs`. Neither is slow,

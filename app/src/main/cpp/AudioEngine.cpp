@@ -1,5 +1,6 @@
 #include "AudioEngine.h"
 
+#include <set>
 #include <chrono>
 
 #include "RealtimePriority.h"
@@ -2098,6 +2099,30 @@ void AudioEngine::loadDexedBanksAsync(const std::vector<std::string>& dirs) {
         })) {
         mDexedBusy.store(false, std::memory_order_release);
     }
+}
+
+void AudioEngine::rescanContentAsync() {
+    runOnBigStack([this] {
+        std::set<bagosynths::Node*> done;
+        auto each = [&](int type, bagosynths::Node* n) {
+            if (n == nullptr || !done.insert(n).second) return;
+            switch (type) {
+                case kRackFluid: static_cast<bagosynths::FluidNode*>(n)->scanSoundFonts(mFluidDirs); break;
+                case kRackDexed: static_cast<bagosynths::DexedNode*>(n)->loadBanks(mDexedDirs); break;
+                case kRackSurge: static_cast<bagosynths::SurgeNode*>(n)->refreshPatches(); break;
+                default: break;
+            }
+        };
+        each(kRackFluid, mFluid);
+        each(kRackDexed, mDexed);
+        each(kRackSurge, mSurge);
+        for (int i = 0; i < instanceCount(); ++i) each(mInstanceType[i], mInstanceNode[i]);
+        LOGI("content rescanned in %zu engine(s)", done.size());
+    });
+}
+
+std::string AudioEngine::surgeUserPatchesPath() const {
+    return mSurge != nullptr ? mSurge->userPatchesPath() : std::string();
 }
 
 std::string AudioEngine::loadedInstrument() const {

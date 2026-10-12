@@ -150,7 +150,21 @@ class Library(dir: File, private val author: String) {
      * library already has, under any name, is not added again (a CP-88 backup
      * holds the same Init Sound many times). Returns how many were added.
      */
-    fun importDeviceSounds(fileName: String, mediaType: String, sounds: List<FoundSound>): Int = change("import", fileName) {
+    fun importDeviceSounds(fileName: String, mediaType: String, sounds: List<FoundSound>): Int =
+        change("import", fileName) { addDeviceSounds(mediaType, sounds) }
+
+    /**
+     * As [importDeviceSounds], but kept by the app on its own -- what a device's
+     * reserved area held before the app first wrote there -- rather than
+     * imported by the player: not an action of theirs, so Undo never takes it
+     * back, nor does it come between their own changes and Undo.
+     */
+    fun keepDeviceSounds(mediaType: String, sounds: List<FoundSound>): Int {
+        check(open == null) { "kept sounds are not part of an action" }
+        return addDeviceSounds(mediaType, sounds)
+    }
+
+    private fun addDeviceSounds(mediaType: String, sounds: List<FoundSound>): Int {
         val have = deviceSounds(mediaType).mapNotNull { it.version.target?.digest }.toMutableSet()
         var added = 0
         for (s in sounds) {
@@ -159,7 +173,7 @@ class Library(dir: File, private val author: String) {
             create(s.name.ifBlank { s.where }, Ref(d, mediaType), author, now())
             added++
         }
-        added
+        return added
     }
 
     fun setlist(id: Digest): Setlist? =

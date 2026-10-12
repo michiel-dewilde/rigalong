@@ -109,4 +109,17 @@ class LibraryTest {
         lib.undo()          // the import: both sounds go
         assertEquals(before, lib.deviceSounds().size)
     }
+
+    @Test
+    fun soundsKeptByTheAppAreNotForUndo() {
+        val type = Cp88.MEDIA_TYPE
+        lib.importDeviceSounds("mine.X9S", type, listOf(FoundSound("Init Sound", Cp88X9.INIT_SOUND, "1:1")))
+        val before = lib.deviceSounds().size
+        assertEquals(1, lib.keepDeviceSounds(type, listOf(FoundSound("Silent", Cp88.SILENT, "40:1"))))
+        assertEquals(before + 1, lib.deviceSounds().size)
+        assertEquals("mine.X9S", lib.lastChange()?.name, "the player's own import is still the last change")
+        lib.undo()
+        assertEquals(before, lib.deviceSounds().size, "Undo took back the import, not the kept sound")
+        assertTrue(lib.deviceSounds().any { it.version.name == "Silent" })
+    }
 }

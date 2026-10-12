@@ -382,6 +382,16 @@ Java_be_mdw_bagosynths_NativeBridge_nativeGetSurgeParam(JNIEnv*, jobject, jint i
 // changes underneath it.
 
 JNIEXPORT void JNICALL
+Java_be_mdw_bagosynths_NativeBridge_nativeRescanContent(JNIEnv*, jobject) {
+    engine().rescanContentAsync();
+}
+
+JNIEXPORT jstring JNICALL
+Java_be_mdw_bagosynths_NativeBridge_nativeSurgeUserPatchesPath(JNIEnv* env, jobject) {
+    return env->NewStringUTF(engine().surgeUserPatchesPath().c_str());
+}
+
+JNIEXPORT void JNICALL
 Java_be_mdw_bagosynths_NativeBridge_nativeLoadDexedBanks(JNIEnv* env, jobject,
                                                        jobjectArray dirs) {
     std::vector<std::string> paths;

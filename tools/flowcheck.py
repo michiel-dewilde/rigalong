@@ -85,6 +85,16 @@ def wait_for(text, exact=True, timeout=6.0):
     return []
 
 
+def see_scrolling(text, exact=True, tries=10):
+    """Waits for [text], scrolling the screen's middle down a page at a time until it shows."""
+    for _ in range(tries):
+        if wait_for(text, exact, timeout=1.5):
+            return True
+        shell("input swipe 1480 1300 1480 600 400")
+        time.sleep(0.8)
+    return False
+
+
 def focused_app():
     return shell("dumpsys window | grep mCurrentFocus")
 
@@ -302,10 +312,14 @@ def flow_second_sfizz(f):
     time.sleep(1.0)
 
 
-def undo_last():
-    """Undo the last save, from the Library (not counted)."""
+def undo_last(expect=None):
+    """Undo the last save, from the Library (not counted); with [expect], only if the Undo names it --
+    a flow that failed before its change, or an import that added nothing, must not undo another's."""
     to_library()
     for n in find_all("Undo", exact=False):
+        if expect is not None and expect not in (n.text or n.desc):
+            print(f"    (not undoing {n.text!r}: it is not {expect!r})")
+            break
         shell(f"input tap {n.x} {n.y}")
         break
     time.sleep(1.0)
@@ -474,10 +488,12 @@ def import_device_file(f, fname, count, seen):
     f.tap(fname)
     try:
         f.see(f"{count} Yamaha CP88/CP73 sounds in the file", exact=False, timeout=8)
-        f.see(seen)
+        # It may be in the library already (a page read back before a write keeps its sounds there).
+        if not see_scrolling(seen):
+            raise AssertionError(f"expected to see {seen!r}")
     finally:
         if "be.mdw.bagosynths" in focused_app():
-            undo_last()
+            undo_last(fname)
         shell(f"rm -f /sdcard/Download/{fname}")
 
 
@@ -501,8 +517,11 @@ def flow_cp88_sound_from_library(f):
     time.sleep(2.0)
     for n in find_all(X9P):
         shell(f"input tap {n.x} {n.y}")
-    if not wait_for("Test 7-6", timeout=8):
+    msg = wait_for("Yamaha CP88/CP73 sounds in the file", exact=False, timeout=8)
+    if not msg:
         raise AssertionError("setup: the page did not import")
+    # An import that added nothing is no change, and must not be undone (it would undo another's).
+    imported = not re.search(r"\b0 new\b", msg[0].text)
     saves = 0
     try:
         to_stage()
@@ -510,6 +529,7 @@ def flow_cp88_sound_from_library(f):
         f.see("Live set 1", exact=False)
         f.tap("Own sound", pick="first")
         f.tap("From library…", pick="first")
+        see_scrolling("Test 7-6")
         f.tap("Test 7-6")
         logcat_clear()
         f.tap("Save •")
@@ -517,7 +537,7 @@ def flow_cp88_sound_from_library(f):
         if not logcat_has(r"CP-88: page \d+, [1-9]\d* slot\(s\) written", timeout=5):
             raise AssertionError("the sound was not written into the reserved page")
     finally:
-        for _ in range(saves + 1):
+        for _ in range(saves + (1 if imported else 0)):
             undo_last()
         shell(f"rm -f /sdcard/Download/{X9P}")
 
@@ -533,11 +553,15 @@ def flow_cp88_yaml_edit(f):
     time.sleep(2.0)
     for n in find_all(X9P):
         shell(f"input tap {n.x} {n.y}")
-    if not wait_for("Test 7-6", timeout=8):
+    msg = wait_for("Yamaha CP88/CP73 sounds in the file", exact=False, timeout=8)
+    if not msg:
         raise AssertionError("setup: the page did not import")
-    saves = 1
+    # An import that added nothing is no change, and must not be undone (it would undo another's).
+    imported = not re.search(r"\b0 new\b", msg[0].text)
+    saves = 1 if imported else 0
     try:
         # The YAML… of Test 7-6's own row.
+        see_scrolling("Test 7-6")
         row = find_all("Test 7-6")[0]
         button = min(find_all("YAML…"), key=lambda n: abs(n.y - row.y))
         shell(f"input tap {button.x} {button.y}")

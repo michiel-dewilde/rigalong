@@ -46,6 +46,11 @@ class DevicesTest {
         val reply = Cp88.split(Cp88.SILENT)
         assertNull(s.collect(reply.take(18)), "an incomplete reply is no sound yet")
         assertContentEquals(Cp88.SILENT, s.collect(listOf(byteArrayOf(0xF0.toByte(), 0x7E, 0xF7.toByte())) + reply))
+        // The CP-88's own dumps after slot writes (0B 10 00) ahead of a reply are not part of it.
+        val stray = Cp88.build(intArrayOf(0x0B, 0x10, 0x00), ByteArray(8))
+        assertContentEquals(Cp88.SILENT, s.collect(listOf(stray, stray) + reply))
+        // A slot's reply (page 36) comes back in the stored form.
+        assertContentEquals(Cp88.SILENT, s.collect(listOf(stray) + Cp88.retarget(Cp88.SILENT, 36, 1)))
     }
 
     @Test

@@ -125,11 +125,13 @@ bool SurgeNode::init(const std::string& dataPath, const std::string& homePath) {
 // -------------------------------------------------------------------- patches
 
 int SurgeNode::patchCount() const {
+    std::lock_guard<std::recursive_mutex> list(mListLock);
     SurgeSynthesizer* s = mSynth.load(std::memory_order_acquire);
     return s ? static_cast<int>(s->storage.patch_list.size()) : 0;
 }
 
 std::string SurgeNode::patchDisplayName(int index) const {
+    std::lock_guard<std::recursive_mutex> list(mListLock);
     SurgeSynthesizer* s = mSynth.load(std::memory_order_acquire);
     if (!s || index < 0 || index >= static_cast<int>(s->storage.patch_list.size())) return {};
     return s->storage.patch_list[index].name;
@@ -153,6 +155,7 @@ std::string SurgeNode::macroName(int index) const {
 }
 
 std::string SurgeNode::patchName(int index) const {
+    std::lock_guard<std::recursive_mutex> list(mListLock);
     SurgeSynthesizer* s = mSynth.load(std::memory_order_acquire);
     if (!s || index < 0 || index >= static_cast<int>(s->storage.patch_list.size())) return {};
     const auto& p = s->storage.patch_list[index];
@@ -160,6 +163,25 @@ std::string SurgeNode::patchName(int index) const {
         return s->storage.patch_category[p.category].name + "/" + p.name;
     }
     return p.name;
+}
+
+std::string SurgeNode::userPatchesPath() const {
+    SurgeSynthesizer* s = mSynth.load(std::memory_order_acquire);
+    return s ? s->storage.userPatchesPath.u8string() : std::string();
+}
+
+void SurgeNode::refreshPatches() {
+    std::lock_guard<std::recursive_mutex> list(mListLock);
+    SurgeSynthesizer* s = mSynth.load(std::memory_order_acquire);
+    if (!s) return;
+    const std::string current = currentPatchName();
+    s->storage.refresh_patchlist();
+    const int n = static_cast<int>(s->storage.patch_list.size());
+    int at = -1;
+    for (int i = 0; i < n && at < 0; ++i) if (patchName(i) == current) at = i;
+    mCurrentPatch.store(at, std::memory_order_relaxed);
+    if (at >= 0) s->patchid = at;
+    LOGI("Surge patches rescanned: %d, the current one now %d (%s)", n, at, current.c_str());
 }
 
 std::string SurgeNode::currentPatchName() const {
@@ -182,6 +204,7 @@ void SurgeNode::applyRequestedPatch() {
 }
 
 bool SurgeNode::loadPatch(int index) {
+    std::lock_guard<std::recursive_mutex> list(mListLock);
     SurgeSynthesizer* s = mSynth.load(std::memory_order_acquire);
     if (!s || s->storage.patch_list.empty()) return false;
     if (index < 0 || index >= static_cast<int>(s->storage.patch_list.size())) return false;
@@ -220,6 +243,7 @@ bool SurgeNode::loadPatch(int index) {
 }
 
 bool SurgeNode::loadPatchNamed(const std::string& name) {
+    std::lock_guard<std::recursive_mutex> list(mListLock);
     SurgeSynthesizer* s = mSynth.load(std::memory_order_acquire);
     if (!s || name.empty()) return false;
     const int n = static_cast<int>(s->storage.patch_list.size());

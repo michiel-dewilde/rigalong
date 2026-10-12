@@ -134,6 +134,10 @@ object NativeBridge {
     // A DX7 voice is addressed by "Bank/NAME". Bank loading is file IO and runs
     // on the loader thread; selecting a voice is a 128-byte unpack and is cheap.
     external fun nativeLoadDexedBanks(dirs: Array<String>)
+    /** Content was added to the engines' folders: FluidSynth, Dexed and Surge look again (in the background). */
+    external fun nativeRescanContent()
+    /** Surge's folder for the player's own patches; empty before Surge is up. */
+    external fun nativeSurgeUserPatchesPath(): String
     external fun nativeDexedReady(): Boolean
     external fun nativeDexedVoiceCount(): Int
     external fun nativeDexedVoiceName(index: Int): String

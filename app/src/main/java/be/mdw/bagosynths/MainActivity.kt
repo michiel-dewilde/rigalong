@@ -266,6 +266,8 @@ class MainActivity : androidx.activity.ComponentActivity() {
         filter.addAction("be.mdw.bagosynths.INSTANCE")
         filter.addAction("be.mdw.bagosynths.CC")
         filter.addAction("be.mdw.bagosynths.DEVICESELFTEST")
+        filter.addAction("be.mdw.bagosynths.DEVICEPRELOADTEST")
+        filter.addAction("be.mdw.bagosynths.DEVICEWRITESELECT")
         if (Build.VERSION.SDK_INT >= 33) {
             registerReceiver(debugReceiver, filter, Context.RECEIVER_EXPORTED)
         } else {
@@ -1963,6 +1965,11 @@ class MainActivity : androidx.activity.ComponentActivity() {
                 // TEST: a device's own-sound path end to end (SongPlayer.deviceSelfTest):
                 //   adb shell am broadcast -a be.mdw.bagosynths.DEVICESELFTEST --ei liveset 1
                 "be.mdw.bagosynths.DEVICESELFTEST" -> player.deviceSelfTest(intent.getIntExtra("liveset", 1))
+                //   adb shell am broadcast -a be.mdw.bagosynths.DEVICEPRELOADTEST
+                "be.mdw.bagosynths.DEVICEPRELOADTEST" -> player.devicePreloadTest()
+                //   adb shell am broadcast -a be.mdw.bagosynths.DEVICEWRITESELECT --es delays 0,0,10,10,50,50
+                "be.mdw.bagosynths.DEVICEWRITESELECT" -> player.deviceWriteSelectTest(
+                    (intent.getStringExtra("delays") ?: "0,0,0,0").split(',').mapNotNull { it.trim().toIntOrNull() })
                 "be.mdw.bagosynths.SYSEX" -> sysexExchange(
                     intent.getStringExtra("hex").orEmpty(),
                     intent.getIntExtra("gap", 20),
@@ -2693,6 +2700,25 @@ class MainActivity : androidx.activity.ComponentActivity() {
                 midiDevice = shortName(chosenMidiName), midiMode = m.name,
                 usbBufferMs = usbBufferMs, usbBufferChoices = UsbBuffers.choicesMs.toList())
         }
+        override fun installEngineFile(kind: be.mdw.bagosynths.model.EngineFiles.Kind, fileName: String, bytes: ByteArray): String? {
+            val dir = when (kind) {
+                be.mdw.bagosynths.model.EngineFiles.Kind.SOUNDFONT -> java.io.File(getExternalFilesDir(null), "soundfonts")
+                be.mdw.bagosynths.model.EngineFiles.Kind.DX7_BANK -> java.io.File(getExternalFilesDir(null), "dx7")
+                be.mdw.bagosynths.model.EngineFiles.Kind.SURGE_PATCH -> java.io.File(
+                    NativeBridge.nativeSurgeUserPatchesPath().ifEmpty { error("Surge XT is still starting; try again in a moment") },
+                    "Imported")
+                be.mdw.bagosynths.model.EngineFiles.Kind.DX7_VOICE -> error("a single DX7 voice")
+            }.apply { mkdirs() }
+            val target = be.mdw.bagosynths.model.EngineFiles.place(dir,
+                be.mdw.bagosynths.model.EngineFiles.installName(fileName, kind), bytes) ?: return null
+            // Whole or not at all: an engine scanning the folder never sees half a file.
+            val part = java.io.File(dir, ".${target.name}.part")
+            part.writeBytes(bytes)
+            require(part.renameTo(target)) { "could not put ${target.name} in place" }
+            NativeBridge.nativeRescanContent()
+            return target.nameWithoutExtension
+        }
+
         override fun importInstrumentZip(input: java.io.InputStream, fileName: String): String {
             val id = fileName.substringBeforeLast('.').lowercase()
                 .replace(Regex("[^a-z0-9._-]+"), "-").trim('-').ifEmpty { "instrument" }
