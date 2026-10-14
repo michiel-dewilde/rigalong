@@ -1252,7 +1252,13 @@ void AudioEngine::renderLoop() {
         }
         if (filled < static_cast<uint32_t>(target)) {
             const double t0 = nowSeconds();
-            renderBlockIntoRing(kRenderBlockFrames);
+            mRenderLock.lock();
+            // The rescue may have filled the ring while this thread waited.
+            if (mRingWrite.load(std::memory_order_relaxed) - mRingRead.load(std::memory_order_acquire) <
+                static_cast<uint32_t>(target)) {
+                renderBlockIntoRing(kRenderBlockFrames);
+            }
+            mRenderLock.unlock();
             const double spent = nowSeconds() - t0;
             const auto ms = static_cast<float>(spent * 1000.0);
             if (ms > mRenderMaxMs.load(std::memory_order_relaxed)) {
@@ -1305,7 +1311,88 @@ void AudioEngine::applyRenderScheduling(int tid) {
     rigalong::setThreadCpus("render thread", tid, cpus);
 }
 
+// ------------------------------------------------------ the real-time rescue
+
+void AudioEngine::renderRescueLoop() {
+    enableFlushToZero();
+    sched_param sp{};
+    sched_getparam(0, &sp);
+    LOGI("render rescue: on an AAudio callback thread (%s, priority %d)",
+         (sched_getscheduler(0) & ~SCHED_RESET_ON_FORK) == SCHED_FIFO ? "SCHED_FIFO" : "not real-time", sp.sched_priority);
+    double lastLog = 0.0;
+    while (mRenderRun.load(std::memory_order_acquire)) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        const int32_t floor = mMinFill.load(std::memory_order_relaxed);
+        auto filled = [this] { return mRingWrite.load(std::memory_order_relaxed) - mRingRead.load(std::memory_order_acquire); };
+        if (mRenderPaused.load(std::memory_order_relaxed) || filled() >= static_cast<uint32_t>(floor / 2)) continue;
+        // Low: whoever holds the lock now runs at this thread's priority until it lets go.
+        mRenderLock.lock();
+        int rendered = 0;
+        while (filled() < static_cast<uint32_t>(floor) && rendered < 4 && mRenderRun.load(std::memory_order_relaxed)) {
+            renderBlockIntoRing(kRenderBlockFrames);
+            ++rendered;
+        }
+        mRenderLock.unlock();
+        mRescues.fetch_add(1, std::memory_order_relaxed);
+        const double now = nowSeconds();
+        if (now - lastLog > 5.0) {
+            LOGI("render rescue: %lld so far (%d block(s) this time)",
+                 static_cast<long long>(mRescues.load(std::memory_order_relaxed)), rendered);
+            lastLog = now;
+        }
+    }
+}
+
+bool AudioEngine::borrowFifoThread(Borrowed& b, const char* what) {
+    b.claimed.store(false, std::memory_order_release);
+    b.active.store(false, std::memory_order_release);
+    AAudioStreamBuilder* builder = nullptr;
+    if (AAudio_createStreamBuilder(&builder) != AAUDIO_OK) return false;
+    AAudioStreamBuilder_setDirection(builder, AAUDIO_DIRECTION_OUTPUT);
+    AAudioStreamBuilder_setPerformanceMode(builder, AAUDIO_PERFORMANCE_MODE_LOW_LATENCY);
+    AAudioStreamBuilder_setSharingMode(builder, AAUDIO_SHARING_MODE_SHARED);
+    AAudioStreamBuilder_setFormat(builder, AAUDIO_FORMAT_PCM_FLOAT);
+    AAudioStreamBuilder_setChannelCount(builder, 2);
+    AAudioStreamBuilder_setDataCallback(
+            builder, [](AAudioStream*, void* self, void* audio, int32_t n) -> aaudio_data_callback_result_t {
+                auto* bb = static_cast<Borrowed*>(self);
+                std::memset(audio, 0, static_cast<size_t>(n) * 2 * sizeof(float));
+                if (bb->claimed.exchange(true, std::memory_order_acq_rel)) return AAUDIO_CALLBACK_RESULT_STOP;
+                bb->active.store(true, std::memory_order_release);
+                bb->body(bb->engine);
+                bb->active.store(false, std::memory_order_release);
+                return AAUDIO_CALLBACK_RESULT_STOP;
+            }, &b);
+    AAudioStream* st = nullptr;
+    const aaudio_result_t r = AAudioStreamBuilder_openStream(builder, &st);
+    AAudioStreamBuilder_delete(builder);
+    if (r != AAUDIO_OK || AAudioStream_requestStart(st) != AAUDIO_OK) {
+        LOGE("%s: no AAudio host stream (%s)", what, AAudio_convertResultToText(r));
+        if (st) AAudioStream_close(st);
+        return false;
+    }
+    b.stream = st;
+    return true;
+}
+
+void AudioEngine::returnFifoThread(Borrowed& b) {
+    if (!b.stream) return;
+    for (int i = 0; i < 400 && b.active.load(std::memory_order_acquire); ++i) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+    auto* st = static_cast<AAudioStream*>(b.stream);
+    AAudioStream_requestStop(st);
+    AAudioStream_close(st);
+    b.stream = nullptr;
+}
+
 void AudioEngine::startRenderThread() {
+    mRescues.store(0, std::memory_order_relaxed);
+    if (mRescueWanted.load(std::memory_order_relaxed)) {
+        mRescueHost.engine = this;
+        mRescueHost.body = [](AudioEngine* e) { e->renderRescueLoop(); };
+        borrowFifoThread(mRescueHost, "render rescue");
+    }
     mRenderHostClaimed.store(false, std::memory_order_release);
     if (mRenderOnFifo.load(std::memory_order_relaxed)) {
         // An AAudio low-latency stream's callback thread is SCHED_FIFO: its
@@ -1357,6 +1444,7 @@ void AudioEngine::startRenderThread() {
 void AudioEngine::stopRenderThread() {
     if (!mRenderRun.exchange(false, std::memory_order_acq_rel)) return;
     if (mRenderThread.joinable()) mRenderThread.join();
+    returnFifoThread(mRescueHost);
     if (mRenderHost) {
         for (int i = 0; i < 400 && mRenderLoopActive.load(std::memory_order_acquire); ++i) {
             std::this_thread::sleep_for(std::chrono::milliseconds(5));

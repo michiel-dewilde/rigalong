@@ -2208,11 +2208,13 @@ class MainActivity : androidx.activity.ComponentActivity() {
                         intent.getStringExtra("cpus").orEmpty(), fifo)
                     android.util.Log.i("rigalong-ui", "render scheduling: nice ${intent.getIntExtra("nice", 0)} " +
                         "cpus '${intent.getStringExtra("cpus").orEmpty()}' fifo $fifo")
+                    val rescue = intent.getIntExtra("rescue", -1)
+                    if (rescue >= 0) NativeBridge.nativeSetRenderRescue(rescue > 0)
                     intent.getStringExtra("reapcpus")?.let {
                         NativeBridge.nativeSetReapCpus(it)
                         android.util.Log.i("rigalong-ui", "usb reap thread cpus: '$it'")
                     }
-                    if (fifo >= 0) applyRouting("render thread")
+                    if (fifo >= 0 || rescue >= 0) applyRouting("render thread")
                 }
                 "com.rigalong.FILL" -> {
                     val ms = intent.getIntExtra("ms", 0)

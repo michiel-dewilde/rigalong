@@ -66,6 +66,10 @@ object NativeBridge {
     external fun nativeSetFillMs(ms: Int)
     /** The render thread: nice (0 leaves it), CPUs ("" leaves, "all"), on a borrowed SCHED_FIFO thread (1/0, -1 leaves; next stream start). */
     external fun nativeSetRenderScheduling(nice: Int, cpus: String, fifo: Int)
+    /** The real-time render rescue on or off, from the next stream start. */
+    external fun nativeSetRenderRescue(on: Boolean)
+    /** Blocks the rescue stepped in for since the stream started. */
+    external fun nativeRenderRescues(): Long
     /** The USB reap thread's CPUs ("all": all). */
     external fun nativeSetReapCpus(cpus: String)
 

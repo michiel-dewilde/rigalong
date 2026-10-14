@@ -255,6 +255,10 @@ public:
     void setRenderScheduling(int nice, const std::string& cpus, int fifo);
     // The USB reap thread's CPUs ("all" or "": all).
     void setReapCpus(const std::string& cpus);
+    // The real-time rescue (renderRescueLoop) on or off, from the next stream start.
+    void setRenderRescue(bool on) { mRescueWanted.store(on, std::memory_order_relaxed); }
+    // Blocks the rescue has rendered (or got rendered) since the stream started.
+    int64_t renderRescues() const { return mRescues.load(std::memory_order_relaxed); }
 
     // Click probe: emit a click, time its return. Measures the output stage plus
     // the room and the microphone.
@@ -866,6 +870,24 @@ private:
     void* mRenderHost = nullptr;
     std::atomic<bool> mRenderHostClaimed{false};
     void startRenderThread();
+    // Every block is rendered under this lock, by the render thread or the rescue.
+    rigalong::PiMutex mRenderLock;
+    // The rescue: a borrowed SCHED_FIFO thread that, when the ring runs low,
+    // takes the render lock -- lifting a starved render thread to its priority
+    // until that block is done -- and tops the ring up to its floor itself.
+    std::atomic<bool> mRescueWanted{true};
+    std::atomic<int64_t> mRescues{0};
+    struct Borrowed {
+        AudioEngine* engine = nullptr;
+        void (*body)(AudioEngine*) = nullptr;
+        std::atomic<bool> claimed{false};
+        std::atomic<bool> active{false};
+        void* stream = nullptr;
+    };
+    Borrowed mRescueHost;
+    void renderRescueLoop();
+    bool borrowFifoThread(Borrowed& b, const char* what);
+    void returnFifoThread(Borrowed& b);
     void stopRenderThread();
     void applyRenderScheduling(int tid);
     std::atomic<int64_t> mRingUnderruns{0};

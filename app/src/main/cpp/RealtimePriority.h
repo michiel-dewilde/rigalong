@@ -4,6 +4,7 @@
 #include <string>
 #include <vector>
 
+#include <pthread.h>
 #include <sys/types.h>
 
 // Scheduling for the threads that must not be late.
@@ -68,6 +69,31 @@ void raiseRenderPriority(const char* what, int niceValue = kTransportNice);
  * Logs what was asked and granted under [what]; false if refused.
  */
 bool setThreadCpus(const char* what, int tid, const std::string& cpus);
+
+/**
+ * A mutex with priority inheritance (PTHREAD_PRIO_INHERIT): a real-time
+ * thread waiting on it lifts the thread holding it to its own priority until
+ * that one lets go -- so a holder preempted by ordinary threads is run again
+ * at once instead of whenever the scheduler gets round to it.
+ */
+class PiMutex {
+public:
+    PiMutex() {
+        pthread_mutexattr_t a;
+        pthread_mutexattr_init(&a);
+        pthread_mutexattr_setprotocol(&a, PTHREAD_PRIO_INHERIT);
+        pthread_mutex_init(&mMutex, &a);
+        pthread_mutexattr_destroy(&a);
+    }
+    ~PiMutex() { pthread_mutex_destroy(&mMutex); }
+    PiMutex(const PiMutex&) = delete;
+    PiMutex& operator=(const PiMutex&) = delete;
+    void lock() { pthread_mutex_lock(&mMutex); }
+    void unlock() { pthread_mutex_unlock(&mMutex); }
+
+private:
+    pthread_mutex_t mMutex;
+};
 
 /**
  * Android's Performance Hint session (ADPF), the supported way to tell the

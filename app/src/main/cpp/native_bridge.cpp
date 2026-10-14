@@ -149,6 +149,17 @@ Java_com_rigalong_NativeBridge_nativeSetRenderScheduling(JNIEnv* env, jobject, j
     if (c) env->ReleaseStringUTFChars(cpus, c);
 }
 
+// The real-time render rescue on or off, from the next stream start (RENDERPRIO rescue).
+JNIEXPORT void JNICALL
+Java_com_rigalong_NativeBridge_nativeSetRenderRescue(JNIEnv*, jobject, jboolean on) {
+    engine().setRenderRescue(on == JNI_TRUE);
+}
+
+JNIEXPORT jlong JNICALL
+Java_com_rigalong_NativeBridge_nativeRenderRescues(JNIEnv*, jobject) {
+    return static_cast<jlong>(engine().renderRescues());
+}
+
 // The USB reap thread's CPUs ("all": all), to experiment with (RENDERPRIO reapcpus).
 JNIEXPORT void JNICALL
 Java_com_rigalong_NativeBridge_nativeSetReapCpus(JNIEnv* env, jobject, jstring cpus) {
