@@ -155,6 +155,11 @@ Java_com_rigalong_NativeBridge_nativeSetRenderRescue(JNIEnv*, jobject, jboolean 
     engine().setRenderRescue(on == JNI_TRUE);
 }
 
+JNIEXPORT void JNICALL
+Java_com_rigalong_NativeBridge_nativeSetRenderRescueAt(JNIEnv*, jobject, jint percent) {
+    engine().setRenderRescueAt(percent);
+}
+
 JNIEXPORT jlong JNICALL
 Java_com_rigalong_NativeBridge_nativeRenderRescues(JNIEnv*, jobject) {
     return static_cast<jlong>(engine().renderRescues());

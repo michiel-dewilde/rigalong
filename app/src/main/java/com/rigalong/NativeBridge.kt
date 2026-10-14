@@ -68,6 +68,8 @@ object NativeBridge {
     external fun nativeSetRenderScheduling(nice: Int, cpus: String, fifo: Int)
     /** The real-time render rescue on or off, from the next stream start. */
     external fun nativeSetRenderRescue(on: Boolean)
+    /** How low the ring runs, in percent of its floor, before the rescue steps in. */
+    external fun nativeSetRenderRescueAt(percent: Int)
     /** Blocks the rescue stepped in for since the stream started. */
     external fun nativeRenderRescues(): Long
     /** The USB reap thread's CPUs ("all": all). */

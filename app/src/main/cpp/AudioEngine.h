@@ -257,6 +257,8 @@ public:
     void setReapCpus(const std::string& cpus);
     // The real-time rescue (renderRescueLoop) on or off, from the next stream start.
     void setRenderRescue(bool on) { mRescueWanted.store(on, std::memory_order_relaxed); }
+    // How low the ring must run, in percent of its floor, before the rescue steps in.
+    void setRenderRescueAt(int percent) { if (percent > 0) mRescueAtPercent.store(percent, std::memory_order_relaxed); }
     // Blocks the rescue has rendered (or got rendered) since the stream started.
     int64_t renderRescues() const { return mRescues.load(std::memory_order_relaxed); }
 
@@ -876,7 +878,10 @@ private:
     // takes the render lock -- lifting a starved render thread to its priority
     // until that block is done -- and tops the ring up to its floor itself.
     std::atomic<bool> mRescueWanted{true};
+    std::atomic<int> mRescueAtPercent{50};
     std::atomic<int64_t> mRescues{0};
+    // When a block was last put into the ring, by either thread (nowSeconds()).
+    std::atomic<double> mLastBlockAt{0.0};
     struct Borrowed {
         AudioEngine* engine = nullptr;
         void (*body)(AudioEngine*) = nullptr;

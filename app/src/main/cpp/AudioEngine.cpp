@@ -1253,10 +1253,14 @@ void AudioEngine::renderLoop() {
         if (filled < static_cast<uint32_t>(target)) {
             const double t0 = nowSeconds();
             mRenderLock.lock();
+            if (nowSeconds() - t0 > 0.02) {
+                LOGI("render thread: waited %.1f ms for the render lock", (nowSeconds() - t0) * 1000.0);
+            }
             // The rescue may have filled the ring while this thread waited.
             if (mRingWrite.load(std::memory_order_relaxed) - mRingRead.load(std::memory_order_acquire) <
                 static_cast<uint32_t>(target)) {
                 renderBlockIntoRing(kRenderBlockFrames);
+                mLastBlockAt.store(nowSeconds(), std::memory_order_relaxed);
             }
             mRenderLock.unlock();
             const double spent = nowSeconds() - t0;
@@ -1319,25 +1323,43 @@ void AudioEngine::renderRescueLoop() {
     sched_getparam(0, &sp);
     LOGI("render rescue: on an AAudio callback thread (%s, priority %d)",
          (sched_getscheduler(0) & ~SCHED_RESET_ON_FORK) == SCHED_FIFO ? "SCHED_FIFO" : "not real-time", sp.sched_priority);
+    // Starved, not merely low: no block for this long. A render thread that is
+    // rendering is the faster one -- its clock is boosted, this thread's is not
+    // (Android gives real-time threads no clock floor) --, so the rescue keeps
+    // out of its way and only steps in when it has stopped making progress.
+    constexpr double kStarvedSeconds = 0.004;
+    mLastBlockAt.store(nowSeconds(), std::memory_order_relaxed);
     double lastLog = 0.0;
+    int64_t lifted = 0, rendered = 0;
     while (mRenderRun.load(std::memory_order_acquire)) {
         std::this_thread::sleep_for(std::chrono::milliseconds(1));
         const int32_t floor = mMinFill.load(std::memory_order_relaxed);
         auto filled = [this] { return mRingWrite.load(std::memory_order_relaxed) - mRingRead.load(std::memory_order_acquire); };
-        if (mRenderPaused.load(std::memory_order_relaxed) || filled() >= static_cast<uint32_t>(floor / 2)) continue;
-        // Low: whoever holds the lock now runs at this thread's priority until it lets go.
+        auto starved = [this] { return nowSeconds() - mLastBlockAt.load(std::memory_order_relaxed) >= kStarvedSeconds; };
+        const int32_t low = floor * mRescueAtPercent.load(std::memory_order_relaxed) / 100;
+        if (mRenderPaused.load(std::memory_order_relaxed) || filled() >= static_cast<uint32_t>(low) || !starved()) continue;
+        // A render thread preempted mid-block now runs at this thread's priority until it lets go.
+        const double asked = nowSeconds();
         mRenderLock.lock();
-        int rendered = 0;
-        while (filled() < static_cast<uint32_t>(floor) && rendered < 4 && mRenderRun.load(std::memory_order_relaxed)) {
+        const double got = nowSeconds();
+        bool own = false;
+        // Still nothing: render one block here, then look again.
+        if (filled() < static_cast<uint32_t>(low) && starved() && mRenderRun.load(std::memory_order_relaxed)) {
             renderBlockIntoRing(kRenderBlockFrames);
-            ++rendered;
+            mLastBlockAt.store(nowSeconds(), std::memory_order_relaxed);
+            own = true;
         }
         mRenderLock.unlock();
+        if (own) ++rendered; else ++lifted;
         mRescues.fetch_add(1, std::memory_order_relaxed);
         const double now = nowSeconds();
+        if (got - asked > 0.02 || now - got > 0.02) {
+            LOGI("render rescue: waited %.1f ms for the lock, held it %.1f ms, ring %u frames",
+                 (got - asked) * 1000.0, (now - got) * 1000.0, filled());
+        }
         if (now - lastLog > 5.0) {
-            LOGI("render rescue: %lld so far (%d block(s) this time)",
-                 static_cast<long long>(mRescues.load(std::memory_order_relaxed)), rendered);
+            LOGI("render rescue: %lld lifted, %lld rendered here", static_cast<long long>(lifted),
+                 static_cast<long long>(rendered));
             lastLog = now;
         }
     }

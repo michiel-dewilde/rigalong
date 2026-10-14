@@ -2210,6 +2210,7 @@ class MainActivity : androidx.activity.ComponentActivity() {
                         "cpus '${intent.getStringExtra("cpus").orEmpty()}' fifo $fifo")
                     val rescue = intent.getIntExtra("rescue", -1)
                     if (rescue >= 0) NativeBridge.nativeSetRenderRescue(rescue > 0)
+                    if (intent.hasExtra("rescueat")) NativeBridge.nativeSetRenderRescueAt(intent.getIntExtra("rescueat", 50))
                     intent.getStringExtra("reapcpus")?.let {
                         NativeBridge.nativeSetReapCpus(it)
                         android.util.Log.i("rigalong-ui", "usb reap thread cpus: '$it'")
