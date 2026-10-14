@@ -73,6 +73,11 @@ import com.rigalong.model.RackPart
 import com.rigalong.model.RackSlot
 import com.rigalong.model.RackSong
 import kotlinx.coroutines.delay
+import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.zIndex
 
 /*
  * The new UI, first slice (PLAN.md M3): the stage view and a form-based song
@@ -103,6 +108,8 @@ fun BagoTheme(content: @Composable () -> Unit) {
 fun AppUi(player: SongPlayer, lib: Library, host: EngineHost) {
     var screen by remember { mutableIntStateOf(0) }
     var health by remember { mutableStateOf("") }
+    // The song open in Songs outlives the screen: leaving it never drops unsaved edits.
+    val songsEdit = remember { SongsEdit() }
     // The on-screen keys whenever there is no MIDI input to play from (S20.4), on every screen.
     var keys by remember { mutableStateOf(false) }
     LaunchedEffect(Unit) {
@@ -132,12 +139,12 @@ fun AppUi(player: SongPlayer, lib: Library, host: EngineHost) {
         // Edge to edge is the rule at target SDK 36: keep clear of the status
         // and navigation bars, and of a display cutout, ourselves.
         Column(Modifier.fillMaxSize().safeDrawingPadding().padding(12.dp)) {
-            TopBar(player, health, screen, onScreen = { screen = it }, onPrototype = host::showPrototype)
+            TopBar(player, health, screen, songsUnsaved = songsEdit.unsaved, onScreen = { screen = it }, onPrototype = host::showPrototype)
             Spacer(Modifier.height(8.dp))
             Box(Modifier.weight(1f)) {
                 when (screen) {
                     0 -> StageScreen(player, host)
-                    1 -> SongsScreen(player, lib, host)
+                    1 -> SongsScreen(player, lib, host, songsEdit)
                     2 -> LibraryScreen(player, lib, host, onOpened = { screen = 0 })
                     else -> SetupScreen(player, host, lib)
                 }
@@ -152,13 +159,14 @@ fun AppUi(player: SongPlayer, lib: Library, host: EngineHost) {
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun TopBar(player: SongPlayer, health: String, screen: Int, onScreen: (Int) -> Unit, onPrototype: () -> Unit) {
+private fun TopBar(player: SongPlayer, health: String, screen: Int, songsUnsaved: Boolean, onScreen: (Int) -> Unit,
+                   onPrototype: () -> Unit) {
     // EDIT LOCK (S17.3): from the stage, the editors open only on a long
     // press, so a stray tap mid-song never leaves the stage.
     val locked = screen == 0
     val tabs: @Composable () -> Unit = {
         Tab(stringResource(R.string.tab_stage), screen == 0) { onScreen(0) }
-        Tab(stringResource(R.string.tab_songs), screen == 1, locked) { onScreen(1) }
+        Tab(stringResource(R.string.tab_songs) + if (songsUnsaved) " •" else "", screen == 1, locked) { onScreen(1) }
         Tab(stringResource(R.string.tab_library), screen == 2, locked) { onScreen(2) }
         Tab(stringResource(R.string.tab_setup), screen == 3, locked) { onScreen(3) }
     }
@@ -583,21 +591,44 @@ private fun BigButton(label: String, enabled: Boolean, width: Int, selected: Boo
 
 // ------------------------------------------------------------------ songs
 
+/**
+ * The song open in Songs, kept above the screens: switching to the stage and
+ * back finds it as it was, unsaved edits and all ("Songs •" says there are some).
+ */
+class SongsEdit {
+    var selected by mutableStateOf<Digest?>(null)
+    var editing by mutableStateOf<Pair<Digest?, RackSong>?>(null)
+    var editName by mutableStateOf("")
+    /** A new song goes into the setlist when saved, unless it was made under All songs. */
+    var newIntoSetlist by mutableStateOf(true)
+    /** The song as it was opened: what its slots' library patches were before editing. */
+    var original by mutableStateOf<RackSong?>(null)
+    var originalName by mutableStateOf("")
+    /** The setlist the Songs panel shows, chosen there; null: the one on stage. */
+    var setlist by mutableStateOf<Digest?>(null)
+    val unsaved: Boolean get() = editing?.let { (id, song) -> id == null || song != original || editName != originalName } ?: false
+}
+
 @Composable
-private fun SongsScreen(player: SongPlayer, lib: Library, host: EngineHost) {
+private fun SongsScreen(player: SongPlayer, lib: Library, host: EngineHost, st: SongsEdit) {
     var revision by remember { mutableIntStateOf(0) }
-    val setlistId = player.setlistId
-    var selected by remember { mutableStateOf<Digest?>(null) }
-    var editing by remember { mutableStateOf<Pair<Digest?, RackSong>?>(null) }
-    var editName by remember { mutableStateOf("") }
+    // The setlist edited here: the one chosen in the panel, else the one on stage.
+    val setlistId = st.setlist?.takeIf { lib.store.entry(it) != null } ?: player.setlistId
+    var selected by st::selected
+    var editing by st::editing
+    var editName by st::editName
     var focus by remember { mutableStateOf<SongPlayer.EditRequest?>(null) }
     // A phone shows the setlist or the editor: whether the list is back in front of an open song.
     var listShown by remember { mutableStateOf(false) }
-    // The song as it was opened: what its slots' library patches were before editing.
-    var original by remember { mutableStateOf<RackSong?>(null) }
-    var originalName by remember { mutableStateOf("") }
+    var newIntoSetlist by st::newIntoSetlist
+    var original by st::original
+    var originalName by st::originalName
     var decisions by remember { mutableStateOf<List<PatchDecision>>(emptyList()) }
+    // Another song asked for while this one has unsaved edits: what to do once the player says.
+    var pending by remember { mutableStateOf<(() -> Unit)?>(null) }
+    fun guarded(action: () -> Unit) { if (st.unsaved) pending = action else action() }
     val newSongName = stringResource(R.string.new_song)
+    val copyName = stringResource(R.string.copy_of, editName)
     fun open(id: Digest) {
         selected = id
         listShown = false
@@ -610,9 +641,9 @@ private fun SongsScreen(player: SongPlayer, lib: Library, host: EngineHost) {
         val ed = editing ?: return
         val id = lib.inOneChange("song", editName) {
             val id = lib.saveSongAndPatches(ed.first, editName, ed.second, moves)
-            if (ed.first == null && setlistId != null) {
+            if (ed.first == null && setlistId != null && newIntoSetlist) {
                 val ids = lib.songsOf(setlistId).mapNotNull { it.first?.id } + id
-                lib.saveSetlist(setlistId, player.setlistName, ids)
+                lib.saveSetlist(setlistId, lib.store.entry(setlistId)?.version?.name ?: player.setlistName, ids)
             }
             id
         }
@@ -643,17 +674,25 @@ private fun SongsScreen(player: SongPlayer, lib: Library, host: EngineHost) {
     BoxWithConstraints(Modifier.fillMaxSize()) {
         val wide = maxWidth > 900.dp
         val list = @Composable {
-            SetlistPanel(lib, setlistId, revision, selected,
+            SetlistPanel(lib, setlistId, player.setlistId, revision, selected,
                 // On a phone the song still open is only brought back, unsaved changes and all.
-                onSelect = { id -> focus = null; if (!wide && id == editing?.first) listShown = false else open(id) },
-                onNew = {
-                    listShown = false
-                    editing = null to RackSong.starter(preset = host.currentInstrument())
-                    original = null
-                    editName = newSongName
-                    selected = null
+                onSelect = { id ->
+                    focus = null
+                    if (id == editing?.first) listShown = false else guarded { open(id) }
                 },
-                onChanged = { revision++; player.reload() })
+                onNew = { intoSetlist ->
+                    guarded {
+                        listShown = false
+                        newIntoSetlist = intoSetlist
+                        editing = null to RackSong.starter(preset = host.currentInstrument())
+                        original = null
+                        editName = newSongName
+                        selected = null
+                    }
+                },
+                onChanged = { revision++; player.reload() },
+                onPickSetlist = { st.setlist = it; revision++ },
+                onPutOnStage = { player.openSetlist(it); revision++ })
         }
         val editor = @Composable {
             val ed = editing
@@ -681,9 +720,21 @@ private fun SongsScreen(player: SongPlayer, lib: Library, host: EngineHost) {
                             // A changed library patch: everywhere, only here, or chosen songs (I8.5, I8.13).
                             val d = patchDecisions(lib, original, ed.second, ed.first)
                             if (d.isEmpty()) save(emptyMap()) else decisions = d
+                        },
+                        onSaveCopy = {
+                            val id = lib.saveSong(null, copyName, ed.second)
+                            revision++
+                            open(id)
                         })
                 }
             }
+        }
+        pending?.let { go ->
+            androidx.compose.material3.AlertDialog(onDismissRequest = { pending = null },
+                title = { Text(stringResource(R.string.unsaved_title, editName)) },
+                text = { Text(stringResource(R.string.unsaved_text)) },
+                confirmButton = { TextButton(onClick = { pending = null }) { Text(stringResource(R.string.keep_editing)) } },
+                dismissButton = { TextButton(onClick = { pending = null; go() }) { Text(stringResource(R.string.discard_changes), color = Danger) } })
         }
         if (decisions.isNotEmpty()) {
             PatchSaveDialog(decisions, onSave = { moves, only ->
@@ -718,18 +769,82 @@ private fun SongsScreen(player: SongPlayer, lib: Library, host: EngineHost) {
 }
 
 @Composable
-private fun SetlistPanel(lib: Library, setlistId: Digest?, revision: Int, selected: Digest?,
-                         onSelect: (Digest) -> Unit, onNew: () -> Unit, onChanged: () -> Unit) {
+private fun SetlistPanel(lib: Library, setlistId: Digest?, stageSetlist: Digest?, revision: Int, selected: Digest?,
+                         onSelect: (Digest) -> Unit, onNew: (intoSetlist: Boolean) -> Unit, onChanged: () -> Unit,
+                         onPickSetlist: (Digest) -> Unit, onPutOnStage: (Digest) -> Unit) {
     val songs = remember(setlistId, revision) { setlistId?.let { lib.songsOf(it) }.orEmpty() }
     val name = remember(setlistId, revision) { setlistId?.let { lib.store.entry(it)?.version?.name }.orEmpty() }
+    // Songs exist on their own (Michiel, 2026-10-14): the setlist, or every song, to open, make or add from.
+    var all by remember { mutableStateOf(setlistId == null) }
+    var browsing by remember { mutableStateOf(false) }
+    val inSetlist = songs.mapNotNull { it.first?.id }
+    fun addToSetlist(id: Digest) {
+        setlistId?.let { lib.saveSetlist(it, name, inSetlist + id); onChanged() }
+    }
     Column(Modifier.fillMaxSize().background(Panel, RoundedCornerShape(10.dp)).padding(10.dp)) {
-        Text(stringResource(R.string.setlist_named, name), fontWeight = FontWeight.SemiBold)
+        // Which setlist is edited here -- any, not only the one on stage --, a new one, or a copy.
+        var menu by remember { mutableStateOf(false) }
+        val newSetlistName = stringResource(R.string.new_setlist_name)
+        val copyName = stringResource(R.string.copy_of, name)
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+            Box {
+                androidx.compose.material3.FilterChip(selected = !all && setlistId != null,
+                    onClick = { if (all && setlistId != null) all = false else menu = true },
+                    label = { Text((if (setlistId != null) stringResource(R.string.setlist_named, name) else stringResource(R.string.setlists)) + " ▾",
+                        maxLines = 1, overflow = TextOverflow.Ellipsis) })
+                androidx.compose.material3.DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+                    for (e in remember(revision, menu) { lib.setlists() }) {
+                        androidx.compose.material3.DropdownMenuItem(onClick = { menu = false; all = false; onPickSetlist(e.id) },
+                            text = { Text(e.version.name + if (e.id == stageSetlist) stringResource(R.string.on_stage) else "",
+                                fontWeight = if (e.id == setlistId) FontWeight.Bold else FontWeight.Normal) })
+                    }
+                    androidx.compose.material3.HorizontalDivider()
+                    androidx.compose.material3.DropdownMenuItem(onClick = {
+                        menu = false; all = false; onPickSetlist(lib.saveSetlist(null, newSetlistName, emptyList()))
+                    }, text = { Text(stringResource(R.string.new_setlist)) })
+                    if (setlistId != null) {
+                        androidx.compose.material3.DropdownMenuItem(onClick = {
+                            menu = false; all = false; onPickSetlist(lib.saveSetlist(null, copyName, inSetlist))
+                        }, text = { Text(stringResource(R.string.duplicate_setlist, name)) })
+                        if (setlistId != stageSetlist) androidx.compose.material3.DropdownMenuItem(
+                            onClick = { menu = false; onPutOnStage(setlistId) }, text = { Text(stringResource(R.string.put_on_stage)) })
+                    }
+                }
+            }
+            androidx.compose.material3.FilterChip(selected = all, onClick = { all = true },
+                label = { Text(stringResource(R.string.all_songs)) })
+        }
         Spacer(Modifier.height(6.dp))
+        if (all) {
+            SongList(lib, revision, selected, inSetlist, Modifier.weight(1f), onOpen = onSelect,
+                onAdd = if (setlistId != null) ::addToSetlist else null)
+            Button(onClick = { onNew(false) }, modifier = Modifier.fillMaxWidth()) { Text(stringResource(R.string.new_song_alone)) }
+            return@Column
+        }
+        // A long press and a drag moves a song to another place; ▲ ▼ move it by one.
+        var dragged by remember { mutableStateOf(-1) }
+        var dragBy by remember { mutableStateOf(0f) }
+        var rowPx by remember { mutableStateOf(1f) }
         LazyColumn(Modifier.weight(1f)) {
             itemsIndexed(songs) { i, (entry, _) ->
                 val id = entry?.id
                 Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()
-                    .background(if (id != null && id == selected) Accent.copy(alpha = 0.2f) else Color.Transparent)
+                    .onGloballyPositioned { rowPx = it.size.height.toFloat().coerceAtLeast(1f) }
+                    .graphicsLayer { if (dragged == i) { translationY = dragBy; shadowElevation = 8f } }
+                    .zIndex(if (dragged == i) 1f else 0f)
+                    .background(if (dragged == i) Panel else if (id != null && id == selected) Accent.copy(alpha = 0.2f) else Color.Transparent)
+                    .pointerInput(setlistId, songs) {
+                        if (setlistId == null) return@pointerInput
+                        detectDragGesturesAfterLongPress(
+                            onDragStart = { dragged = i; dragBy = 0f },
+                            onDrag = { c, d -> c.consume(); dragBy += d.y },
+                            onDragEnd = {
+                                val to = (i + Math.round(dragBy / rowPx)).coerceIn(0, songs.size - 1)
+                                dragged = -1; dragBy = 0f
+                                if (to != i) { moveTo(lib, setlistId, songs.mapNotNull { it.first?.id }, i, to); onChanged() }
+                            },
+                            onDragCancel = { dragged = -1; dragBy = 0f })
+                    }
                     .clickable(enabled = id != null) { id?.let(onSelect) }.padding(vertical = 6.dp)) {
                     Text("${i + 1}. ${entry?.version?.name ?: stringResource(R.string.removed_song)}", modifier = Modifier.weight(1f))
                     if (setlistId != null) {
@@ -745,8 +860,56 @@ private fun SetlistPanel(lib: Library, setlistId: Digest?, revision: Int, select
                 }
             }
         }
-        Button(onClick = onNew, modifier = Modifier.fillMaxWidth()) { Text(stringResource(R.string.add_song)) }
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Button(onClick = { onNew(true) }, modifier = Modifier.weight(1f)) { Text(stringResource(R.string.add_song)) }
+            OutlinedButton(onClick = { browsing = true }) { Text(stringResource(R.string.add_songs)) }
+        }
     }
+    // The songs to add to the setlist from: every song, searched, a tap adds one.
+    if (browsing) androidx.compose.material3.AlertDialog(onDismissRequest = { browsing = false },
+        confirmButton = { TextButton(onClick = { browsing = false }) { Text(stringResource(R.string.done)) } },
+        title = { Text(stringResource(R.string.add_songs_to, name)) },
+        text = { SongList(lib, revision, null, inSetlist, Modifier.height(420.dp), onOpen = null, onAdd = ::addToSetlist) })
+}
+
+/**
+ * Every song in the library, by name, with a search (Michiel, 2026-10-14:
+ * songs exist as such, and making a setlist means browsing them). A tap opens
+ * one ([onOpen]) or, without that, adds it ([onAdd]); "+" adds one to the
+ * setlist; those already in it are marked.
+ */
+@Composable
+private fun SongList(lib: Library, revision: Int, selected: Digest?, inSetlist: List<Digest>, modifier: Modifier,
+                     onOpen: ((Digest) -> Unit)?, onAdd: ((Digest) -> Unit)?) {
+    var filter by remember { mutableStateOf("") }
+    val all = remember(revision) { lib.songs().sortedBy { it.entry.version.name.lowercase() } }
+    Column(modifier) {
+        OutlinedTextField(value = filter, onValueChange = { filter = it }, singleLine = true,
+            label = { Text(stringResource(R.string.search)) }, modifier = Modifier.fillMaxWidth())
+        val shown = all.filter { filter.isBlank() || it.entry.version.name.contains(filter.trim(), true) }
+        LazyColumn(Modifier.weight(1f)) {
+            itemsIndexed(shown) { _, s ->
+                val id = s.entry.id
+                val there = id in inSetlist
+                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()
+                    .background(if (id == selected) Accent.copy(alpha = 0.2f) else Color.Transparent)
+                    .clickable { if (onOpen != null) onOpen(id) else if (!there) onAdd?.invoke(id) }
+                    .padding(vertical = 6.dp)) {
+                    Text(s.entry.version.name, modifier = Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    if (there) Text(stringResource(R.string.in_setlist), color = Dim, fontSize = 12.sp)
+                    else if (onAdd != null) TextButton(onClick = { onAdd(id) }) { Text("+") }
+                }
+            }
+        }
+    }
+}
+
+/** Song [from] of the setlist to place [to], the others closing up. */
+private fun moveTo(lib: Library, setlistId: Digest, ids: List<Digest>, from: Int, to: Int) {
+    if (from !in ids.indices || to !in ids.indices) return
+    val m = ids.toMutableList()
+    m.add(to, m.removeAt(from))
+    lib.saveSetlist(setlistId, lib.store.entry(setlistId)?.version?.name ?: "Setlist", m)
 }
 
 private fun move(lib: Library, setlistId: Digest, ids: List<Digest>, i: Int, by: Int) {
@@ -762,7 +925,7 @@ private fun move(lib: Library, setlistId: Digest, ids: List<Digest>, i: Int, by:
 private fun SongEditor(song: RackSong, name: String, host: EngineHost, player: SongPlayer, lib: Library,
                        focus: SongPlayer.EditRequest?, unsaved: Boolean, hearing: Int?, onHear: (Int) -> Unit,
                        onName: (String) -> Unit,
-                       onChange: (RackSong) -> Unit, onSave: () -> Unit) {
+                       onChange: (RackSong) -> Unit, onSave: () -> Unit, onSaveCopy: () -> Unit) {
     // Instance ids: which sound's preset list, patch or effect is open.
     var picker by remember { mutableStateOf<String?>(null) }
     // The sound being edited, and the live set it is edited for (null: the whole song).
@@ -790,6 +953,8 @@ private fun SongEditor(song: RackSong, name: String, host: EngineHost, player: S
                 Text(song.masterFx?.let { stringResource(R.string.master_fx_is, stringResource(fxLabel(it.type))) }
                     ?: stringResource(R.string.master_fx_button), color = if (song.masterFx == null) Color.White else Accent)
             }
+            // The song as it is now, as a new song of its own (in no setlist), which is then open.
+            OutlinedButton(onClick = onSaveCopy) { Text(stringResource(R.string.save_as_copy)) }
             // A device's song sounds as its own file (a CP-88 page as .X9P), for its USB stick.
             for (d in player.devices.withSounds()) if (song.liveSets.any { it.devices[d.name]?.mode == "own" }) {
                 DeviceAreaFileButton(song, name, d, player)
@@ -968,6 +1133,9 @@ private fun LiveSetCard(song: RackSong, i: Int, ls: RackLiveSet, player: SongPla
             TextButton(enabled = i > 0, onClick = {
                 onChange(song.copy(liveSets = song.liveSets.toMutableList().also { it[i] = it[i - 1].also { _ -> it[i - 1] = ls } }))
             }) { Text("▲") }
+            TextButton(enabled = i + 1 < song.liveSets.size, onClick = {
+                onChange(song.copy(liveSets = song.liveSets.toMutableList().also { it[i] = it[i + 1].also { _ -> it[i + 1] = ls } }))
+            }) { Text("▼") }
             TextButton(enabled = song.liveSets.size > 1, onClick = {
                 onChange(song.copy(liveSets = song.liveSets.toMutableList().also { it.removeAt(i) }))
             }) { Text("✕", color = Danger) }
@@ -1037,9 +1205,12 @@ private fun TempoBox(player: SongPlayer, s: Float = 1f) {
     val bpm = player.bpm
     val beatNs = bpm?.let { (60e9 / it).toLong() }
     val phase = if (beatNs != null && beatNs > 0) ((now - player.beatOrigin).mod(beatNs)).toDouble() / beatNs else 1.0
-    val lit = phase < 0.15
+    // The beat blinks only while the metronome runs (S12.6).
+    val lit = player.clickRunning && now >= player.beatOrigin && phase < 0.15
     val count = player.clickBeat(now)
-    Row(verticalAlignment = Alignment.CenterVertically) {
+    // One framed group, so its start button is never taken for the next song's ▶ beside it.
+    Row(verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier.border(1.dp, Color(0xFF2A2E36), RoundedCornerShape((12f * s).dp)).padding((6f * s).dp)) {
         if (count > 0) {
             Box(Modifier.size((44f * s).dp).background(if (lit) Accent else Panel, RoundedCornerShape((22f * s).dp)),
                 contentAlignment = Alignment.Center) {
@@ -1059,12 +1230,13 @@ private fun TempoBox(player: SongPlayer, s: Float = 1f) {
         Spacer(Modifier.width((8f * s).dp))
         BigButton(stringResource(R.string.tap), enabled = true, width = 88, scale = s) { player.tap() }
         Spacer(Modifier.width((8f * s).dp))
-        BigButton(stringResource(when {
-            player.clickRunning -> R.string.click_stop
-            player.clickMode == SongPlayer.ClickMode.CONTINUOUS -> R.string.click_on
-            else -> R.string.count_in
-        }), enabled = bpm != null || player.clickRunning, width = 104, selected = player.clickRunning,
+        // Play / Stop, and Count-in (S12.6); what they sound and show is the setup's.
+        BigButton(stringResource(if (player.clickRunning) R.string.click_stop else R.string.metronome_start),
+            enabled = bpm != null || player.clickRunning, width = 104, selected = player.clickRunning,
             fontSize = 22, scale = s) { player.toggleClick() }
+        Spacer(Modifier.width((8f * s).dp))
+        BigButton(stringResource(R.string.count_in), enabled = bpm != null, width = 104, selected = player.countingIn,
+            fontSize = 22, scale = s) { player.countIn() }
     }
 }
 

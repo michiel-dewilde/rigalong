@@ -43,6 +43,15 @@ class TouchKeyboardView(
 
     /** Which note each active finger is currently holding. */
     private val heldByPointer = HashMap<Int, Int>()
+    /**
+     * The fingers that went down on the keys. Once one finger is down here,
+     * Android hands this view every further finger too -- one on a drawbar
+     * above the keys included --, and the key under a finger is found by its
+     * x alone: such a finger played the key below it without touching it.
+     */
+    private val ownPointers = HashSet<Int>()
+
+    private fun inside(x: Float, y: Float) = x >= 0f && y >= 0f && x < width && y < height
 
     private val whitePaint = Paint().apply { color = Color.parseColor("#E8ECF2") }
     private val whiteDown = Paint().apply { color = Color.parseColor("#7FD1B9") }
@@ -171,18 +180,28 @@ class TouchKeyboardView(
         when (event.actionMasked) {
             MotionEvent.ACTION_DOWN, MotionEvent.ACTION_POINTER_DOWN -> {
                 val i = event.actionIndex
-                press(event.getPointerId(i), event.getX(i), event.getY(i))
+                val id = event.getPointerId(i)
+                if (inside(event.getX(i), event.getY(i))) {
+                    ownPointers += id
+                    press(id, event.getX(i), event.getY(i))
+                }
             }
             MotionEvent.ACTION_MOVE -> {
-                // Every pointer, every move: this is what makes a slide sound.
+                // Every finger of ours, every move: this is what makes a slide
+                // sound. One slid off the keys lets its key go.
                 for (i in 0 until event.pointerCount) {
-                    press(event.getPointerId(i), event.getX(i), event.getY(i))
+                    val id = event.getPointerId(i)
+                    if (id !in ownPointers) continue
+                    if (inside(event.getX(i), event.getY(i))) press(id, event.getX(i), event.getY(i)) else release(id)
                 }
             }
             MotionEvent.ACTION_UP, MotionEvent.ACTION_POINTER_UP -> {
-                release(event.getPointerId(event.actionIndex))
+                val id = event.getPointerId(event.actionIndex)
+                ownPointers -= id
+                release(id)
             }
             MotionEvent.ACTION_CANCEL -> {
+                ownPointers.clear()
                 for (id in heldByPointer.keys.toList()) release(id)
             }
             else -> return false

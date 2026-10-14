@@ -388,35 +388,51 @@ class SongPlayer(private val lib: Library, private val host: EngineHost, private
     // ------------------------------------------------------------------ click
 
     /**
-     * What the metronome does when started (S12.2, S12.6): click on until
-     * stopped, count in and stop, or count in and go on as the visual beat
-     * alone.
+     * The metronome (S12.6). Running, it blinks on every beat; the **click** is
+     * heard and the **bar count** (the beat's number, beat one accented) shown
+     * always, during a count-in only, or never; after a count-in it keeps
+     * going or stops. These are setup settings (the environment's); the stage
+     * has Play, Count-in and Stop.
      */
-    enum class ClickMode { CONTINUOUS, COUNT_IN, COUNT_IN_VISUAL }
+    enum class Presence { ON, COUNT_IN, OFF }
 
-    var clickMode by mutableStateOf(prefs.getString("click.mode", null)?.let { runCatching { ClickMode.valueOf(it) }.getOrNull() }
-        ?: if (prefs.getBoolean("click.continuous", false)) ClickMode.CONTINUOUS else ClickMode.COUNT_IN)
+    var clickSound by mutableStateOf(presence("click.sound") ?: legacyClick().first)
+    var barCount by mutableStateOf(presence("click.barCount") ?: Presence.ON)
+    var keepGoing by mutableStateOf(if (prefs.contains("click.keepGoing")) prefs.getBoolean("click.keepGoing", false)
+        else legacyClick().second)
     /** The count-in's length in bars, where the song names none. */
     var countInBars by mutableIntStateOf(prefs.getInt("click.countInBars", 1))
-    /** The click is heard in the main out (R12.1: on the CP-88 alone, by the audience too); else visual only. */
-    var clickAudio by mutableStateOf(prefs.getBoolean("click.audio", true))
     var clickLevel by mutableStateOf(prefs.getFloat("click.level", 0.5f))
     /** MIDI clock out to the keyboard (I12.2), for its tempo-synced effects. */
     var midiClock by mutableStateOf(prefs.getBoolean("click.midiClock", false))
+    /** The metronome runs: the beat blinks. */
     var clickRunning by mutableStateOf(false); private set
-    /** Past the count-in, the beat goes on visually only (COUNT_IN_VISUAL). */
-    var clickVisualOnly by mutableStateOf(false); private set
+    /** A count-in is under way (until [countInEnds]). */
+    var countingIn by mutableStateOf(false); private set
+    private var countInEnds = 0L
+
+    private fun presence(key: String) = prefs.getString(key, null)?.let { runCatching { Presence.valueOf(it) }.getOrNull() }
+
+    /** The click and keep-going as the settings before S12.6 had them (click.mode, click.continuous, click.audio). */
+    private fun legacyClick(): Pair<Presence, Boolean> {
+        val mode = prefs.getString("click.mode", null)
+            ?: if (prefs.getBoolean("click.continuous", false)) "CONTINUOUS" else "COUNT_IN"
+        val sound = when {
+            !prefs.getBoolean("click.audio", true) -> Presence.OFF
+            mode == "CONTINUOUS" -> Presence.ON
+            else -> Presence.COUNT_IN
+        }
+        return sound to (mode != "COUNT_IN")
+    }
 
     fun saveClickSettings() {
-        prefs.edit().putString("click.mode", clickMode.name).putInt("click.countInBars", countInBars)
-            .putBoolean("click.audio", clickAudio)
+        prefs.edit().putString("click.sound", clickSound.name).putString("click.barCount", barCount.name)
+            .putBoolean("click.keepGoing", keepGoing).putInt("click.countInBars", countInBars)
             .putFloat("click.level", clickLevel).putBoolean("click.midiClock", midiClock).apply()
         applyMidiClock()
     }
 
-    fun toggleClick() = if (clickRunning) stopClick() else startClick()
-
-    /** The count-in's beats: the song's bars (or the stage's), of the metre in force. */
+    /** The count-in's beats: the song's bars (or the setup's), of the metre in force. */
     private fun countInBeats(): Int {
         val t = tempo
         return t.barBeats() * (t?.countInBars ?: countInBars).coerceAtLeast(1)
@@ -424,44 +440,56 @@ class SongPlayer(private val lib: Library, private val host: EngineHost, private
 
     private fun Tempo?.barBeats() = (this?.beatsPerBar ?: 4).coerceAtLeast(1)
 
-    /** The metronome, as [clickMode] says; needs a tempo. */
-    fun startClick() {
+    /** Play: the metronome from beat one, no count-in. Needs a tempo. */
+    fun playClick() = startClick(countIn = false)
+
+    /** Count-in: the song's bars counted in, then on or stopped as the setup says. Needs a tempo. */
+    fun countIn() = startClick(countIn = true)
+
+    /** Play or stop, for a footswitch. */
+    fun toggleClick() = if (clickRunning) stopClick() else playClick()
+
+    private fun startClick(countIn: Boolean) {
         val b = bpm ?: return
-        val beats = if (clickMode == ClickMode.CONTINUOUS) 0 else countInBeats()
-        val delay = NativeBridge.nativeClickStart(b, tempo.barBeats(), beats, clickLevel, clickAudio, midiClock)
+        val n = if (countIn) countInBeats() else 0
+        fun beats(p: Presence) = when (p) { Presence.ON -> -1; Presence.COUNT_IN -> n; Presence.OFF -> 0 }
+        val limit = if (countIn && !keepGoing) n else 0
+        val delay = NativeBridge.nativeClickStart(b, tempo.barBeats(), limit, beats(clickSound), beats(barCount),
+            clickLevel, midiClock)
         beatOrigin = System.nanoTime() + delay
+        countInEnds = beatOrigin + (n * 60e9 / b).toLong()
         clickRunning = true
-        clickVisualOnly = false
-        Log.i(TAG, "click: ${clickMode.name.lowercase()}, ${if (beats > 0) "$beats beats" else "continuous"} at $b BPM " +
-            "(${tempo?.metre}), sound ${if (clickAudio) "on" else "off"}, heard in ${delay / 1_000_000} ms")
+        countingIn = countIn
+        Log.i(TAG, "click: ${if (countIn) "count-in, $n beats" else "play"} at $b BPM (${tempo?.metre}), " +
+            "click ${clickSound.name.lowercase()}, bar count ${barCount.name.lowercase()}, " +
+            "then ${if (keepGoing || !countIn) "on" else "stop"}; heard in ${delay / 1_000_000} ms")
     }
 
     fun stopClick() {
         NativeBridge.nativeClickStop(midiClock)
         clickRunning = false
-        clickVisualOnly = false
+        countingIn = false
         Log.i(TAG, "click stopped; MIDI clock ${NativeBridge.nativeMidiClockTicks()} ticks sent")
     }
 
-    /** The beat being heard (or seen), 1-based within the bar, while the click runs; 0 otherwise. */
+    /** The beat's number in the bar to show now, 1-based, or 0: not running, or no bar count now. */
     fun clickBeat(now: Long): Int {
         val b = bpm ?: return 0
         if (!clickRunning || now < beatOrigin) return 0
-        return ((now - beatOrigin) / (60e9 / b)).toLong().mod(tempo.barBeats()) + 1
+        val counting = countingIn && now < countInEnds
+        val shown = barCount == Presence.ON || (barCount == Presence.COUNT_IN && counting)
+        return if (shown) ((now - beatOrigin) / (60e9 / b)).toLong().mod(tempo.barBeats()) + 1 else 0
     }
 
-    /** A count-in ends on its own: the beat stops with the last click heard, or goes on visually. */
+    /** The count-in's end, and a count-in that stops when it ends: the beat stops with the last click heard. */
     private fun followClick() {
-        if (!clickRunning || clickVisualOnly || NativeBridge.nativeClickRunning()) return
-        when (clickMode) {
-            ClickMode.CONTINUOUS -> clickRunning = false
-            ClickMode.COUNT_IN_VISUAL -> clickVisualOnly = true
-            ClickMode.COUNT_IN -> {
-                val b = bpm
-                val end = beatOrigin + if (b != null) (countInBeats() * 60e9 / b).toLong() else 0L
-                if (System.nanoTime() >= end) clickRunning = false
-            }
+        if (!clickRunning) return
+        val now = System.nanoTime()
+        if (countingIn && now >= countInEnds) {
+            countingIn = false
+            if (!keepGoing) { clickRunning = false; return }
         }
+        if (!countingIn && !NativeBridge.nativeClickRunning()) clickRunning = false
     }
 
     /** The tempo goes to the engines (I12.1) and, when it is on, out as MIDI clock -- both in quarter notes. */
@@ -811,7 +839,7 @@ class SongPlayer(private val lib: Library, private val host: EngineHost, private
 
     /**
      * Controller -> action (I10.4, I12.3): "next" and "previous" step through
-     * live sets (or turn pages), "tap" taps the tempo, "click" starts and stops
+     * live sets (or turn pages), "tap" taps the tempo, "countIn" counts in, "click" starts and stops
      * the click. -1 = none.
      */
     val controllers = androidx.compose.runtime.mutableStateMapOf<String, Int>().apply {
@@ -876,6 +904,7 @@ class SongPlayer(private val lib: Library, private val host: EngineHost, private
             "previous" -> backKey()
             "tap" -> tap()
             "click" -> toggleClick()
+            "countIn" -> countIn()
             else -> return
         }
         lastSelection = "CC $cc"
@@ -1264,7 +1293,7 @@ class SongPlayer(private val lib: Library, private val host: EngineHost, private
     companion object {
         private const val TAG = "rigalong-stage"
         /** What a switching controller can be taught (I10.4, I12.3). */
-        val CONTROLLER_ACTIONS = listOf("next", "previous", "tap", "click")
+        val CONTROLLER_ACTIONS = listOf("next", "previous", "tap", "click", "countIn")
         /** AudioEngine::kMaxInstances. */
         const val MAX_INSTANCES = 24
         /** ReverbNode's own defaults (graph/Nodes.h), for a song that sets none. */

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <string>
 #include <vector>
 
 #include <sys/types.h>
@@ -61,6 +62,12 @@ constexpr int kRenderNice = -16;
  * `what` names the thread in the log.
  */
 void raiseRenderPriority(const char* what, int niceValue = kTransportNice);
+
+/**
+ * Thread [tid] onto the CPUs [cpus] ("4-7", "3,5,7", "0-2,7"; empty: all).
+ * Logs what was asked and granted under [what]; false if refused.
+ */
+bool setThreadCpus(const char* what, int tid, const std::string& cpus);
 
 /**
  * Android's Performance Hint session (ADPF), the supported way to tell the

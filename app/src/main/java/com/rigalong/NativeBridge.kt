@@ -64,6 +64,10 @@ object NativeBridge {
     /** The rate the chosen device declares, from AudioDeviceInfo. 0 = let AAudio pick. */
     /** Render-ring depth in ms; 0 restores the burst-derived default. */
     external fun nativeSetFillMs(ms: Int)
+    /** The render thread: nice (0 leaves it), CPUs ("" leaves, "all"), on a borrowed SCHED_FIFO thread (1/0, -1 leaves; next stream start). */
+    external fun nativeSetRenderScheduling(nice: Int, cpus: String, fifo: Int)
+    /** The USB reap thread's CPUs ("all": all). */
+    external fun nativeSetReapCpus(cpus: String)
 
     external fun nativeSetPreferredRate(rate: Int)
 
@@ -260,7 +264,14 @@ object NativeBridge {
     external fun nativeUsbMidiSend(data: ByteArray): Int
 
     /** The click (I12.2): beats <= 0 runs until stopped. Returns ns until the first click is heard. */
-    external fun nativeClickStart(bpm: Double, beatsPerBar: Int, beats: Int, gain: Float, audio: Boolean, midi: Boolean): Long
+    /**
+     * The click from its next beat: [beats] in all (0: until stopped), the
+     * first [soundBeats] heard and the bar's first beat accented within the
+     * first [accentBeats] (-1: all of them, 0: none). Returns the ns until
+     * its first beat is heard.
+     */
+    external fun nativeClickStart(bpm: Double, beatsPerBar: Int, beats: Int, soundBeats: Int, accentBeats: Int,
+                                  gain: Float, midi: Boolean): Long
     external fun nativeClickStop(midi: Boolean)
     external fun nativeClickRunning(): Boolean
     external fun nativeClickTempo(bpm: Double)

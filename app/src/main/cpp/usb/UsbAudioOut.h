@@ -57,6 +57,7 @@
 
 #include <atomic>
 #include <cstdint>
+#include <mutex>
 #include <string>
 #include <thread>
 #include <vector>
@@ -139,6 +140,9 @@ public:
     std::string fatal() const;
 
     int depth() const { return mDepth; }
+
+    // The reap thread's CPUs ("": all), at once if it runs, else as it starts.
+    void setReapCpus(const std::string& cpus);
     double periodUs() const { return mPeriodNs / 1000.0; }
     double nominalFrames() const { return mNominal; }   // frames per packet, average
     int opPoint() const { return mPlan.opPoint; }       // frames below the start fill
@@ -282,6 +286,9 @@ private:
     void* mHost = nullptr;              // AAudioStream* whose callback runs the loop
     std::atomic<int> mHostState{0};     // 0 none yet, 1 hosted, 2 own thread
     std::atomic<bool> mRunning{false};
+    std::atomic<int> mReapTid{0};
+    std::string mReapCpus;
+    std::mutex mReapCpusLock;
     std::atomic<bool> mStopping{false};
     // TEST: stall the loop once, for this many ms, to reproduce a starved IN
     // queue on demand (PROVISIONAL.md).

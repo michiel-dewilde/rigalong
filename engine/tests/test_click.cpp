@@ -145,3 +145,32 @@ TEST(click_follows_its_gain) {
     const float p = peakFrom(x, 0, 2000);
     CHECK(p > 0.2f && p <= 0.25f);
 }
+
+TEST(click_count_in_heard_then_silent_goes_on_counting) {
+    Click c;
+    c.start(120.0, 4, 0, 4, -1);  // continuous, the first four beats heard
+    std::vector<float> x = run(c, 22050 * 8 + 100);
+    CHECK_EQ(onsets(x).size(), static_cast<size_t>(4));
+    CHECK(c.running());
+    CHECK_EQ(c.beatsRendered(), static_cast<int64_t>(9));
+}
+
+TEST(click_bar_counted_in_then_every_beat_alike) {
+    Click c;
+    c.start(120.0, 4, 0, -1, 4);  // the bar's first beat accented in the first four beats only
+    std::vector<float> x = run(c, 22050 * 6);
+    const float one = peakFrom(x, 0, 1000);
+    const float two = peakFrom(x, 22050, 1000);
+    const float five = peakFrom(x, 22050 * 4, 1000);  // beat one of bar two
+    CHECK(one > two * 1.4f);
+    CHECK_NEAR(five, two, 1e-3f);
+}
+
+TEST(click_silent_run_still_counts) {
+    Click c;
+    c.start(120.0, 4, 0, 0, 0);
+    std::vector<float> x = run(c, 22050 * 3);
+    for (float v : x) CHECK_EQ(v, 0.0f);
+    CHECK(c.running());
+    CHECK(c.beatsRendered() >= 3);
+}

@@ -297,10 +297,16 @@ data class Environment(
     val clickPort: String? = null,
     /** Count-in only, or continuous (S12.2); superseded by [clickMode] where that is set. */
     val clickContinuous: Boolean = false,
-    /** What the metronome does when started (S12.6): "CONTINUOUS", "COUNT_IN", "COUNT_IN_VISUAL"; null: by [clickContinuous]. */
+    /** Read only, for environments saved on 2026-10-12: "CONTINUOUS", "COUNT_IN", "COUNT_IN_VISUAL". */
     val clickMode: String? = null,
     /** The count-in's bars where a song names none; null: 1. */
     val countInBars: Int? = null,
+    /** The metronome's click (S12.6): "ON", "COUNT_IN" (heard during a count-in only), "OFF"; null: by the older fields. */
+    val clickSound: String? = null,
+    /** Its bar count, the beat's number and beat one accented: "ON", "COUNT_IN", "OFF"; null: on. */
+    val barCount: String? = null,
+    /** After a count-in the metronome keeps going (true) or stops; null: by the older fields. */
+    val keepGoing: Boolean? = null,
     /** The click's level, 0-1. */
     val clickLevel: Double = 0.5,
     /** The MIDI port that MIDI clock goes out to, or null (I12.2). */

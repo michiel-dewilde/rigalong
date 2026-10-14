@@ -262,6 +262,7 @@ class MainActivity : androidx.activity.ComponentActivity() {
         filter.addAction("com.rigalong.PANIC")
         filter.addAction("com.rigalong.ROUTE")
         filter.addAction("com.rigalong.SYSEX")
+        filter.addAction("com.rigalong.RENDERPRIO")
         filter.addAction("com.rigalong.USBSTALL")
         filter.addAction("com.rigalong.STAGE")
         filter.addAction("com.rigalong.INSTANCE")
@@ -2198,6 +2199,21 @@ class MainActivity : androidx.activity.ComponentActivity() {
                 // slack at burst 882, 4 ms at burst 96 -- and it shows up as a
                 // factor of 45 in ring underruns under intensive sfizz playing. Worth
                 // sweeping rather than inheriting.
+                // The render thread's scheduling, to experiment with:
+                //   adb shell am broadcast -a com.rigalong.RENDERPRIO --ei nice -19 --es cpus 3-7 --ei fifo 1
+                // nice and cpus at once; fifo (the loop on a borrowed SCHED_FIFO AAudio thread) restarts the stream.
+                "com.rigalong.RENDERPRIO" -> {
+                    val fifo = intent.getIntExtra("fifo", -1)
+                    NativeBridge.nativeSetRenderScheduling(intent.getIntExtra("nice", 0),
+                        intent.getStringExtra("cpus").orEmpty(), fifo)
+                    android.util.Log.i("rigalong-ui", "render scheduling: nice ${intent.getIntExtra("nice", 0)} " +
+                        "cpus '${intent.getStringExtra("cpus").orEmpty()}' fifo $fifo")
+                    intent.getStringExtra("reapcpus")?.let {
+                        NativeBridge.nativeSetReapCpus(it)
+                        android.util.Log.i("rigalong-ui", "usb reap thread cpus: '$it'")
+                    }
+                    if (fifo >= 0) applyRouting("render thread")
+                }
                 "com.rigalong.FILL" -> {
                     val ms = intent.getIntExtra("ms", 0)
                     NativeBridge.nativeSetFillMs(ms)

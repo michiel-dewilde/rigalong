@@ -15,7 +15,10 @@
 //
 // A count-in plays a fixed number of beats and stops on its own; continuous
 // runs until stop(). Either way the last click rings out -- stop() never cuts a
-// burst in half, which would be a click of its own.
+// burst in half, which would be a click of its own. A run may sound only its
+// first beats (a count-in heard, then the beat going on silently) and accent
+// the bar's first beat only in its first beats (the bar counted in, then every
+// beat alike) -- placed on the beat, as the clicks are (S12.6).
 //
 // Control (start, stop, tempo, level) from any thread, through atomics; render()
 // on the render thread only. Allocation-free and header-only.
@@ -31,10 +34,15 @@ public:
     static constexpr float kBeatLevel = 0.6f;     // relative to the accent
 
     // `beats` <= 0 runs until stop(); otherwise that many beats, then stops.
-    void start(double bpm, int beatsPerBar, int beats) {
+    // `soundBeats`: how many of the first beats are heard (< 0: all, 0: none);
+    // `accentBeats`: within how many of the first beats the bar's first beat is
+    // accented (< 0: all, 0: none -- every beat alike).
+    void start(double bpm, int beatsPerBar, int beats, int soundBeats = -1, int accentBeats = -1) {
         mBpm.store(bpm, std::memory_order_relaxed);
         mBeatsPerBar.store(beatsPerBar < 1 ? 1 : beatsPerBar, std::memory_order_relaxed);
         mBeats.store(beats, std::memory_order_relaxed);
+        mSoundBeats.store(soundBeats, std::memory_order_relaxed);
+        mAccentBeats.store(accentBeats, std::memory_order_relaxed);
         mStartGen.fetch_add(1, std::memory_order_release);
         // Visible at once, so a caller polling running() right after start()
         // does not see the previous run's false.
@@ -68,6 +76,8 @@ public:
             mNextBeat = 0;
             mLimit = mBeats.load(std::memory_order_relaxed);
             mBar = mBeatsPerBar.load(std::memory_order_relaxed);
+            mSound = mSoundBeats.load(std::memory_order_relaxed);
+            mAccentLimit = mAccentBeats.load(std::memory_order_relaxed);
             mBeatsDone.store(0, std::memory_order_relaxed);
         } else if (stopGen != mSeenStop) {
             mSeenStop = stopGen;
@@ -84,12 +94,15 @@ public:
 
         for (int i = 0; i < frames; ++i) {
             if (mActive && mPhase >= static_cast<double>(mNextBeat)) {
-                const bool accent = mNextBeat % mBar == 0;
-                mStep = twoPi * (accent ? kAccentHz : kBeatHz) / sampleRate;
-                mOsc = 0.0;
-                mEnv = accent ? 1.0 : kBeatLevel;
-                mAge = 0;
-                mVoiceLeft = static_cast<int>(kLengthSeconds * sampleRate);
+                const bool heard = mSound < 0 || mNextBeat < mSound;
+                const bool accent = (mAccentLimit < 0 || mNextBeat < mAccentLimit) && mNextBeat % mBar == 0;
+                if (heard) {
+                    mStep = twoPi * (accent ? kAccentHz : kBeatHz) / sampleRate;
+                    mOsc = 0.0;
+                    mEnv = accent ? 1.0 : kBeatLevel;
+                    mAge = 0;
+                    mVoiceLeft = static_cast<int>(kLengthSeconds * sampleRate);
+                }
                 ++mNextBeat;
                 mBeatsDone.store(mNextBeat, std::memory_order_relaxed);
                 if (mLimit > 0 && mNextBeat >= mLimit) {
@@ -119,6 +132,8 @@ private:
     std::atomic<double> mBpm{120.0};
     std::atomic<int> mBeatsPerBar{4};
     std::atomic<int> mBeats{0};
+    std::atomic<int> mSoundBeats{-1};
+    std::atomic<int> mAccentBeats{-1};
     std::atomic<float> mGain{0.5f};
     std::atomic<bool> mRunning{false};
     std::atomic<int64_t> mBeatsDone{0};
@@ -131,6 +146,8 @@ private:
     int64_t mNextBeat = 0;
     int mLimit = 0;
     int mBar = 4;
+    int mSound = -1;
+    int mAccentLimit = -1;
     double mOsc = 0.0;
     double mStep = 0.0;
     double mEnv = 0.0;

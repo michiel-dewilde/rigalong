@@ -106,6 +106,13 @@ UsbAudioOut::Plan UsbAudioOut::derive(const Profile& d, double g) {
 
 // --------------------------------------------------------------- lifecycle ---
 
+void UsbAudioOut::setReapCpus(const std::string& cpus) {
+    std::lock_guard<std::mutex> lock(mReapCpusLock);
+    mReapCpus = cpus;
+    const int tid = mReapTid.load(std::memory_order_relaxed);
+    if (tid != 0) rigalong::setThreadCpus("usb reap thread", tid, cpus);
+}
+
 bool UsbAudioOut::start(const Config& config, PullFn pull, void* ctx, std::string* error) {
     stop();
     mCfg = config;
@@ -692,6 +699,11 @@ void UsbAudioOut::reapLoop() {
              sp.sched_priority);
     } else {
         rigalong::raiseRenderPriority("usb reap thread", rigalong::kTransportNice);
+    }
+    mReapTid.store(static_cast<int>(gettid()), std::memory_order_relaxed);
+    {
+        std::lock_guard<std::mutex> lock(mReapCpusLock);
+        if (!mReapCpus.empty()) rigalong::setThreadCpus("usb reap thread", static_cast<int>(gettid()), mReapCpus);
     }
     // The deadline is one packet.
     mHint.start({gettid()}, mPeriodNs);

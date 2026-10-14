@@ -248,6 +248,14 @@ public:
     /** Ring depth in ms; 0 restores the burst-derived default. See mFillOverrideMs. */
     void setFillMs(int ms);
 
+    // The render thread's scheduling, to experiment with (RENDERPRIO): its nice
+    // value and CPUs apply at once to the running thread; `fifo` -- the loop on
+    // a borrowed AAudio callback thread, which is SCHED_FIFO -- from the next
+    // stream start. nice 0 / cpus "" leave that part as it is.
+    void setRenderScheduling(int nice, const std::string& cpus, int fifo);
+    // The USB reap thread's CPUs ("all" or "": all).
+    void setReapCpus(const std::string& cpus);
+
     // Click probe: emit a click, time its return. Measures the output stage plus
     // the room and the microphone.
     void startLatencyProbe();
@@ -846,6 +854,20 @@ private:
 
     std::thread mRenderThread;
     std::atomic<bool> mRenderRun{false};
+    // The render loop's thread id while it runs, and whether it runs at all.
+    std::atomic<int> mRenderTid{0};
+    std::atomic<bool> mRenderLoopActive{false};
+    // Scheduling asked for (setRenderScheduling); applied as the loop starts.
+    std::atomic<int> mRenderNiceWanted{0};
+    std::string mRenderCpus;
+    std::mutex mRenderCpusLock;
+    std::atomic<bool> mRenderOnFifo{false};
+    // The AAudio stream whose callback thread the render loop runs on (fifo).
+    void* mRenderHost = nullptr;
+    std::atomic<bool> mRenderHostClaimed{false};
+    void startRenderThread();
+    void stopRenderThread();
+    void applyRenderScheduling(int tid);
     std::atomic<int64_t> mRingUnderruns{0};
 
     // UNDERRUN CONCEALMENT, and how far into one we are.

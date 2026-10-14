@@ -150,6 +150,7 @@ fun SetupScreen(player: SongPlayer, host: EngineHost, lib: Library) {
                     "next" -> R.string.cc_next
                     "previous" -> R.string.cc_previous
                     "tap" -> R.string.cc_tap
+                    "countIn" -> R.string.cc_count_in
                     else -> R.string.cc_click
                 })
                 ControllerRow(label, player.controllers[action] ?: -1, player.learning == action, accent, dim,
@@ -163,7 +164,7 @@ fun SetupScreen(player: SongPlayer, host: EngineHost, lib: Library) {
             var dnd by remember { mutableStateOf(host.stageDnd()) }
             SetupToggle(stringResource(R.string.stage_dnd), dnd, accent, dim) { host.setStageDnd(it); dnd = host.stageDnd() }
             Spacer(Modifier.height(6.dp))
-            Text(stringResource(R.string.click), fontWeight = FontWeight.SemiBold)
+            Text(stringResource(R.string.metronome), fontWeight = FontWeight.SemiBold)
             // The same options as the stage's tempo dialog.
             ClickOptions(player)
             SetupToggle(stringResource(R.string.midi_clock), player.midiClock, accent, dim) {

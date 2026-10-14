@@ -109,45 +109,57 @@ private fun BpmField(bpm: Double, onValue: (Double) -> Unit) {
 }
 
 /**
- * What the metronome does when started (S12.2, S12.6): its mode, the count-in's
- * bars where the song names none, and whether it is heard, and how loud.
+ * The metronome's settings (S12.6), in Setup: the click and the bar count --
+ * each always, during a count-in only, or never --, whether it keeps going
+ * after a count-in, the count-in's bars where the song names none, and the
+ * click's level and where it goes.
  */
 @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 @Composable
 fun ClickOptions(player: SongPlayer) {
-    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-        androidx.compose.foundation.layout.FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            for ((mode, label) in listOf(
-                SongPlayer.ClickMode.CONTINUOUS to R.string.click_mode_continuous,
-                SongPlayer.ClickMode.COUNT_IN to R.string.click_mode_count_in,
-                SongPlayer.ClickMode.COUNT_IN_VISUAL to R.string.click_mode_count_in_visual)) {
-                FilterChip(selected = player.clickMode == mode, onClick = { player.clickMode = mode; player.saveClickSettings() },
-                    label = { Text(stringResource(label)) })
+    @Composable
+    fun Choice(label: Int, value: SongPlayer.Presence, onValue: (SongPlayer.Presence) -> Unit) {
+        androidx.compose.foundation.layout.FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalArrangement = Arrangement.Center) {
+            Text(stringResource(label), modifier = Modifier.width(120.dp).padding(top = 14.dp))
+            for ((p, l) in listOf(SongPlayer.Presence.ON to R.string.presence_on,
+                    SongPlayer.Presence.COUNT_IN to R.string.presence_count_in,
+                    SongPlayer.Presence.OFF to R.string.presence_off)) {
+                FilterChip(selected = value == p, onClick = { onValue(p); player.saveClickSettings() },
+                    label = { Text(stringResource(l)) })
             }
         }
-        if (player.clickMode != SongPlayer.ClickMode.CONTINUOUS) {
-            val song = player.tempo?.countInBars
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                NumberField(stringResource(R.string.count_in_bars), song ?: player.countInBars, 1..8) {
-                    player.countInBars = it; player.saveClickSettings()
-                }
-                if (song != null) Text(stringResource(R.string.count_in_from_song), color = Dim, fontSize = 12.sp)
-            }
+    }
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Choice(R.string.click_sound, player.clickSound) { player.clickSound = it }
+        Choice(R.string.bar_count, player.barCount) { player.barCount = it }
+        androidx.compose.foundation.layout.FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text(stringResource(R.string.after_count_in), modifier = Modifier.width(120.dp).padding(top = 14.dp))
+            FilterChip(selected = player.keepGoing, onClick = { player.keepGoing = true; player.saveClickSettings() },
+                label = { Text(stringResource(R.string.keep_going)) })
+            FilterChip(selected = !player.keepGoing, onClick = { player.keepGoing = false; player.saveClickSettings() },
+                label = { Text(stringResource(R.string.stop_after)) })
         }
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Checkbox(checked = player.clickAudio, onCheckedChange = { player.clickAudio = it; player.saveClickSettings() })
-            Text(stringResource(R.string.click_sound), modifier = Modifier.width(120.dp))
-            Slider(value = player.clickLevel, valueRange = 0.05f..1f, enabled = player.clickAudio,
+            NumberField(stringResource(R.string.count_in_bars), player.countInBars, 1..8) {
+                player.countInBars = it; player.saveClickSettings()
+            }
+            Text(stringResource(R.string.count_in_bars_note), color = Dim, fontSize = 12.sp)
+        }
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(stringResource(R.string.click_volume), modifier = Modifier.width(120.dp))
+            Slider(value = player.clickLevel, valueRange = 0.05f..1f, enabled = player.clickSound != SongPlayer.Presence.OFF,
                 onValueChange = { player.clickLevel = it }, onValueChangeFinished = player::saveClickSettings,
                 modifier = Modifier.weight(1f))
         }
+        Text(stringResource(R.string.click_goes_to_main), color = Dim, fontSize = 12.sp)
     }
 }
 
 /**
- * The stage's tempo, from wherever it is shown (S12.3, S12.6): typed or
+ * The stage's tempo, from wherever it is shown (S12.3, S12.7): typed or
  * tapped, none, back to what is stored, or saved where it belongs (the song,
- * or the live set that has its own); and the metronome's options.
+ * or the live set that has its own). The metronome's settings are Setup's.
  */
 @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 @Composable
@@ -157,7 +169,7 @@ fun TempoDialog(player: SongPlayer, onDismiss: () -> Unit) {
     fun set() { typedBpm(text)?.let { player.typeTempo(it) } }
     AlertDialog(onDismissRequest = onDismiss,
         confirmButton = { Button(onClick = { set(); onDismiss() }) { Text(stringResource(R.string.done)) } },
-        title = { Text(stringResource(R.string.tempo_and_click)) },
+        title = { Text(stringResource(R.string.tempo)) },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp),
                 modifier = Modifier.verticalScroll(rememberScrollState())) {
@@ -189,9 +201,6 @@ fun TempoDialog(player: SongPlayer, onDismiss: () -> Unit) {
                         }
                     }
                 }
-                Spacer(Modifier.height(4.dp))
-                Text(stringResource(R.string.click), fontWeight = FontWeight.SemiBold)
-                ClickOptions(player)
             }
         })
 }

@@ -37,9 +37,11 @@ object Environments {
             twoUp = player.sheetTwoUp,
             halfTurn = player.sheetHalfTurn,
             keysTurnPages = player.keysTurnPages,
-            clickPort = MAIN_OUT.takeIf { player.clickAudio },
-            clickContinuous = player.clickMode == SongPlayer.ClickMode.CONTINUOUS,
-            clickMode = player.clickMode.name,
+            clickPort = MAIN_OUT.takeIf { player.clickSound != SongPlayer.Presence.OFF },
+            clickContinuous = player.clickSound == SongPlayer.Presence.ON,
+            clickSound = player.clickSound.name,
+            barCount = player.barCount.name,
+            keepGoing = player.keepGoing,
             countInBars = player.countInBars,
             clickLevel = player.clickLevel.toDouble(),
             midiClockPort = KEYS.takeIf { player.midiClock },
@@ -63,9 +65,15 @@ object Environments {
         player.sheetHalfTurn = env.halfTurn
         player.keysTurnPages = env.keysTurnPages
         player.saveSheetSettings()
-        player.clickAudio = env.clickPort != null
-        player.clickMode = env.clickMode?.let { runCatching { SongPlayer.ClickMode.valueOf(it) }.getOrNull() }
-            ?: if (env.clickContinuous) SongPlayer.ClickMode.CONTINUOUS else SongPlayer.ClickMode.COUNT_IN
+        // Older environments: a click port or none, continuous or a count-in (and on 2026-10-12, a mode).
+        val legacy = env.clickMode ?: if (env.clickContinuous) "CONTINUOUS" else "COUNT_IN"
+        player.clickSound = env.clickSound?.let { runCatching { SongPlayer.Presence.valueOf(it) }.getOrNull() } ?: when {
+            env.clickPort == null -> SongPlayer.Presence.OFF
+            legacy == "CONTINUOUS" -> SongPlayer.Presence.ON
+            else -> SongPlayer.Presence.COUNT_IN
+        }
+        player.barCount = env.barCount?.let { runCatching { SongPlayer.Presence.valueOf(it) }.getOrNull() } ?: SongPlayer.Presence.ON
+        player.keepGoing = env.keepGoing ?: (legacy != "COUNT_IN")
         player.countInBars = env.countInBars ?: 1
         player.clickLevel = env.clickLevel.toFloat()
         player.midiClock = env.midiClockPort != null

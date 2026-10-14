@@ -122,10 +122,12 @@ object ModeRule {
  *
  * The second is what runs (UsbAudioOut::Config::hostDeviceId). 4 ms is the
  * floor the proof allows at all and is not offered; 8 ms buys margin under
- * load for 2 ms of key-to-note latency.
+ * load for 2 ms of key-to-note latency. 7 (2026-10-14): at rest a third of
+ * 6's holds, direct and behind hubs; under a normal render load none at any
+ * depth (LOG.md).
  */
 object UsbBuffers {
-    val choicesMs = intArrayOf(6, 8)
+    val choicesMs = intArrayOf(6, 7, 8)
     const val DEFAULT_MS = 6
 }
 

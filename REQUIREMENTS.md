@@ -825,10 +825,15 @@ Stated (2026-10-12)
 * S12.5 The tempo is a first-class song item **together with the metre** (beats
   per bar and beat unit, e.g. 6/8), and a **live set may override** both. A
   song may also have no tempo; it can be set back to none.
-* S12.6 On the stage the **metronome starts and stops**, with: the sound on or
-  off; continuous, or a **count-in only** (a number of bars), or a count-in
-  that **goes on visually**. This supersedes S12.2 being an environment-only
-  setting (the environment still remembers it).
+* S12.6 The **metronome** (refined with Michiel, 2026-10-12). Running, it always
+  **blinks** on the beat; stopped, nothing blinks. In Setup (so per
+  environment): the **click** -- always / count-in only / never --, the **bar
+  count** (the beat's number shown, beat one accented; without it every beat
+  is alike) -- always / count-in only / never --, whether it **keeps going
+  after a count-in** or stops, the count-in's bars where a song names none,
+  the click's volume and where it goes (the main out; another device later).
+  On the stage: **Play** (from beat one), **Count-in**, **Stop**, each also a
+  footswitch action. Supersedes S12.2.
 * S12.7 Wherever a tempo is shown it can be **tapped or typed**.
 * S12.8 Tempo affects speed only (synced delays and LFO rates, MIDI clock);
   nothing is synced to the position in the bar, and nothing is designed for
@@ -950,6 +955,9 @@ Stated (2026-10-11)
   only by a deliberate gesture (long-press).
 * S17.4 On-screen faders and knobs **never jump on touch**; they move by
   dragging relative to where they are.
+  (2026-10-14, Michiel: "I want all sliders tappable as well. Real sliding is
+  too hard.") A **tap** sets a fader where it is tapped; a drag still moves it
+  relative to where it is, and the start of a drag never jumps.
 
 ## 18. Distribution and devices
 

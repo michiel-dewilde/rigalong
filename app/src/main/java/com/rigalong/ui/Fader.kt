@@ -1,6 +1,7 @@
 package com.rigalong.ui
 
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
@@ -14,10 +15,11 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 
 /**
- * A stage fader that never jumps (REQUIREMENTS S17.4): a touch does nothing,
- * only a drag moves it, by the distance dragged and from where it already is.
- * A stray finger on the screen mid-song therefore cannot change a level.
- * Full travel is the fader's own height.
+ * A stage fader (REQUIREMENTS S17.4): a drag moves it by the distance dragged,
+ * from where it already is, so a slide never jumps; full travel is the fader's
+ * own height. A tap sets it where it was tapped (Michiel, 2026-10-14: real
+ * sliding is too hard on glass) -- a tap is a press and release that did not
+ * move past the touch slop, so the start of a drag never jumps either.
  */
 @Composable
 fun RelativeFader(value: Float, onValue: (Float) -> Unit, modifier: Modifier = Modifier,
@@ -33,6 +35,8 @@ fun RelativeFader(value: Float, onValue: (Float) -> Unit, modifier: Modifier = M
                 v = (v - dy / size.height).coerceIn(0f, 1f)
                 emit(v)
             })
+    }.pointerInput(Unit) {
+        detectTapGestures(onTap = { at -> if (size.height > 0) emit((1f - at.y / size.height).coerceIn(0f, 1f)) })
     }) {
         val w = size.width
         val h = size.height

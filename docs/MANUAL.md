@@ -45,8 +45,9 @@ What you play from.
   you pick "Whole song" at the top. Switching never cuts a note: a key you are
   holding keeps sounding until you release it, even if the new live set no
   longer uses that sound, and tails ring out naturally.
-* **Levels**: one fader per sound the song uses (two sfizz instances, two faders). Faders move only when you
-  drag them, from where they are; touching one does nothing. "Store in this
+* **Levels**: one fader per sound the song uses (two sfizz instances, two faders). A drag moves a fader from
+  where it is (it never jumps when you start to slide); a tap sets it where
+  you tap. Drawbars go to the nearest of their nine steps. "Store in this
   live set" (hold it) makes what you hear the live set's own: the levels, and
   whatever you moved on the stage or with a knob since you selected it (the
   drawbars, a filter). A value moved back to the song's stops being its own.
@@ -66,12 +67,11 @@ What you play from.
   **No tempo**, go **Back to the stored tempo**, or **Save** it into the song
   (or into the live set, when it has its own). A tapped or typed tempo is
   amber and holds until another song opens.
-* **Click**: the button starts and stops the metronome. The tempo dialog sets
-  what it does: **click until stopped** (CLICK), **count in, then stop**, or
-  **count in, then the beat on screen only** (COUNT), the count-in's bars
-  where the song names none, and whether the click is heard, and how loud.
-  While it runs, the beat shows its number in the bar, in step with what you
-  hear. Another song stops it.
+* **Metronome**, framed together with the tempo and TAP: **START** plays it
+  from beat one, **COUNT** counts in, **STOP** stops it. Running, the beat blinks; what is heard and shown is set in
+  Setup (Metronome): the click and the bar count (the beat's number, beat
+  one accented), each always, during a count-in only, or never, and whether
+  it keeps going after a count-in. Another song stops it.
 * **On-screen keys**: when no MIDI controller is attached, a keyboard at the
   bottom of every screen plays what the current live set plays.
 * **Lead sheet**: when the song has one, it takes the left part of the screen
@@ -93,9 +93,16 @@ set 1, and so on.
 
 ### Songs
 
-Where songs are made. On the left is the setlist that is on stage: change
-the order with ▲ ▼, remove a song with ✕, or add one. On the right is the
-song being edited:
+Where songs are made. On the left, two tabs:
+
+* the **setlist** on stage: change the order with ▲ ▼, remove a song with ✕,
+  make a **New song** in it, or **Add songs…** from all the songs there are
+  (search, tap to add);
+* **All songs**: every song, whether or not a setlist has it -- search, tap
+  one to open it, **+** to add it to the setlist, or make a **New song (in
+  no setlist)**.
+
+On the right is the song being edited:
 
 * **Sounds**: what the song plays. Each sound is one of six engines -- sfizz
   (SFZ sampler), setBfree (tonewheel organ), Surge XT, Dexed (DX7), Plaits
@@ -289,7 +296,9 @@ Every setlist and song, with its history.
     to the CP88/CP73, and "USB device" is the one to prefer. Only these
     ask Android for permission to use the device; with ALSA the app never
     does, and plugging a USB device in raises no dialog.
-* **USB buffer**: 6 or 8 ms of audio queued on the wire, in the direct modes.
+* **USB buffer**: 6, 7 or 8 ms of audio queued on the wire, in the direct modes.
+  More is steadier: at rest 7 ms had about a third of the brief gaps 6 ms had
+  (2026-10-14); each extra millisecond adds one to the latency.
 * **Devices**: the keyboards and sound modules the app drives over MIDI.
   A device the app knows by name (a CP88/CP73) is added the first time it is
   plugged in; **+ MIDI device** adds any other, **Remove** takes one away.
@@ -310,15 +319,17 @@ Every setlist and song, with its history.
   sound of your own is lost to it. This is the app's own doing, so Undo
   does not take it back.
 * **Footswitches and MIDI controllers**: a controller each for the next and
-  the previous live set (or lead-sheet page), tap tempo, and the count-in or
-  click. Press **Learn**, then the pedal. A controller does one thing: learning
+  the previous live set (or lead-sheet page), tap tempo, the metronome's
+  play/stop, and the count-in. Press **Learn**, then the pedal. A controller does one thing: learning
   it for another takes it away from the first.
 * **Stage**: Do Not Disturb while the app is in front. Notifications and
   calls are silenced; alarms and media are not. Android asks you once to
   allow it.
-* **Click** (also in the stage's tempo dialog):
-  * click until stopped, count in and stop, or count in and go on as the beat
-    on the screen only; the count-in's bars where a song names none;
+* **Metronome**:
+  * **Click** and **Bar count** (the beat's number, beat one accented):
+    always, during a count-in only, or never;
+  * **After a count-in**: keep going (blinking, with whatever is "always") or
+    stop; the count-in's bars where a song names none;
   * whether it is heard in the main out, and how loud. With the CP88/CP73 as
     the only output, the audience hears it too; otherwise the beat is on the
     screen only;

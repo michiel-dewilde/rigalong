@@ -139,6 +139,24 @@ Java_com_rigalong_NativeBridge_nativeSetFillMs(JNIEnv*, jobject, jint ms) {
     engine().setFillMs(ms);
 }
 
+// The render thread's scheduling, to experiment with (RENDERPRIO): nice (0:
+// leave), CPUs ("": leave, "all"), the loop on a borrowed SCHED_FIFO AAudio
+// thread (fifo 1/0, -1: leave; from the next stream start).
+JNIEXPORT void JNICALL
+Java_com_rigalong_NativeBridge_nativeSetRenderScheduling(JNIEnv* env, jobject, jint nice, jstring cpus, jint fifo) {
+    const char* c = env->GetStringUTFChars(cpus, nullptr);
+    engine().setRenderScheduling(nice, c ? std::string(c) : std::string(), fifo);
+    if (c) env->ReleaseStringUTFChars(cpus, c);
+}
+
+// The USB reap thread's CPUs ("all": all), to experiment with (RENDERPRIO reapcpus).
+JNIEXPORT void JNICALL
+Java_com_rigalong_NativeBridge_nativeSetReapCpus(JNIEnv* env, jobject, jstring cpus) {
+    const char* c = env->GetStringUTFChars(cpus, nullptr);
+    engine().setReapCpus(c ? std::string(c) : std::string());
+    if (c) env->ReleaseStringUTFChars(cpus, c);
+}
+
 JNIEXPORT void JNICALL
 Java_com_rigalong_NativeBridge_nativeSetConcealment(JNIEnv*, jobject, jboolean on) {
     engine().setConcealment(on == JNI_TRUE);
@@ -1230,12 +1248,12 @@ Java_com_rigalong_NativeBridge_nativeUsbMidiOutReady(JNIEnv*, jobject) {
 // until the first click is heard, in ns, so the visual beat can fall with it.
 JNIEXPORT jlong JNICALL
 Java_com_rigalong_NativeBridge_nativeClickStart(JNIEnv*, jobject, jdouble bpm, jint beatsPerBar,
-                                                      jint beats, jfloat gain, jboolean audio,
-                                                      jboolean midi) {
+                                                      jint beats, jint soundBeats, jint accentBeats,
+                                                      jfloat gain, jboolean midi) {
     const int64_t delay = clickDelayNs();
     rigalong::Click& c = engine().click();
-    c.setGain(audio ? gain : 0.0f);
-    c.start(bpm, beatsPerBar, beats);
+    c.setGain(gain);
+    c.start(bpm, beatsPerBar, beats, soundBeats, accentBeats);
     if (midi) midiClock().start(delay);
     return static_cast<jlong>(delay);
 }

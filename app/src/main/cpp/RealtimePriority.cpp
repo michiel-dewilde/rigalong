@@ -7,6 +7,7 @@
 #include <unistd.h>
 
 #include <cerrno>
+#include <cstdlib>
 #include <cstring>
 #include <atomic>
 #include <string>
@@ -16,6 +17,30 @@
 #define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, __VA_ARGS__)
 
 namespace rigalong {
+
+bool setThreadCpus(const char* what, int tid, const std::string& cpus) {
+    cpu_set_t set;
+    CPU_ZERO(&set);
+    if (cpus.empty()) {
+        for (int c = 0; c < 64; ++c) CPU_SET(c, &set);
+    } else {
+        size_t at = 0;
+        while (at < cpus.size()) {
+            size_t end = cpus.find(',', at);
+            if (end == std::string::npos) end = cpus.size();
+            const std::string part = cpus.substr(at, end - at);
+            const size_t dash = part.find('-');
+            const int lo = std::atoi(part.substr(0, dash).c_str());
+            const int hi = dash == std::string::npos ? lo : std::atoi(part.substr(dash + 1).c_str());
+            for (int c = lo; c <= hi && c < 64; ++c) CPU_SET(c, &set);
+            at = end + 1;
+        }
+    }
+    errno = 0;
+    const int r = sched_setaffinity(tid, sizeof(set), &set);
+    LOGI("%s: cpus %s %s", what, cpus.empty() ? "all" : cpus.c_str(), r == 0 ? "set" : std::strerror(errno));
+    return r == 0;
+}
 
 void raiseRenderPriority(const char* what, int niceValue) {
     // 1. Real-time, properly. Priority 2 rather than something greedy: this is

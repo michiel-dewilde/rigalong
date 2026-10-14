@@ -207,7 +207,7 @@ def flow_count_in(f):
     logcat_clear()
     f.tap("TAP", times=4)          # found once: four taps a beat apart, not a screen read apart
     f.tap("COUNT")
-    assert logcat_has(r"click: count_in, 4 beats"), "no count-in"
+    assert logcat_has(r"click: count-in, 4 beats"), "no count-in"
 
 
 def type_text(text):
@@ -218,7 +218,8 @@ def type_text(text):
 def to_songs():
     """The Songs screen: from the stage, where it opens on a long press (not counted)."""
     to_stage()
-    for n in find_all("Songs"):
+    # "Songs •" while the open song has unsaved edits, which now outlive the screen.
+    for n in find_all("Songs") + find_all("Songs •"):
         shell(f"input swipe {n.x} {n.y} {n.x} {n.y} 900")
         break
     time.sleep(1.0)

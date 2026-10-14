@@ -61,18 +61,23 @@
     <string name="beat_unit">beat</string>
     <string name="own_tempo">Own tempo</string>
     <string name="bpm_metre">%1$s BPM · %2$s</string>
-    <string name="tempo_and_click">Tempo and click</string>
     <string name="tempo_session">tapped or typed</string>
     <string name="tempo_set">Set</string>
     <string name="tempo_none">No tempo</string>
     <string name="tempo_back">Back to the stored tempo</string>
     <string name="tempo_save_song">Save into the song</string>
     <string name="tempo_save_live_set">Save into this live set</string>
-    <string name="click_mode_continuous">Click until stopped</string>
-    <string name="click_mode_count_in">Count in, then stop</string>
-    <string name="click_mode_count_in_visual">Count in, then the beat on screen only</string>
-    <string name="count_in_from_song">(the song\'s)</string>
-    <string name="click_sound">Click sound</string>
+    <string name="click_sound">Click</string>
+    <string name="presence_on">Always</string>
+    <string name="presence_count_in">Count-in only</string>
+    <string name="presence_off">Never</string>
+    <string name="bar_count">Bar count</string>
+    <string name="after_count_in">After a count-in</string>
+    <string name="keep_going">Keep going</string>
+    <string name="stop_after">Stop</string>
+    <string name="count_in_bars_note">where the song names none</string>
+    <string name="click_volume">Click volume</string>
+    <string name="click_goes_to_main">The click goes into the main out: with the keyboard as the only output, the audience hears it too. The bar count shows the beat\'s number and accents beat one; without it every beat is alike. Running, the beat always blinks.</string>
 
     <!-- engines -->
     <string name="engine_sfizz">sfizz</string>
@@ -85,7 +90,16 @@
     <!-- songs -->
     <string name="new_song">New song</string>
     <string name="pick_song">Pick a song, or add one.</string>
-    <string name="add_song">Add a song</string>
+    <string name="add_song">New song</string>
+    <string name="add_songs">Add songs…</string>
+    <string name="add_songs_to">Add songs to %1$s</string>
+    <string name="new_song_alone">New song (in no setlist)</string>
+    <string name="in_setlist">in the setlist</string>
+    <string name="unsaved_title">“%1$s” has unsaved changes</string>
+    <string name="unsaved_text">Keep editing to save them first, or let them go.</string>
+    <string name="keep_editing">Keep editing</string>
+    <string name="save_as_copy">Save as copy</string>
+    <string name="discard_changes">Discard them</string>
     <string name="setlist_named">Setlist: %1$s</string>
     <string name="usb_record_why">Android remembers a USB audio device ("Always") only for apps allowed to record. Allow the microphone, then choose Always: the CP88/CP73 then comes back without asking. RigAlong records only when you measure latency.</string>
     <string name="back_to_setlist">← Setlist</string>
@@ -224,6 +238,9 @@
     <string name="setlists">Setlists</string>
     <string name="on_stage">"   (on stage)"</string>
     <string name="new_setlist">New setlist</string>
+    <string name="new_setlist_name">New setlist</string>
+    <string name="duplicate_setlist">Duplicate “%1$s”</string>
+    <string name="put_on_stage">Put it on stage</string>
     <string name="create">Create</string>
     <string name="all_songs">All songs</string>
     <plurals name="dropouts_recent">
@@ -264,7 +281,10 @@
     <string name="cc_next">Next live set</string>
     <string name="cc_previous">Previous live set</string>
     <string name="cc_tap">Tap tempo</string>
-    <string name="cc_click">Count-in / click</string>
+    <string name="cc_click">Metronome play / stop</string>
+    <string name="cc_count_in">Count-in</string>
+    <string name="metronome">Metronome</string>
+    <string name="metronome_start">START</string>
     <string name="learn">Learn</string>
     <string name="press_it">press it now…</string>
     <string name="none">none</string>

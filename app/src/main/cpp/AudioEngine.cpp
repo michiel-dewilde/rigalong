@@ -16,6 +16,10 @@
 #include <functional>
 #include <pthread.h>
 #include <thread>
+#include <cerrno>
+#include <cstdlib>
+#include <sched.h>
+#include <aaudio/AAudio.h>
 
 #include <rigalong/Denormals.h>
 #include <rigalong/SampleFormat.h>
@@ -64,7 +68,7 @@ bool AudioEngine::start(int32_t deviceId, int bufferBursts) {
     mRunning.store(true, std::memory_order_release);
 
     mRenderRun.store(true, std::memory_order_release);
-    mRenderThread = std::thread([this] { renderLoop(); });
+    startRenderThread();
     return true;
 }
 
@@ -439,7 +443,7 @@ bool AudioEngine::startUsb(const UsbAudioOut::Config& config, std::string* error
     // packets are sized.
     mRunning.store(true, std::memory_order_release);
     mRenderRun.store(true, std::memory_order_release);
-    mRenderThread = std::thread([this] { renderLoop(); });
+    startRenderThread();
 
     if (!mUsbOut.start(config, &AudioEngine::pullBytesForUsb, this, error)) {
         closeStream();
@@ -711,9 +715,7 @@ void AudioEngine::startNoteProbe() {
 }
 
 void AudioEngine::closeStream() {
-    if (mRenderRun.exchange(false, std::memory_order_acq_rel)) {
-        if (mRenderThread.joinable()) mRenderThread.join();
-    }
+    stopRenderThread();
     if (mInputStream) {
         mInputStream->stop();
         mInputStream->close();
@@ -1163,7 +1165,19 @@ void AudioEngine::renderLoop() {
     // BELOW the USB reap thread on purpose. The ring exists so that a late
     // render block is absorbed and inaudible; nothing absorbs a late URB. See
     // RealtimePriority.h.
-    rigalong::raiseRenderPriority("render thread", rigalong::kRenderNice);
+    mRenderTid.store(static_cast<int>(gettid()), std::memory_order_relaxed);
+    mRenderLoopActive.store(true, std::memory_order_release);
+    if (mRenderHostClaimed.load(std::memory_order_acquire)) {
+        sched_param sp{};
+        const int policy = sched_getscheduler(0) & ~SCHED_RESET_ON_FORK;
+        sched_getparam(0, &sp);
+        LOGI("render thread: on an AAudio callback thread (%s, priority %d)",
+             policy == SCHED_FIFO ? "SCHED_FIFO" : policy == SCHED_RR ? "SCHED_RR" : "not real-time", sp.sched_priority);
+    } else {
+        const int want = mRenderNiceWanted.load(std::memory_order_relaxed);
+        rigalong::raiseRenderPriority("render thread", want != 0 ? want : rigalong::kRenderNice);
+    }
+    applyRenderScheduling(static_cast<int>(gettid()));
     enableFlushToZero();
 
     // And the part that actually moves the needle on this tablet: a
@@ -1255,6 +1269,103 @@ void AudioEngine::renderLoop() {
         }
     }
     mPerfHint.stop();
+    mRenderTid.store(0, std::memory_order_relaxed);
+    mRenderLoopActive.store(false, std::memory_order_release);
+}
+
+// ------------------------------------------------- the render thread's scheduling
+
+void AudioEngine::setReapCpus(const std::string& cpus) {
+    mUsbOut.setReapCpus(cpus == "all" ? std::string() : cpus);
+}
+
+void AudioEngine::setRenderScheduling(int nice, const std::string& cpus, int fifo) {
+    if (nice != 0) mRenderNiceWanted.store(nice, std::memory_order_relaxed);
+    {
+        std::lock_guard<std::mutex> lock(mRenderCpusLock);
+        if (!cpus.empty()) mRenderCpus = cpus == "all" ? std::string() : cpus;
+    }
+    if (fifo >= 0) mRenderOnFifo.store(fifo > 0, std::memory_order_relaxed);
+    const int tid = mRenderTid.load(std::memory_order_relaxed);
+    if (tid == 0) return;
+    // The running thread at once (not on a borrowed FIFO thread: its nice means nothing).
+    if (nice != 0 && !mRenderHostClaimed.load(std::memory_order_acquire)) {
+        errno = 0;
+        LOGI("render thread: nice %d %s", nice, setpriority(PRIO_PROCESS, tid, nice) == 0 ? "set" : std::strerror(errno));
+    }
+    applyRenderScheduling(tid);
+}
+
+void AudioEngine::applyRenderScheduling(int tid) {
+    std::string cpus;
+    {
+        std::lock_guard<std::mutex> lock(mRenderCpusLock);
+        cpus = mRenderCpus;
+    }
+    rigalong::setThreadCpus("render thread", tid, cpus);
+}
+
+void AudioEngine::startRenderThread() {
+    mRenderHostClaimed.store(false, std::memory_order_release);
+    if (mRenderOnFifo.load(std::memory_order_relaxed)) {
+        // An AAudio low-latency stream's callback thread is SCHED_FIFO: its
+        // first callback keeps it and runs the render loop until stopped -- the
+        // way the USB reap loop gets its thread (UsbAudioOut).
+        AAudioStreamBuilder* b = nullptr;
+        if (AAudio_createStreamBuilder(&b) == AAUDIO_OK) {
+            AAudioStreamBuilder_setDirection(b, AAUDIO_DIRECTION_OUTPUT);
+            AAudioStreamBuilder_setPerformanceMode(b, AAUDIO_PERFORMANCE_MODE_LOW_LATENCY);
+            AAudioStreamBuilder_setSharingMode(b, AAUDIO_SHARING_MODE_SHARED);
+            AAudioStreamBuilder_setFormat(b, AAUDIO_FORMAT_PCM_FLOAT);
+            AAudioStreamBuilder_setChannelCount(b, 2);
+            AAudioStreamBuilder_setDataCallback(
+                    b, [](AAudioStream*, void* self, void* audio, int32_t n) -> aaudio_data_callback_result_t {
+                        auto* e = static_cast<AudioEngine*>(self);
+                        std::memset(audio, 0, static_cast<size_t>(n) * 2 * sizeof(float));
+                        if (e->mRenderHostClaimed.exchange(true, std::memory_order_acq_rel)) {
+                            return AAUDIO_CALLBACK_RESULT_STOP;
+                        }
+                        e->renderLoop();
+                        return AAUDIO_CALLBACK_RESULT_STOP;
+                    }, this);
+            AAudioStream* st = nullptr;
+            const aaudio_result_t r = AAudioStreamBuilder_openStream(b, &st);
+            AAudioStreamBuilder_delete(b);
+            if (r == AAUDIO_OK && AAudioStream_requestStart(st) == AAUDIO_OK) {
+                mRenderHost = st;
+                // The loop must be running before the transport asks for frames.
+                for (int i = 0; i < 200 && !mRenderLoopActive.load(std::memory_order_acquire); ++i) {
+                    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+                }
+                if (mRenderLoopActive.load(std::memory_order_acquire)) return;
+                LOGE("render: the AAudio host callback never came; an own thread");
+                mRenderRun.store(false, std::memory_order_release);
+                AAudioStream_requestStop(st);
+                AAudioStream_close(st);
+                mRenderHost = nullptr;
+                mRenderRun.store(true, std::memory_order_release);
+                mRenderHostClaimed.store(true, std::memory_order_release);  // a late callback stays out
+            } else {
+                LOGE("render: no AAudio host stream (%s); an own thread", AAudio_convertResultToText(r));
+                if (st) AAudioStream_close(st);
+            }
+        }
+    }
+    mRenderThread = std::thread([this] { renderLoop(); });
+}
+
+void AudioEngine::stopRenderThread() {
+    if (!mRenderRun.exchange(false, std::memory_order_acq_rel)) return;
+    if (mRenderThread.joinable()) mRenderThread.join();
+    if (mRenderHost) {
+        for (int i = 0; i < 400 && mRenderLoopActive.load(std::memory_order_acquire); ++i) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        }
+        auto* st = static_cast<AAudioStream*>(mRenderHost);
+        AAudioStream_requestStop(st);
+        AAudioStream_close(st);
+        mRenderHost = nullptr;
+    }
 }
 
 void AudioEngine::runLatencyProbe(float* out, int32_t numFrames) {
