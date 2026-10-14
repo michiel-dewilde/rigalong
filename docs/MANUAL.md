@@ -296,7 +296,7 @@ Every setlist and song, with its history.
     to the CP88/CP73, and "USB device" is the one to prefer. Only these
     ask Android for permission to use the device; with ALSA the app never
     does, and plugging a USB device in raises no dialog.
-* **USB buffer**: 6, 7 or 8 ms of audio queued on the wire, in the direct modes.
+* **USB buffer**: 6, 7 (the default) or 8 ms of audio queued on the wire, in the direct modes.
   More is steadier: at rest 7 ms had about a third of the brief gaps 6 ms had
   (2026-10-14); each extra millisecond adds one to the latency.
 * **Devices**: the keyboards and sound modules the app drives over MIDI.

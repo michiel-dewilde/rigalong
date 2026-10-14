@@ -128,7 +128,7 @@ object ModeRule {
  */
 object UsbBuffers {
     val choicesMs = intArrayOf(6, 7, 8)
-    const val DEFAULT_MS = 6
+    const val DEFAULT_MS = 7
 }
 
 /**

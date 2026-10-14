@@ -56,7 +56,7 @@ object Environments {
         host.applyRoutingSpec(RoutingSpec(
             audioName = out?.device?.name, audioMode = out?.mode ?: "ALSA",
             midiName = keys?.device?.name, midiMode = keys?.mode ?: "ALSA",
-            bufferMs = out?.bufferMs?.toInt() ?: 6))
+            bufferMs = out?.bufferMs?.toInt() ?: com.rigalong.UsbBuffers.DEFAULT_MS))
         player.devices.update(env.externalSynths)
         player.devices.forget()
         player.setControllers(env.switching.filter { it.kind == "cc" && it.number != null }
