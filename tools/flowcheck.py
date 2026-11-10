@@ -16,8 +16,10 @@ to the app and never turns the screen off.
 """
 import os
 import re
+import shutil
 import subprocess
 import sys
+import tempfile
 import time
 import xml.etree.ElementTree as ET
 
@@ -37,6 +39,27 @@ def adb(*args, capture=True):
 
 def shell(cmd):
     return adb("shell", cmd)
+
+
+def push_fixture(fname):
+    """A CP-88 test file into the device's Downloads, dated now: the file picker lists the newest first,
+    and adb push keeps the source's own date -- behind a folder of newer downloads it is off the screen."""
+    here = os.path.dirname(os.path.abspath(__file__))
+    src = os.path.join(here, "..", "model", "src", "test", "resources", "cp88", fname)
+    with tempfile.TemporaryDirectory() as tmp:
+        fresh = os.path.join(tmp, fname)
+        shutil.copyfile(src, fresh)          # copyfile: a new file, so a new date
+        adb("push", fresh, "/sdcard/Download/" + fname)
+
+
+def recover():
+    """Back to the app if something else is in front (a file picker a failed flow left open),
+    so one failure does not fail every flow after it."""
+    for _ in range(3):
+        if "com.rigalong" in focused_app():
+            return
+        shell("input keyevent KEYCODE_BACK")
+        time.sleep(1.0)
 
 
 def hide_keyboard():
@@ -478,8 +501,7 @@ X9P = "sample-page-7.X9P"
 
 
 def import_device_file(f, fname, count, seen):
-    here = os.path.dirname(os.path.abspath(__file__))
-    adb("push", os.path.join(here, "..", "model", "src", "test", "resources", "cp88", fname), "/sdcard/Download/" + fname)
+    push_fixture(fname)
     to_library()
     f.tap("Import…")
     time.sleep(2.0)
@@ -517,8 +539,7 @@ def flow_import_cp88_json(f):
 # A live set given a CP-88 sound from the library: written into the
 # keyboard's reserved page when the song opens.
 def flow_cp88_sound_from_library(f):
-    here = os.path.dirname(os.path.abspath(__file__))
-    adb("push", os.path.join(here, "..", "model", "src", "test", "resources", "cp88", X9P), "/sdcard/Download/" + X9P)
+    push_fixture(X9P)
     to_library()
     for n in find_all("Import…"):
         shell(f"input tap {n.x} {n.y}")
@@ -553,8 +574,7 @@ def flow_cp88_sound_from_library(f):
 # A CP-88 sound edited as cp-liveset's YAML in the Library: the text is
 # checked as it is typed, and saving keeps it as the sound's new version.
 def flow_cp88_yaml_edit(f):
-    here = os.path.dirname(os.path.abspath(__file__))
-    adb("push", os.path.join(here, "..", "model", "src", "test", "resources", "cp88", X9P), "/sdcard/Download/" + X9P)
+    push_fixture(X9P)
     to_library()
     for n in find_all("Import…"):
         shell(f"input tap {n.x} {n.y}")
@@ -743,6 +763,7 @@ FLOWS = [
 
 
 def main(argv):
+    recover()
     if "com.rigalong" not in focused_app():
         print("the app is not in front; start it first")
         return 2
@@ -751,6 +772,7 @@ def main(argv):
     for name, budget, fn in FLOWS:
         if name not in want:
             continue
+        recover()
         to_stage()
         f = Flow(name, budget)
         try:

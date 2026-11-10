@@ -21,7 +21,7 @@ android {
         // API 36. Not an improvement -- the entry requirement.
         targetSdk = 36
         versionCode = 1
-        versionName = "0.1-m2"
+        versionName = "0.0.1"
 
         // The tablet is arm64. Building only this ABI keeps builds fast.
         ndk { abiFilters += "arm64-v8a" }

@@ -111,6 +111,12 @@ What runs today, beside the prototype screen (a button on each side switches):
   its pedal-down, and an engine switched off lets its tails ring.
 * **Library**: setlists and songs are content-addressed library entries with
   history; a setlist exports to, and imports from, an OCI Image Layout tar.
+* **Setup**: audio and MIDI routing and modes, the USB buffer, external
+  devices (a CP88/CP73 is driven by name: live sets select or own its
+  sounds), the metronome, footswitches, environments.
+
+[docs/MANUAL.md](docs/MANUAL.md) is the player's guide to all of it, and is
+kept up to date; the older sections below still describe the prototype screen.
 
 ## Build
 
@@ -312,11 +318,13 @@ streaming endpoint instead, so AudioControl is left alone.
   every interface back and waits for Android to see the device again.
 
 **Buffer.** In the direct modes the buffer is the audio queued on the wire:
-6 or 8 ms, in the Audio long-press menu, default **6 ms**. It is the whole
-output latency of that stage -- there is no mixer or resampler underneath it.
-It decides how often the transport holds, never whether the device latches:
-on the tablet plugged in directly, at 6 ms, none at rest and ~2 a minute under
-64-voice sweeps on every engine. That rests on the reap loop running on a
+6, 7 or 8 ms, in Setup, default **7 ms**. It is the whole output latency of
+that stage -- there is no mixer or resampler underneath it. It decides how
+often the transport holds, never whether the device latches: at 7 ms, none at
+rest and about one per 7-8 minutes under render sweeps (2026-10-14; 8 ms
+measured the same, 6 ms about three times as many at rest). A hold costs
+about 10 ms of silence with the CP-88 plugged in directly and about 50 ms
+behind a hub or dock. That rests on the reap loop running on a
 borrowed AAudio callback thread -- SCHED_FIFO, which an app cannot get for a
 thread of its own; it plays silence on the built-in speaker while it does.
 (The Buffer button itself sets AAudio bursts and applies to ALSA mode only.)
@@ -367,13 +375,25 @@ that never goes quiet, and says so in the log.
 ## Thread scheduling
 
 The render thread, the USB reap thread and the USB MIDI reader all ask for
-`SCHED_FIFO` and fall back to nice -19 (`THREAD_PRIORITY_URGENT_AUDIO`). On
-this tablet real-time scheduling is **refused** -- ordinary Android apps have
+`SCHED_FIFO` and fall back to a nice value: -19 for the transport, -16 for the
+render thread, which must yield to it. On this tablet real-time scheduling is
+**refused** to a thread of the app's own -- ordinary Android apps have
 `RLIMIT_RTPRIO` of 0 -- and the log says so rather than leaving you to assume:
 
 ```
-render thread: nice -19 (SCHED_FIFO refused: Operation not permitted)
+render thread: nice -16 (SCHED_FIFO refused: Operation not permitted)
 ```
+
+The one way an app gets a real-time thread is to borrow an AAudio callback
+thread. The USB reap loop runs on one, and so does the **render rescue**: it
+steps in only when the ring is low and the render thread has finished no block
+for 4 ms, takes the render lock (a priority-inheritance mutex, so a render
+thread preempted mid-block runs at real-time priority until it lets go), and
+renders one block itself if there is still no progress. It adds no latency.
+With 16 CPU-hogging processes beside the app it took line-out dropouts from
+about 3 a minute to about 0.2 (2026-10-14). The render loop itself stays off
+real-time priority on purpose: Android gives real-time threads no clock boost,
+and a render thread there lost under the app's own load.
 
 What does work, and is the part that matters, is an **ADPF performance hint
 session** for the render thread, with the render block as its deadline and the
