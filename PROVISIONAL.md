@@ -134,7 +134,7 @@ keeps the 1 ms pace of the USB completions.
 ## Instrumentation, not hacks
 
 Cheap, no behavioural effect, keep unless it gets in the way: the `usb hole`
-transition log, `inSize` min/max, `fbDrop`, `fbClamp`, and the `PART`,
+transition log, `inSize` min/max, `fbDrop`, `fbClamp`, and the
 `MEASURE`, `WATCHDOG`, `DEVHEALTH` and `PANIC` debug broadcasts.
 
 **Not on probation at all**, because they are ordinary bug fixes that happened

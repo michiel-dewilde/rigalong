@@ -56,17 +56,11 @@ What works:
   modal resonator and three drum voices. Rendered at its native 48 kHz and
   resampled, with Plaits' own low-pass gate as the envelope, so DECAY is the
   release and velocity moves brightness as well as loudness
-* **Patches**: the whole graph — every node parameter, the instrument id, the
-  Surge patch and the DX7 voice — saved as JSON, auto-restored on launch, with
-  named saves you can cycle through
 * Freeverb-style reverb and a master limiter as nodes
-* An **output meter** in the status line: the peak of what actually leaves the
-  graph, so "is it making sound, and which part" is answerable at a glance
-* An **instrument selector**: tap a tab to show that panel and solo that part,
-  long-press to bring a part into the mix without silencing the others. The tabs
-  are a view of the levels, so a layer built by hand shows up in them
-* Default patch — all six instruments run, and are **mixed rather than
-  switched**, so moving between them is a fader and never a reload:
+* An **output meter** in Setup's status: the peak of what actually leaves the
+  graph
+* The rack — all six instruments run, and are **mixed rather than switched**,
+  so moving between them is a live set and never a reload:
 
 ```
 MIDI In --+--> sfizz    --+
@@ -88,17 +82,20 @@ MIDI In --+--> sfizz    --+
 * TPDF dither on the float → 16-bit conversion
 * Live readout of latency, xruns, CPU load, peak callback time and voice count
 * Automatic recovery from stream disconnect
-* An on-screen test octave, so the audio path can be checked with no CP-88 attached
-* A **MEASURE** button: emits a click through the CP-88, listens on the built-in
+* On-screen keys whenever no MIDI input is attached, so everything can be
+  checked with no CP-88
+* **Measure** in Setup: emits a click through the CP-88, listens on the built-in
   mic, and reports the acoustic round trip — latency verifiable on any stage
 
-## The app in progress (2026-10)
+## The app
 
-The prototype is becoming an app: [REQUIREMENTS.md](REQUIREMENTS.md) holds what
-it must do, [PLAN.md](PLAN.md) the milestones and where they stand, and
-[docs/FORMAT.md](docs/FORMAT.md) the library format.
+[REQUIREMENTS.md](REQUIREMENTS.md) holds what it must do, [PLAN.md](PLAN.md)
+the milestones and where they stand, and [docs/FORMAT.md](docs/FORMAT.md) the
+library format. The prototype screen the engine grew up behind (part tabs, an
+engine panel each, JSON patches) is gone since 0.0.1; its measuring tools
+survive as Setup's status and the test hooks in [PROVISIONAL.md](PROVISIONAL.md).
 
-What runs today, beside the prototype screen (a button on each side switches):
+Four views:
 
 * **Stage**: a setlist's songs with previous/next, each song's live sets as
   large buttons, a level fader per engine that moves only by dragging, panic,
@@ -116,7 +113,7 @@ What runs today, beside the prototype screen (a button on each side switches):
   sounds), the metronome, footswitches, environments.
 
 [docs/MANUAL.md](docs/MANUAL.md) is the player's guide to all of it, and is
-kept up to date; the older sections below still describe the prototype screen.
+kept up to date.
 
 ## Build
 
@@ -203,11 +200,11 @@ adb push SalamanderGrandPianoV3_44.1khz16bit     /sdcard/Android/data/com.rigalo
 # 3. adb push creates that subfolder as the shell user, mode 770,
 #    which the app cannot traverse. Fix it:
 adb shell chmod -R 777     /sdcard/Android/data/com.rigalong/files/instruments/salamander-grand
-# 4. press RESCAN in the app
+# 4. start the app again: it scans the folder when it starts
 ```
 
-An in-app import via the Storage Access Framework would remove this dance and is
-on the list.
+Without adb: Library → Import takes a zip of the pack (an `.sfz` and its
+samples) and installs it there.
 
 ## Installing Surge XT's patch library
 
@@ -267,8 +264,7 @@ launch when sfizz's and Surge's tuning libraries met.
 ## Audio and MIDI modes
 
 Audio out and MIDI in are chosen **separately** -- a Scarlett can carry the
-sound while the CP-88 carries the notes -- and each has a mode. **Tap** the
-Audio or MIDI button to cycle devices; **long-press** it to choose the mode.
+sound while the CP-88 carries the notes -- and each has a mode, in Setup.
 Every name shown is the ALSA name (`CP88/CP73`, `CP88/CP73 MIDI 1`) in every
 mode, computed by snd-usb-audio's own rule.
 
@@ -327,12 +323,12 @@ about 10 ms of silence with the CP-88 plugged in directly and about 50 ms
 behind a hub or dock. That rests on the reap loop running on a
 borrowed AAudio callback thread -- SCHED_FIFO, which an app cannot get for a
 thread of its own; it plays silence on the built-in speaker while it does.
-(The Buffer button itself sets AAudio bursts and applies to ALSA mode only.)
+(In ALSA mode the buffer is 2 AAudio bursts; the `ROUTE` test hook sweeps it.)
 
 ## Master volume
 
-A centred fader in dB at the **end** of the chain, `-40` to `+12` dB, 0 dB at
-centre; tap the label to return to 0 dB. It is the last thing before the single
+A fader in dB at the **end** of the chain, on the stage: `-40` to `+12` dB;
+a long press on its label returns it to 0 dB. It is the last thing before the single
 conversion to the device's format, which saturates on overs and dithers only for
 a 16-bit target.
 
@@ -349,21 +345,11 @@ level move to a new value over 15 ms rather than jumping. A jump is a step
 discontinuity in the samples, which is a click -- switching parts while notes
 were sounding used to produce one. See `engine/include/rigalong/Gain.h`.
 
-## Parts
+## Silenced engines park
 
-The tab row selects what the keyboard plays. **Tap** to show that panel and
-make it the only part sounding; **long-press** to bring a part into the mix
-without silencing the others, which is how a layer is built.
-
-**NONE**, leftmost, puts every engine at zero. That is the position for playing
-the CP-88's own voices: nothing here makes a sound, and because a silenced
-engine is parked rather than merely muted, nothing here costs CPU either. MIDI
-stays connected throughout.
-
-**ALL** is the other end of the same axis, and it is the only place the
-**per-instrument mix faders appear**. Soloed, a part's level is not a choice --
-it is up because it is the part that is playing -- so a fader there would
-either do nothing or quietly break the solo it sits in.
+A live set says which of the song's sounds play. An engine no sound of the
+song uses is at level zero, and a silenced engine is parked rather than merely
+muted, so it costs no CPU either.
 
 A silenced instrument is not stopped at once. Its level fades out, its voices
 are then released, and it keeps rendering until its own output has been
@@ -419,10 +405,6 @@ simply runs without it.
 | `xruns` | Should stay at 0. Any climb is a real glitch. |
 | `cpu` | Percentage of the block deadline consumed. Target 40–50% for a typical patch; ~75% is the measured ceiling. |
 | `peak callback` | The worst single block since the last reset. This catches spikes the averaged CPU figure hides. |
-
-The **Buffer** button cycles 1→4 bursts and restarts the stream. 2 is the
-sensible default: it costs about 2 ms over a single burst and doubles the margin
-against callback jitter.
 
 ## Tests
 

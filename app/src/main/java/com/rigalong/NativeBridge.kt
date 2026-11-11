@@ -61,7 +61,6 @@ object NativeBridge {
      */
     external fun nativeSetExclusive(exclusive: Boolean)
 
-    /** The rate the chosen device declares, from AudioDeviceInfo. 0 = let AAudio pick. */
     /** Render-ring depth in ms; 0 restores the burst-derived default. */
     external fun nativeSetFillMs(ms: Int)
     /** The render thread: nice (0 leaves it), CPUs ("" leaves, "all"), on a borrowed SCHED_FIFO thread (1/0, -1 leaves; next stream start). */
@@ -75,43 +74,27 @@ object NativeBridge {
     /** The USB reap thread's CPUs ("all": all). */
     external fun nativeSetReapCpus(cpus: String)
 
+    /** The rate the chosen device declares, from AudioDeviceInfo. 0 = let AAudio pick. */
     external fun nativeSetPreferredRate(rate: Int)
 
     /** Oboe AudioFormat: 1 = I16, 2 = Float, 3 = I24, 4 = I32. 0 = let Oboe pick. */
     external fun nativeSetPreferredFormat(format: Int)
 
-    /** Opens an input stream on the CP-88 for the loopback probe. Needs RECORD_AUDIO. */
+    /** Opens an input stream on the tablet's microphone for the latency probe. Needs RECORD_AUDIO. */
     external fun nativeEnableInput(deviceId: Int): Boolean
     external fun nativeStartLatencyProbe()
-    external fun nativeStartNoteProbe()
     external fun nativeStressChord(count: Int)
     external fun nativeLogProfile()
 
-    /** Records the mic plus note-on markers, for offline analysis. */
-    external fun nativeStartRecording(seconds: Int): Boolean
-    external fun nativeWriteRecording(wavPath: String, marksPath: String): Boolean
-    external fun nativeRecordedSeconds(): Float
-    external fun nativeIsRecording(): Boolean
+    // The engines' own content. Their PARAMETERS go through the node calls
+    // below, by name; these are what a preset is picked and loaded by.
 
-    /** Loads an SFZ file on the background loader thread. Returns immediately. */
+    /** Loads an SFZ file into the first sfizz on the background loader thread. Returns immediately. */
     external fun nativeLoadInstrument(id: String, path: String)
-    external fun nativeLoadedInstrument(): String
 
-    /**
-     * setBfree, the tonewheel organ. Indices are [SetBfree]'s constants and values are in
-     * natural units -- drawbars 0..8, switches 0/1, the Leslie 0/1/2, the rest
-     * 0..1. Setting is safe from the UI thread: the node queues the change and
-     * applies it at the top of the next audio block.
-     */
-    external fun nativeSetSetBfreeParam(index: Int, value: Float)
-    external fun nativeGetSetBfreeParam(index: Int): Float
-    external fun nativeSetBfreeParamName(index: Int): String
+    /** setBfree, the tonewheel organ: one of its programmes onto a manual (0 upper). */
     external fun nativeSetBfreePreset(index: Int, manual: Int)
     external fun nativeSetBfreePresetNames(): Array<String>
-
-    /** sfizz's level, so setBfree and sfizz can be balanced against each other. */
-    external fun nativeSetSfizzLevel(value: Float)
-    external fun nativeGetSfizzLevel(): Float
 
     // ------------------------------------------------------------- surge xt
     //
@@ -120,26 +103,15 @@ object NativeBridge {
     // then the node renders silence and the rest of the rig is unaffected.
     external fun nativeInitSurge(dataPath: String, homePath: String)
     external fun nativeSurgeReady(): Boolean
-    external fun nativeSurgeBusy(): Boolean
 
     external fun nativeSurgePatchCount(): Int
     /** "Category/Name" — the stable address a saved patch stores. */
     external fun nativeSurgePatchName(index: Int): String
-    external fun nativeSurgePatchShortName(index: Int): String
     /** The file of the patch [nativeSurgeLoadPatchNamed] would load; empty if none. For export. */
     external fun nativeSurgePatchPath(name: String): String
-    external fun nativeSurgeCurrentPatch(): Int
     external fun nativeSurgeCurrentPatchName(): String
-
-    /** Both are asynchronous: loading a patch opens and parses a file. */
-    external fun nativeSurgeLoadPatch(index: Int)
+    /** Asynchronous: loading a patch opens and parses a file. */
     external fun nativeSurgeLoadPatchNamed(name: String)
-
-    /** What the patch author called this macro, or "" if they left it unnamed. */
-    external fun nativeSurgeMacroName(index: Int): String
-
-    external fun nativeSetSurgeParam(index: Int, value: Float)
-    external fun nativeGetSurgeParam(index: Int): Float
 
     // --------------------------------------------------------------- dexed
     //
@@ -155,23 +127,14 @@ object NativeBridge {
     external fun nativeDexedVoiceName(index: Int): String
     /** The voice [nativeDexedSelectVoiceNamed] would pick, as its cartridge has it (128 packed bytes); null if none. */
     external fun nativeDexedVoicePacked(name: String): ByteArray?
-    external fun nativeDexedCurrentVoice(): Int
     external fun nativeDexedCurrentVoiceName(): String
-    external fun nativeDexedSelectVoice(index: Int)
     external fun nativeDexedSelectVoiceNamed(name: String)
-    external fun nativeSetDexedParam(index: Int, value: Float)
-    external fun nativeGetDexedParam(index: Int): Float
-    external fun nativeDexedEngineNames(): Array<String>
 
     // --- Plaits -------------------------------------------------------------
     // Sixteen synthesis models, already compiled into the binary because Surge
     // vendors them. No library to scan, so there is nothing async here.
     external fun nativeSetPlaitsParam(index: Int, value: Float)
-    external fun nativeGetPlaitsParam(index: Int): Float
     external fun nativePlaitsEngineNames(): Array<String>
-    /** What HARMONICS, TIMBRE, MORPH and AUX do in this model, in that order. */
-    external fun nativePlaitsParamLabels(engine: Int): Array<String>
-    external fun nativePlaitsActiveVoices(): Int
 
     // ----------------------------------------------------------- fluidsynth
     //
@@ -187,20 +150,12 @@ object NativeBridge {
     external fun nativeFluidCurrentFont(): String
     /** The file of the font [nativeFluidLoadFontNamed] would load; empty if none. For export. */
     external fun nativeFluidFontPath(name: String): String
-    /** Both are asynchronous: a font is megabytes of samples, decoded for SF3. */
-    external fun nativeFluidLoadFont(index: Int)
+    /** Asynchronous: a font is megabytes of samples, decoded for SF3. */
     external fun nativeFluidLoadFontNamed(name: String)
 
-    external fun nativeFluidPresetCount(): Int
-    /** "bank:prog NAME" — the stable address a saved patch stores. */
-    external fun nativeFluidPresetName(index: Int): String
+    /** The font's presets by index, in bank and program order. */
     external fun nativeFluidCurrentPreset(): Int
-    external fun nativeFluidCurrentPresetName(): String
     external fun nativeFluidSelectPreset(index: Int)
-    external fun nativeFluidSelectPresetNamed(name: String)
-
-    external fun nativeSetFluidParam(index: Int, value: Float)
-    external fun nativeGetFluidParam(index: Int): Float
 
     /**
      * The graph, generically: enough to walk it without knowing what is in it.
@@ -238,8 +193,6 @@ object NativeBridge {
 
     external fun nativeSetNodeParam(index: Int, param: Int, value: Float)
 
-    /** Four ints per edge: fromNode, fromPin, toNode, toPin — nodes as ordinals. */
-    external fun nativeEdges(): IntArray
 
     // ------------------------------------------------------------ direct USB
     //
@@ -295,7 +248,6 @@ object NativeBridge {
 
     /** Engine [i]'s MIDI zone (engine/include/rigalong/MidiZone.h, `Param`). */
     external fun nativeZoneParam(i: Int, param: Int, value: Float)
-    external fun nativeGetZoneParam(i: Int, param: Int): Float
 
     /** TEST: stall the USB reap loop once for [ms], to reproduce a starved IN queue. */
     external fun nativeUsbTestStall(ms: Int)
@@ -322,7 +274,6 @@ object NativeBridge {
      * silence. Not part of a patch: it belongs to the room, not the sound.
      */
     external fun nativeSetMasterDb(db: Float)
-    external fun nativeGetMasterDb(): Float
 
     const val MASTER_MIN_DB = -40f
     const val MASTER_MAX_DB = 12f

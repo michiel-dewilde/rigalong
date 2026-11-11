@@ -23,7 +23,7 @@ import com.rigalong.model.getTyped
 data class RoutingSpec(val audioName: String?, val audioMode: String, val midiName: String?, val midiMode: String,
                        val bufferMs: Int)
 
-/** What the new UI needs from the activity that owns the engine and the routing. */
+/** What the UI needs from the activity that owns the engine and the routing. */
 interface EngineHost {
     /** Installed SFZ instruments: id to display name. */
     fun instruments(): List<Pair<String, String>>
@@ -31,7 +31,6 @@ interface EngineHost {
     /** The SFZ file of installed instrument [id], for an added sfizz instance; null if not installed. */
     fun instrumentPath(id: String): String?
     fun currentInstrument(): String?
-    fun showPrototype()
     /** The stage's one line: the path and its latency when all is well, else what is wrong ("! ..."). */
     fun healthLine(): String
     /** Every figure on one line, the ones the screen leaves out included: for the diagnostics log. */
@@ -1143,22 +1142,6 @@ class SongPlayer(private val lib: Library, private val host: EngineHost, private
     }
 
     fun panic() = NativeBridge.nativePanic()
-
-    /**
-     * Hands the rack back neutral -- every wire on, every zone open -- so the
-     * prototype's part tabs, which know nothing of zones and wires, work as
-     * they always did. [reload] takes it back.
-     */
-    fun releaseRack() {
-        for (i in 0 until NativeBridge.nativeInstanceCount()) {
-            midiOn[i] = true; audioOn[i] = true; gain[i] = 1f
-            NativeBridge.nativeRackWire(i, true, true, 1f)
-            NativeBridge.nativeZoneParam(i, ZONE_PARAMS.indexOf("keyLow"), 0f)
-            NativeBridge.nativeZoneParam(i, ZONE_PARAMS.indexOf("keyHigh"), 127f)
-            NativeBridge.nativeZoneParam(i, ZONE_PARAMS.indexOf("transpose"), 0f)
-            NativeBridge.nativeZoneParam(i, ZONE_PARAMS.indexOf("channelIn"), 0f)
-        }
-    }
 
     // ------------------------------------------------------------- applying
 

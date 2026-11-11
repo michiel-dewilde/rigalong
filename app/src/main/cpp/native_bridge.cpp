@@ -98,43 +98,6 @@ Java_com_rigalong_NativeBridge_nativeLogProfile(JNIEnv*, jobject) {
 }
 
 JNIEXPORT void JNICALL
-Java_com_rigalong_NativeBridge_nativeStartNoteProbe(JNIEnv*, jobject) {
-    engine().startNoteProbe();
-}
-
-JNIEXPORT jboolean JNICALL
-Java_com_rigalong_NativeBridge_nativeStartRecording(JNIEnv*, jobject, jint seconds) {
-    return engine().startRecording(seconds) ? JNI_TRUE : JNI_FALSE;
-}
-
-JNIEXPORT jboolean JNICALL
-Java_com_rigalong_NativeBridge_nativeWriteRecording(JNIEnv* env, jobject, jstring wav,
-                                                      jstring marks) {
-    const char* w = env->GetStringUTFChars(wav, nullptr);
-    const char* m = env->GetStringUTFChars(marks, nullptr);
-    bool ok = false;
-    if (w && m) ok = engine().writeRecording(std::string(w), std::string(m));
-    if (w) env->ReleaseStringUTFChars(wav, w);
-    if (m) env->ReleaseStringUTFChars(marks, m);
-    return ok ? JNI_TRUE : JNI_FALSE;
-}
-
-JNIEXPORT jfloat JNICALL
-Java_com_rigalong_NativeBridge_nativeRecordedSeconds(JNIEnv*, jobject) {
-    return engine().recordedSeconds();
-}
-
-JNIEXPORT jboolean JNICALL
-Java_com_rigalong_NativeBridge_nativeIsRecording(JNIEnv*, jobject) {
-    return engine().isRecording() ? JNI_TRUE : JNI_FALSE;
-}
-
-JNIEXPORT void JNICALL
-Java_com_rigalong_NativeBridge_nativeSetRenderPaused(JNIEnv*, jobject, jboolean p) {
-    engine().setRenderPaused(p == JNI_TRUE);
-}
-
-JNIEXPORT void JNICALL
 Java_com_rigalong_NativeBridge_nativeSetFillMs(JNIEnv*, jobject, jint ms) {
     engine().setFillMs(ms);
 }
@@ -257,35 +220,9 @@ Java_com_rigalong_NativeBridge_nativeLoadInstrument(JNIEnv* env, jobject, jstrin
     if (pathChars) env->ReleaseStringUTFChars(path, pathChars);
 }
 
-JNIEXPORT jstring JNICALL
-Java_com_rigalong_NativeBridge_nativeLoadedInstrument(JNIEnv* env, jobject) {
-    return env->NewStringUTF(engine().loadedInstrument().c_str());
-}
-
 // ------------------------------------------------------------- setBfree
 //
-// Parameters are addressed by index into SetBfreeNode::Param, in natural units:
-// drawbars 0..8, switches 0/1, the Leslie 0/1/2, everything else 0..1. No
-// normalisation layer, because there is nothing between the UI and the node
-// that would benefit from one.
-
-JNIEXPORT void JNICALL
-Java_com_rigalong_NativeBridge_nativeSetSetBfreeParam(JNIEnv*, jobject, jint index,
-                                                      jfloat value) {
-    if (auto* h = engine().setBfree()) h->setParam(index, value);
-}
-
-JNIEXPORT jfloat JNICALL
-Java_com_rigalong_NativeBridge_nativeGetSetBfreeParam(JNIEnv*, jobject, jint index) {
-    auto* h = engine().setBfree();
-    return h ? h->getParam(index) : 0.0f;
-}
-
-JNIEXPORT jstring JNICALL
-Java_com_rigalong_NativeBridge_nativeSetBfreeParamName(JNIEnv* env, jobject, jint index) {
-    auto* h = engine().setBfree();
-    return env->NewStringUTF(h ? h->paramName(index) : "");
-}
+// Its programmes; the parameters go through the generic node calls, by name.
 
 JNIEXPORT void JNICALL
 Java_com_rigalong_NativeBridge_nativeSetBfreePreset(JNIEnv*, jobject, jint index,
@@ -304,18 +241,6 @@ Java_com_rigalong_NativeBridge_nativeSetBfreePresetNames(JNIEnv* env, jobject) {
         env->DeleteLocalRef(name);
     }
     return out;
-}
-
-// sfizz's level, so the two parts can be balanced against each other.
-JNIEXPORT void JNICALL
-Java_com_rigalong_NativeBridge_nativeSetSfizzLevel(JNIEnv*, jobject, jfloat value) {
-    if (auto* s = engine().sfizz()) s->setParam(rigalong::SfizzNode::kLevel, value);
-}
-
-JNIEXPORT jfloat JNICALL
-Java_com_rigalong_NativeBridge_nativeGetSfizzLevel(JNIEnv*, jobject) {
-    auto* s = engine().sfizz();
-    return s ? s->getParam(rigalong::SfizzNode::kLevel) : 0.0f;
 }
 
 // ---------------------------------------------------------------- surge xt
@@ -338,11 +263,6 @@ JNIEXPORT jboolean JNICALL
 Java_com_rigalong_NativeBridge_nativeSurgeReady(JNIEnv*, jobject) {
     auto* s = engine().surge();
     return s && s->ready() ? JNI_TRUE : JNI_FALSE;
-}
-
-JNIEXPORT jboolean JNICALL
-Java_com_rigalong_NativeBridge_nativeSurgeBusy(JNIEnv*, jobject) {
-    return engine().isSurgeBusy() ? JNI_TRUE : JNI_FALSE;
 }
 
 JNIEXPORT jint JNICALL
@@ -390,26 +310,9 @@ Java_com_rigalong_NativeBridge_nativeFluidFontPath(JNIEnv* env, jobject, jstring
 }
 
 JNIEXPORT jstring JNICALL
-Java_com_rigalong_NativeBridge_nativeSurgePatchShortName(JNIEnv* env, jobject, jint index) {
-    auto* s = engine().surge();
-    return env->NewStringUTF(s ? s->patchDisplayName(index).c_str() : "");
-}
-
-JNIEXPORT jint JNICALL
-Java_com_rigalong_NativeBridge_nativeSurgeCurrentPatch(JNIEnv*, jobject) {
-    auto* s = engine().surge();
-    return s ? s->currentPatch() : -1;
-}
-
-JNIEXPORT jstring JNICALL
 Java_com_rigalong_NativeBridge_nativeSurgeCurrentPatchName(JNIEnv* env, jobject) {
     auto* s = engine().surge();
     return env->NewStringUTF(s ? s->currentPatchName().c_str() : "");
-}
-
-JNIEXPORT void JNICALL
-Java_com_rigalong_NativeBridge_nativeSurgeLoadPatch(JNIEnv*, jobject, jint index) {
-    engine().loadSurgePatchAsync(index);
 }
 
 JNIEXPORT void JNICALL
@@ -419,24 +322,6 @@ Java_com_rigalong_NativeBridge_nativeSurgeLoadPatchNamed(JNIEnv* env, jobject, j
         engine().loadSurgePatchNamedAsync(n);
         env->ReleaseStringUTFChars(name, n);
     }
-}
-
-JNIEXPORT jstring JNICALL
-Java_com_rigalong_NativeBridge_nativeSurgeMacroName(JNIEnv* env, jobject, jint index) {
-    auto* s = engine().surge();
-    return env->NewStringUTF(s ? s->macroName(index).c_str() : "");
-}
-
-JNIEXPORT void JNICALL
-Java_com_rigalong_NativeBridge_nativeSetSurgeParam(JNIEnv*, jobject, jint index,
-                                                      jfloat value) {
-    if (auto* s = engine().surge()) s->setParam(index, value);
-}
-
-JNIEXPORT jfloat JNICALL
-Java_com_rigalong_NativeBridge_nativeGetSurgeParam(JNIEnv*, jobject, jint index) {
-    auto* s = engine().surge();
-    return s ? s->getParam(index) : 0.0f;
 }
 
 // ------------------------------------------------------------------- dexed
@@ -490,21 +375,10 @@ Java_com_rigalong_NativeBridge_nativeDexedVoiceName(JNIEnv* env, jobject, jint i
     return env->NewStringUTF(d ? d->voiceName(index).c_str() : "");
 }
 
-JNIEXPORT jint JNICALL
-Java_com_rigalong_NativeBridge_nativeDexedCurrentVoice(JNIEnv*, jobject) {
-    auto* d = engine().dexed();
-    return d ? d->currentVoice() : -1;
-}
-
 JNIEXPORT jstring JNICALL
 Java_com_rigalong_NativeBridge_nativeDexedCurrentVoiceName(JNIEnv* env, jobject) {
     auto* d = engine().dexed();
     return env->NewStringUTF(d ? d->currentVoiceName().c_str() : "");
-}
-
-JNIEXPORT void JNICALL
-Java_com_rigalong_NativeBridge_nativeDexedSelectVoice(JNIEnv*, jobject, jint index) {
-    if (auto* d = engine().dexed()) d->selectVoice(index);
 }
 
 JNIEXPORT void JNICALL
@@ -519,39 +393,9 @@ Java_com_rigalong_NativeBridge_nativeDexedSelectVoiceNamed(JNIEnv* env, jobject,
 }
 
 JNIEXPORT void JNICALL
-Java_com_rigalong_NativeBridge_nativeSetDexedParam(JNIEnv*, jobject, jint index,
-                                                      jfloat value) {
-    if (auto* d = engine().dexed()) d->setParam(index, value);
-}
-
-JNIEXPORT jfloat JNICALL
-Java_com_rigalong_NativeBridge_nativeGetDexedParam(JNIEnv*, jobject, jint index) {
-    auto* d = engine().dexed();
-    return d ? d->getParam(index) : 0.0f;
-}
-
-JNIEXPORT jobjectArray JNICALL
-Java_com_rigalong_NativeBridge_nativeDexedEngineNames(JNIEnv* env, jobject) {
-    jclass stringClass = env->FindClass("java/lang/String");
-    jobjectArray out = env->NewObjectArray(rigalong::DexedNode::kNumEngines, stringClass, nullptr);
-    for (int i = 0; i < rigalong::DexedNode::kNumEngines; ++i) {
-        jstring name = env->NewStringUTF(rigalong::DexedNode::engineName(i));
-        env->SetObjectArrayElement(out, i, name);
-        env->DeleteLocalRef(name);
-    }
-    return out;
-}
-
-JNIEXPORT void JNICALL
 Java_com_rigalong_NativeBridge_nativeSetPlaitsParam(JNIEnv*, jobject, jint index,
                                                        jfloat value) {
     if (auto* p = engine().plaits()) p->setParam(index, value);
-}
-
-JNIEXPORT jfloat JNICALL
-Java_com_rigalong_NativeBridge_nativeGetPlaitsParam(JNIEnv*, jobject, jint index) {
-    auto* p = engine().plaits();
-    return p ? p->getParam(index) : 0.0f;
 }
 
 JNIEXPORT jobjectArray JNICALL
@@ -564,25 +408,6 @@ Java_com_rigalong_NativeBridge_nativePlaitsEngineNames(JNIEnv* env, jobject) {
         env->DeleteLocalRef(name);
     }
     return out;
-}
-
-JNIEXPORT jobjectArray JNICALL
-Java_com_rigalong_NativeBridge_nativePlaitsParamLabels(JNIEnv* env, jobject, jint engine) {
-    jclass stringClass = env->FindClass("java/lang/String");
-    jobjectArray out =
-            env->NewObjectArray(rigalong::PlaitsNode::kNumLabelled, stringClass, nullptr);
-    for (int i = 0; i < rigalong::PlaitsNode::kNumLabelled; ++i) {
-        jstring name = env->NewStringUTF(rigalong::PlaitsNode::paramLabel(engine, i));
-        env->SetObjectArrayElement(out, i, name);
-        env->DeleteLocalRef(name);
-    }
-    return out;
-}
-
-JNIEXPORT jint JNICALL
-Java_com_rigalong_NativeBridge_nativePlaitsActiveVoices(JNIEnv*, jobject) {
-    auto* p = engine().plaits();
-    return p ? p->activeVoices() : 0;
 }
 
 // ------------------------------------------------------------- fluidsynth
@@ -636,27 +461,10 @@ Java_com_rigalong_NativeBridge_nativeFluidCurrentFont(JNIEnv* env, jobject) {
 }
 
 JNIEXPORT void JNICALL
-Java_com_rigalong_NativeBridge_nativeFluidLoadFont(JNIEnv*, jobject, jint index) {
-    engine().loadSoundFontAsync(index);
-}
-
-JNIEXPORT void JNICALL
 Java_com_rigalong_NativeBridge_nativeFluidLoadFontNamed(JNIEnv* env, jobject, jstring name) {
     const char* c = env->GetStringUTFChars(name, nullptr);
     if (c != nullptr) engine().loadSoundFontNamedAsync(std::string(c));
     if (c) env->ReleaseStringUTFChars(name, c);
-}
-
-JNIEXPORT jint JNICALL
-Java_com_rigalong_NativeBridge_nativeFluidPresetCount(JNIEnv*, jobject) {
-    auto* f = engine().fluid();
-    return f ? f->presetCount() : 0;
-}
-
-JNIEXPORT jstring JNICALL
-Java_com_rigalong_NativeBridge_nativeFluidPresetName(JNIEnv* env, jobject, jint index) {
-    auto* f = engine().fluid();
-    return env->NewStringUTF(f ? f->presetName(index).c_str() : "");
 }
 
 JNIEXPORT jint JNICALL
@@ -665,41 +473,9 @@ Java_com_rigalong_NativeBridge_nativeFluidCurrentPreset(JNIEnv*, jobject) {
     return f ? f->currentPreset() : -1;
 }
 
-JNIEXPORT jstring JNICALL
-Java_com_rigalong_NativeBridge_nativeFluidCurrentPresetName(JNIEnv* env, jobject) {
-    auto* f = engine().fluid();
-    return env->NewStringUTF(f ? f->currentPresetName().c_str() : "");
-}
-
 JNIEXPORT void JNICALL
 Java_com_rigalong_NativeBridge_nativeFluidSelectPreset(JNIEnv*, jobject, jint index) {
     if (auto* f = engine().fluid()) f->selectPreset(index);
-}
-
-JNIEXPORT void JNICALL
-Java_com_rigalong_NativeBridge_nativeFluidSelectPresetNamed(JNIEnv* env, jobject,
-                                                               jstring name) {
-    auto* f = engine().fluid();
-    const char* c = env->GetStringUTFChars(name, nullptr);
-    if (f != nullptr && c != nullptr) {
-        // Same rule as Surge and Dexed: record the intent whether or not the
-        // library is up yet, so a restore that arrives first is still honoured.
-        f->requestPresetNamed(std::string(c));
-        f->selectPresetNamed(std::string(c));
-    }
-    if (c) env->ReleaseStringUTFChars(name, c);
-}
-
-JNIEXPORT void JNICALL
-Java_com_rigalong_NativeBridge_nativeSetFluidParam(JNIEnv*, jobject, jint index,
-                                                      jfloat value) {
-    if (auto* f = engine().fluid()) f->setParam(index, value);
-}
-
-JNIEXPORT jfloat JNICALL
-Java_com_rigalong_NativeBridge_nativeGetFluidParam(JNIEnv*, jobject, jint index) {
-    auto* f = engine().fluid();
-    return f ? f->getParam(index) : 0.0f;
 }
 
 // ------------------------------------------------------- the graph, generically
@@ -848,37 +624,6 @@ JNIEXPORT void JNICALL
 Java_com_rigalong_NativeBridge_nativeSetNodeParam(JNIEnv*, jobject, jint index,
                                                      jint param, jfloat value) {
     if (rigalong::Node* n = engine().graph().nodeAt(index)) n->setParam(param, value);
-}
-
-// Edges as a flat int array, four per edge: fromNode, fromPin, toNode, toPin.
-// Node ids are mapped to ORDINALS, because an id is an allocation counter and
-// means nothing across runs -- an ordinal at least survives a patch file.
-JNIEXPORT jintArray JNICALL
-Java_com_rigalong_NativeBridge_nativeEdges(JNIEnv* env, jobject) {
-    const rigalong::Graph& g = engine().graph();
-    const auto& edges = g.edges();
-
-    auto ordinalOf = [&g](rigalong::NodeId id) {
-        for (int i = 0; i < g.nodeCount(); ++i) {
-            if (g.idAt(i) == id) return i;
-        }
-        return -1;
-    };
-
-    std::vector<jint> flat;
-    flat.reserve(edges.size() * 4);
-    for (const rigalong::Edge& e : edges) {
-        flat.push_back(ordinalOf(e.fromNode));
-        flat.push_back(e.fromPin);
-        flat.push_back(ordinalOf(e.toNode));
-        flat.push_back(e.toPin);
-    }
-
-    jintArray out = env->NewIntArray(static_cast<jsize>(flat.size()));
-    if (!flat.empty()) {
-        env->SetIntArrayRegion(out, 0, static_cast<jsize>(flat.size()), flat.data());
-    }
-    return out;
 }
 
 // Stats come back as a float array rather than a formatted string: no allocation
@@ -1332,12 +1077,6 @@ Java_com_rigalong_NativeBridge_nativeZoneParam(JNIEnv*, jobject, jint i, jint pa
     if (rigalong::MidiZoneNode* z = engine().zone(i)) z->setParam(param, value);
 }
 
-JNIEXPORT jfloat JNICALL
-Java_com_rigalong_NativeBridge_nativeGetZoneParam(JNIEnv*, jobject, jint i, jint param) {
-    rigalong::MidiZoneNode* z = engine().zone(i);
-    return z ? z->getParam(param) : 0.0f;
-}
-
 // TEST: stall the USB reap loop once for `ms` (a starved IN queue).
 JNIEXPORT void JNICALL
 Java_com_rigalong_NativeBridge_nativeUsbTestStall(JNIEnv*, jobject, jint ms) {
@@ -1395,11 +1134,6 @@ Java_com_rigalong_NativeBridge_nativePrepareGraph(JNIEnv*, jobject) {
 JNIEXPORT void JNICALL
 Java_com_rigalong_NativeBridge_nativeSetMasterDb(JNIEnv*, jobject, jfloat db) {
     engine().setMasterDb(db);
-}
-
-JNIEXPORT jfloat JNICALL
-Java_com_rigalong_NativeBridge_nativeGetMasterDb(JNIEnv*, jobject) {
-    return engine().masterDb();
 }
 
 // GET_INTERFACE: the altsetting the device reports, -1 if it will not say.

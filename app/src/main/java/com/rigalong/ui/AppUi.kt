@@ -80,11 +80,10 @@ import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.zIndex
 
 /*
- * The new UI, first slice (PLAN.md M3): the stage view and a form-based song
- * editor over the rack. Dark, large targets (S17.1), stage faders that move
- * only by dragging (S17.4). Still to come in M3: strings in resources, the
- * edit lock, the environment view. This slice is about getting a setlist onto the
- * stage.
+ * The app's screen: the top bar and its four views -- the stage, the songs
+ * (setlists and the song editor), the library and the setup -- over the rack
+ * (model/Rack.kt). Dark, large targets (S17.1); from the stage the other views
+ * open only on a long press (the edit lock, S17.3).
  */
 
 private val Bg = Color(0xFF101216)
@@ -139,7 +138,7 @@ fun AppUi(player: SongPlayer, lib: Library, host: EngineHost) {
         // Edge to edge is the rule at target SDK 36: keep clear of the status
         // and navigation bars, and of a display cutout, ourselves.
         Column(Modifier.fillMaxSize().safeDrawingPadding().padding(12.dp)) {
-            TopBar(player, health, screen, songsUnsaved = songsEdit.unsaved, onScreen = { screen = it }, onPrototype = host::showPrototype)
+            TopBar(player, health, screen, songsUnsaved = songsEdit.unsaved, onScreen = { screen = it })
             Spacer(Modifier.height(8.dp))
             Box(Modifier.weight(1f)) {
                 when (screen) {
@@ -159,8 +158,7 @@ fun AppUi(player: SongPlayer, lib: Library, host: EngineHost) {
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun TopBar(player: SongPlayer, health: String, screen: Int, songsUnsaved: Boolean, onScreen: (Int) -> Unit,
-                   onPrototype: () -> Unit) {
+private fun TopBar(player: SongPlayer, health: String, screen: Int, songsUnsaved: Boolean, onScreen: (Int) -> Unit) {
     // EDIT LOCK (S17.3): from the stage, the editors open only on a long
     // press, so a stray tap mid-song never leaves the stage.
     val locked = screen == 0
@@ -192,7 +190,6 @@ private fun TopBar(player: SongPlayer, health: String, screen: Int, songsUnsaved
                 if (locked) Text(stringResource(R.string.hold_to_edit), color = Dim, fontSize = 11.sp)
                 Spacer(Modifier.width(8.dp))
                 status(Modifier.weight(1f))
-                Tab(stringResource(R.string.tab_prototype), false, locked) { onPrototype() }
                 panic()
             }
         } else {
@@ -200,7 +197,6 @@ private fun TopBar(player: SongPlayer, health: String, screen: Int, songsUnsaved
             Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.horizontalScroll(rememberScrollState())) {
                     tabs()
-                    Tab(stringResource(R.string.tab_prototype), false, locked) { onPrototype() }
                 }
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     status(Modifier.weight(1f))

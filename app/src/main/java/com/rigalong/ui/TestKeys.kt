@@ -13,7 +13,7 @@ import com.rigalong.TouchKeyboardView
  * The on-screen test keyboard (REQUIREMENTS S20.4): notes enter the engine as
  * MIDI from the keys does, so they pass the zones and wires and play what the
  * current live set plays -- a song or a binding can be checked with no
- * keyboard attached. The prototype's view, reused.
+ * keyboard attached. A View ([TouchKeyboardView]): it tracks its own pointers.
  */
 @Composable
 fun TestKeys(modifier: Modifier = Modifier) {

@@ -2,10 +2,7 @@ package com.rigalong
 
 import com.rigalong.model.devices.Devices
 import com.rigalong.model.Library
-import android.app.Activity
 import android.content.Context
-import android.graphics.Color
-import android.graphics.Typeface
 import android.media.AudioDeviceInfo
 import android.media.AudioManager
 import android.media.midi.MidiDevice
@@ -17,24 +14,13 @@ import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
-import android.view.Gravity
-import android.view.MotionEvent
-import android.view.View
-import android.view.ViewGroup
 import android.view.WindowManager
-import android.widget.Button
-import android.widget.LinearLayout
-import android.widget.TextView
 
 /**
- * M2: prove the pipe end to end. Opens an exclusive/MMAP Oboe stream to the
- * CP-88, takes MIDI in over the same cable, and plays its engines (sfizz,
- * setBfree, Surge XT, Dexed, Plaits, FluidSynth) --
- * with the numbers that matter visible while you play.
- *
- * The UI is deliberately plain Views. Compose would be nicer to write and is a
- * worse fit here: this screen exists to report on the audio thread, and every
- * frame the UI renders is a frame competing with it.
+ * The one activity: it owns the engine's bring-up, the routing of audio out
+ * and MIDI in (Android's own path or direct USB), the watchdog that brings
+ * them back, and the scriptable test hooks; the screen is ui/AppUi.kt, which
+ * reaches all of this through [com.rigalong.ui.EngineHost].
  */
 class MainActivity : androidx.activity.ComponentActivity() {
 
@@ -43,27 +29,11 @@ class MainActivity : androidx.activity.ComponentActivity() {
         const val ACTION_USB_PERMISSION = "com.rigalong.USB_PERMISSION"
     }
 
-    private lateinit var statusView: TextView
-    private lateinit var midiView: TextView
-    private lateinit var setBfreePanel: SetBfreePanelBuilder
-    private lateinit var surgePanel: SurgePanelBuilder
-    private lateinit var dexedPanel: DexedPanelBuilder
-    private lateinit var plaitsPanel: PlaitsPanelBuilder
-    private lateinit var fluidPanel: FluidPanelBuilder
+    /** Every status figure as Setup shows it (S19.3), rebuilt by [updateStats]. */
+    @Volatile private var statusLines: List<String> = listOf("starting…")
 
-    /** sfizz on its own is where the app opens, matching the node's own default. */
-    private var part = Part.Sfizz
-
-    /**
-     * Which panel is on screen. NOT the same thing as which part is audible, and
-     * keeping them separate is the point: a long-press adds a part to the mix
-     * without hiding the panel you were working on, so a layer can be built
-     * without losing your place.
-     */
-    private var visiblePart = Part.Sfizz
-    private val partTabs = LinkedHashMap<Part, Button>()
-    private val partPanels = LinkedHashMap<Part, View>()
-    private var patchIndex = -1
+    /** What became of MIDI in the last time it was opened: the port, or why not. */
+    @Volatile private var midiStatus = ""
 
     /** All 0 when the engine is healthy. See watchAudioDevice(). */
     private var deviceLostSince = 0L
@@ -138,14 +108,6 @@ class MainActivity : androidx.activity.ComponentActivity() {
             if (::player.isInitialized) recogniseDevices()
             updateStats()
             if (++altTick % 4 == 0) watchUsbAltSetting()
-            // Surge comes up asynchronously and its patch loads are asynchronous
-            // too, so the panel is re-read rather than being told. Cheap: it is a
-            // handful of reads of values the node already holds, and it means the
-            // screen can never disagree with the engine.
-            if (::surgePanel.isInitialized) surgePanel.refresh()
-            if (::dexedPanel.isInitialized) dexedPanel.refresh()
-            if (::plaitsPanel.isInitialized) plaitsPanel.refresh()
-            if (::fluidPanel.isInitialized) fluidPanel.refresh()
             handler.postDelayed(this, 250)
         }
     }
@@ -185,13 +147,8 @@ class MainActivity : androidx.activity.ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-        // Before buildUi, so the buttons are built with the right faces on them.
         loadPrefs()
         syncUsbAttach()
-        // Two screens in one frame while M3 is under way: the new UI (Compose,
-        // ui/AppUi.kt) and the prototype's, which still owns routing and the
-        // engine panels. The new one is the default; each has a way to the other.
-        prototypeView = buildUi()
         appLibrary = Library(java.io.File(filesDir, "library"), Build.MODEL)
         player = com.rigalong.ui.SongPlayer(appLibrary, engineHost, prefs())
         val diagnostics = com.rigalong.ui.Diagnostics(this)
@@ -204,26 +161,15 @@ class MainActivity : androidx.activity.ComponentActivity() {
             runCatching { diagnostics.event("CRASH on ${t.name}: ${android.util.Log.getStackTraceString(e)}") }
             previousHandler?.uncaughtException(t, e)
         }
-        composeView = androidx.compose.ui.platform.ComposeView(this).apply {
+        setContentView(androidx.compose.ui.platform.ComposeView(this).apply {
             setContent { com.rigalong.ui.AppUi(player, appLibrary, engineHost) }
-        }
-        setContentView(android.widget.FrameLayout(this).apply {
-            addView(prototypeView)
-            addView(composeView)
         })
-        showNewUi(prefs().getBoolean("ui.new", true))
         // A STRAY BACK GESTURE MUST NOT END THE INSTRUMENT MID-SONG (found the
-        // hard way on 2026-10-11): on the new UI, Back goes to the stage, and
-        // on the stage it does nothing. The prototype screen keeps Back as it was.
+        // hard way on 2026-10-11): Back goes to the stage, and on the stage it
+        // does nothing.
         onBackPressedDispatcher.addCallback(this, object : androidx.activity.OnBackPressedCallback(true) {
             override fun handleOnBackPressed() {
-                if (composeView.visibility == View.VISIBLE) {
-                    if (!player.onStage) player.backToStage?.invoke()
-                } else {
-                    isEnabled = false
-                    onBackPressedDispatcher.onBackPressed()
-                    isEnabled = true
-                }
+                if (!player.onStage) player.backToStage?.invoke()
             }
         })
         // Once the engine has its nodes: the demo setlist on first run (S14.2),
@@ -232,14 +178,13 @@ class MainActivity : androidx.activity.ComponentActivity() {
             runCatching {
                 appLibrary.seedIfEmpty(NativeBridge.nativeSetBfreePresetNames().toList())
                 player.resume()
-            }.onFailure { android.util.Log.e("rigalong-ui", "new UI start: $it") }
+            }.onFailure { android.util.Log.e("rigalong-ui", "start: $it") }
         }, 2500)
 
         usbThread.start()
         usbHandler = Handler(usbThread.looper)
 
         val filter = android.content.IntentFilter("com.rigalong.NOTE")
-        filter.addAction("com.rigalong.LEVEL")
         filter.addAction("com.rigalong.DUMP")
         filter.addAction("com.rigalong.MASTER")
         filter.addAction("com.rigalong.SHARING")
@@ -256,10 +201,8 @@ class MainActivity : androidx.activity.ComponentActivity() {
         filter.addAction("com.rigalong.INSTRUMENT")
         filter.addAction("com.rigalong.OUTPUT")
         filter.addAction("com.rigalong.RESET")
-        filter.addAction("com.rigalong.PART")
         filter.addAction("com.rigalong.MEASURE")
         filter.addAction("com.rigalong.DEVHEALTH")
-        filter.addAction("com.rigalong.PANIC")
         filter.addAction("com.rigalong.ROUTE")
         filter.addAction("com.rigalong.SYSEX")
         filter.addAction("com.rigalong.RENDERPRIO")
@@ -371,9 +314,6 @@ class MainActivity : androidx.activity.ComponentActivity() {
             startSurge()
             startDexed()
             startFluid()
-            // Restore AFTER loadFirstInstrument(), which picks a default: a patch
-            // that names an instrument should win over the default, not race it.
-            restorePatch()
             engineBroughtUp = true
         } else if (!NativeBridge.nativeMidiOpen() && !routingBusy) {
             // It kept playing while we were away. The one thing worth checking is
@@ -382,12 +322,6 @@ class MainActivity : androidx.activity.ComponentActivity() {
             if (effectiveMode(Use.MIDI).direct) applyRouting("midi lost")
             else openMidi()
         }
-
-        // The nodes hold the live values either way, so the panels can show what
-        // they actually are.
-        setBfreePanel.refresh()
-        surgePanel.refresh()
-        syncPartTabs()
         handler.post(poller)
     }
 
@@ -501,9 +435,6 @@ class MainActivity : androidx.activity.ComponentActivity() {
     override fun onPause() {
         super.onPause()
         applyStageDnd(false)
-        // Save on the way out, every time. A patch you have to remember to save is
-        // a patch you lose, and capturing the graph is a few dozen plain reads.
-        savePatch(named = false)
         handler.removeCallbacks(poller)
         // Hand over to the cut-down watchdog. The instrument keeps playing, so
         // it has to keep recovering too.
@@ -554,230 +485,6 @@ class MainActivity : androidx.activity.ComponentActivity() {
         engineBroughtUp = false
     }
 
-    // ---------------------------------------------------------------- patches
-
-    private var patchStatus = "—"
-
-    private fun savePatch(named: Boolean) {
-        val instrument = currentInstrument?.id.orEmpty()
-        patchStatus = if (named) {
-            "saved ${PatchStore.saveNamed(this, instrument)}"
-        } else {
-            PatchStore.saveLast(this, instrument)
-            patchStatus
-        }
-    }
-
-    /**
-     * Restores the auto-saved patch, if there is one.
-     *
-     * The instrument is applied through the normal asynchronous load rather than
-     * being forced: parsing an SFZ takes seconds and must not happen on the way
-     * through onResume.
-     */
-    private fun restorePatch() {
-        val patch = PatchStore.readLast(this) ?: return
-        applyPatch(patch, "restored")
-    }
-
-    private fun applyPatch(patch: org.json.JSONObject, verb: String) {
-        val wanted = PatchStore.apply(patch)
-        if (!wanted.isNullOrEmpty() && wanted != currentInstrument?.id) {
-            library.firstOrNull { it.id == wanted }?.let { selectInstrument(it) }
-        }
-        // The Surge patch is addressed by NAME, not by index, for the same reason
-        // the instrument is addressed by id: an index means something different
-        // the moment the library changes underneath it. The load is asynchronous
-        // and harmless if Surge is still starting -- it is simply refused, and
-        // the poller will show what actually happened.
-        patch.optString("surgePatch").takeIf { it.isNotEmpty() }?.let {
-            NativeBridge.nativeSurgeLoadPatchNamed(it)
-        }
-        patch.optString("dexedVoice").takeIf { it.isNotEmpty() }?.let {
-            NativeBridge.nativeDexedSelectVoiceNamed(it)
-        }
-        // The preset is asked for BEFORE the font, deliberately. Loading a
-        // font takes hundreds of milliseconds and lands on its first preset
-        // when it finishes; recording the wanted preset first means the load
-        // honours it instead of overwriting it.
-        patch.optString("fluidPreset").takeIf { it.isNotEmpty() }?.let {
-            NativeBridge.nativeFluidSelectPresetNamed(it)
-        }
-        patch.optString("fluidFont").takeIf { it.isNotEmpty() }?.let {
-            NativeBridge.nativeFluidLoadFontNamed(it)
-        }
-        patchStatus = "$verb ${patch.optString("name", "patch")}"
-        setBfreePanel.refresh()
-        surgePanel.refresh()
-        dexedPanel.refresh()
-        plaitsPanel.refresh()
-        fluidPanel.refresh()
-        syncPartTabs()
-    }
-
-    /**
-     * Repaints the tabs from the LEVELS, which are the truth.
-     *
-     * The tabs are a view of what is audible, never a separate setting of their
-     * own — so after a patch load, or a fader move, they are re-derived rather
-     * than left where they were. Any combination the faders can express is legal
-     * and the tabs will show it, which is what makes layering visible.
-     */
-    private fun syncPartTabs() {
-        val setBfree = NativeBridge.nativeGetSetBfreeParam(SetBfree.LEVEL) > 0.01f
-        val sfizz = NativeBridge.nativeGetSfizzLevel() > 0.01f
-        val surge = NativeBridge.nativeGetSurgeParam(Surge.LEVEL) > 0.01f
-        val dexed = NativeBridge.nativeGetDexedParam(Dexed.LEVEL) > 0.01f
-        val plaits = NativeBridge.nativeGetPlaitsParam(Plaits.LEVEL) > 0.01f
-        val fluid = NativeBridge.nativeGetFluidParam(Fluid.LEVEL) > 0.01f
-        val on = listOf(sfizz, setBfree, surge, dexed, plaits, fluid)
-        part = when {
-            on.none { it } -> Part.None
-            on.count { it } != 1 -> Part.All
-            sfizz -> Part.Sfizz
-            setBfree -> Part.SetBfree
-            surge -> Part.Surge
-            dexed -> Part.Dexed
-            plaits -> Part.Plaits
-            else -> Part.Fluid
-        }
-
-        val audible = mapOf(
-            Part.Sfizz to sfizz, Part.SetBfree to setBfree, Part.Surge to surge,
-            Part.Dexed to dexed, Part.Plaits to plaits, Part.Fluid to fluid,
-            Part.All to (on.count { it } > 1),
-            // NONE lights when nothing is sounding, which is the one case where
-            // a lit tab means the absence of sound rather than its presence.
-            Part.None to on.none { it },
-        )
-        partTabs.forEach { (p, button) ->
-            val lit = audible[p] == true
-            val shown = p == visiblePart
-            // Two independent states on one control, so they must not use the
-            // same channel: the BACKGROUND says which panel you are looking at,
-            // the TEXT says whether that part is making sound.
-            button.setBackgroundColor(
-                if (shown) Color.parseColor("#3A4657") else Color.parseColor("#20242C")
-            )
-            button.setTextColor(
-                if (lit) Color.parseColor("#7FE0C0") else Color.parseColor("#8A93A3")
-            )
-            button.setTypeface(null, if (lit) Typeface.BOLD else Typeface.NORMAL)
-        }
-    }
-
-    /**
-     * Shows a part's panel, and optionally makes it the only one sounding.
-     *
-     * `solo = true` is the ordinary tap and does what the old PART cycle did:
-     * that part up, the rest to zero. `solo = false` is the long-press — it
-     * brings the part IN without silencing anything, which is how a layer gets
-     * built, and it is the one thing the cycle could never do.
-     */
-    private fun showPart(target: Part, solo: Boolean) {
-        visiblePart = target
-        if (solo) {
-            setBfreePanel.setPart(target)
-            surgePanel.setPart(target)
-            dexedPanel.setPart(target)
-            plaitsPanel.setPart(target)
-            fluidPanel.setPart(target)
-        } else {
-            when (target) {
-                Part.Sfizz -> NativeBridge.nativeSetSfizzLevel(1f)
-                Part.SetBfree -> NativeBridge.nativeSetSetBfreeParam(SetBfree.LEVEL, 1f)
-                Part.Surge -> NativeBridge.nativeSetSurgeParam(Surge.LEVEL, Surge.DEFAULT_LEVEL)
-                Part.Dexed -> NativeBridge.nativeSetDexedParam(Dexed.LEVEL, Dexed.DEFAULT_LEVEL)
-                Part.Plaits -> NativeBridge.nativeSetPlaitsParam(Plaits.LEVEL, Plaits.DEFAULT_LEVEL)
-                Part.Fluid -> NativeBridge.nativeSetFluidParam(Fluid.LEVEL, Fluid.DEFAULT_LEVEL)
-                Part.All -> {
-                    setBfreePanel.setPart(Part.All)
-                    surgePanel.setPart(Part.All)
-                    dexedPanel.setPart(Part.All)
-                    plaitsPanel.setPart(Part.All)
-                    fluidPanel.setPart(Part.All)
-                }
-                // "Add NONE to the mix" is not a thing, so a long-press does
-                // what a tap does rather than quietly nothing.
-                Part.None -> {
-                    setBfreePanel.setPart(Part.None)
-                    surgePanel.setPart(Part.None)
-                    dexedPanel.setPart(Part.None)
-                    plaitsPanel.setPart(Part.None)
-                    fluidPanel.setPart(Part.None)
-                }
-            }
-        }
-
-        applyPanelVisibility(target)
-
-        setBfreePanel.refresh()
-        surgePanel.refresh()
-        dexedPanel.refresh()
-        plaitsPanel.refresh()
-        fluidPanel.refresh()
-        syncPartTabs()
-    }
-
-    /**
-     * Hides every panel, then shows the ones this part wants.
-     *
-     * Two passes, not one, because sfizz and setBfree map to the SAME view — a
-     * single pass would set it visible for one key and immediately hide it
-     * again for the other, and which won would depend on map order.
-     *
-     * ALL shows everything, scrolled, which is the old behaviour and still the
-     * right thing when balancing a layer against itself.
-     */
-    private fun applyPanelVisibility(target: Part) {
-        partPanels.values.forEach { it.visibility = View.GONE }
-        partPanels.forEach { (p, view) ->
-            if (target == Part.All || p == target) view.visibility = View.VISIBLE
-        }
-
-        // The mix faders belong to ALL and to nothing else. Soloed, a part's
-        // level is not a setting: it is 1 because it is the part that is
-        // playing. Leaving the fader there let a drag put the soloed part at
-        // half, or at zero, with the tab still saying it was the one sounding.
-        //
-        // And it was worse than merely redundant: the sfizz and setBfree faders
-        // live on a SHARED panel, so sfizz and setBfree showed two mix faders
-        // while every other solo showed one, which is the arbitrariness
-        // Michiel reported rather than any deliberate rule.
-        val mixing = target == Part.All
-        setBfreePanel.setMixVisible(mixing)
-        surgePanel.setMixVisible(mixing)
-        dexedPanel.setMixVisible(mixing)
-        plaitsPanel.setMixVisible(mixing)
-        fluidPanel.setMixVisible(mixing)
-    }
-
-    /** One tab. Tap to show and solo; long-press to add to the mix. */
-    private fun makePartTab(target: Part): Button {
-        val label = target.label
-        return Button(this).apply {
-            text = label
-            textSize = 17f
-            setPadding(28, 22, 28, 22)
-            layoutParams = LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT
-            ).apply { rightMargin = 10 }
-            setOnClickListener { showPart(target, solo = true) }
-            setOnLongClickListener { showPart(target, solo = false); true }
-        }
-    }
-
-    /**
-     * Brings Surge up. Asynchronous on purpose: constructing it scans 641
-     * patches and 188 wavetables, 41 ms of file work that has no business on the
-     * way through onResume. Until it finishes, the node renders silence and
-     * everything else plays normally.
-     *
-     * The content lives beside the instrument library rather than in the APK.
-     * Surge takes a filesystem path, so it cannot read out of an APK at all, and
-     * keeping it outside means the full 483 MB library can be swapped in without
-     * a rebuild. See tools/install_surge_data.sh.
-     */
     /**
      * Brings the DX7 up. The 33 cartridges that ship in the APK are seeded into
      * internal storage once; anything the user drops into the external `dx7/`
@@ -817,6 +524,17 @@ class MainActivity : androidx.activity.ComponentActivity() {
         )
     }
 
+    /**
+     * Brings Surge up. Asynchronous on purpose: constructing it scans 641
+     * patches and 188 wavetables, 41 ms of file work that has no business on the
+     * way through onResume. Until it finishes, the node renders silence and
+     * everything else plays normally.
+     *
+     * The content lives beside the instrument library rather than in the APK.
+     * Surge takes a filesystem path, so it cannot read out of an APK at all, and
+     * keeping it outside means the full 483 MB library can be swapped in without
+     * a rebuild. See tools/install_surge_data.sh.
+     */
     private fun startSurge() {
         val data = java.io.File(getExternalFilesDir(null), "surge-xt")
         // Writable and app-private: sst-plugininfra's homePath() THROWS if HOME
@@ -1035,14 +753,20 @@ class MainActivity : androidx.activity.ComponentActivity() {
     private var midiMode = IoMode.ALSA
     private var usbBufferMs = UsbBuffers.DEFAULT_MS
 
-    /** Master volume in dB, 0 = unity. Half-decibel steps on the fader. */
+    /**
+     * The master volume in dB, 0 = unity: at the end of the chain, so it cuts
+     * below the instrument's own mix and lifts above it. The direct-USB modes
+     * bypass Android's stream volume entirely (measured 2026-09-22: about 28 dB
+     * louder than the ALSA path at the same settings), so the instrument needs
+     * a volume of its own. Half-decibel steps on the stage's fader.
+     */
     private var masterDb = 0f
-    private lateinit var masterLabel: TextView
-    private lateinit var masterBar: android.widget.SeekBar
-    private val MASTER_STEPS =
-        ((NativeBridge.MASTER_MAX_DB - NativeBridge.MASTER_MIN_DB) * 2).toInt()
-    private fun dbToProgress(db: Float) = ((db - NativeBridge.MASTER_MIN_DB) * 2).toInt()
-    private fun progressToDb(p: Int) = NativeBridge.MASTER_MIN_DB + p / 2f
+
+    private fun setMasterDb(db: Float) {
+        masterDb = db.coerceIn(NativeBridge.MASTER_MIN_DB, NativeBridge.MASTER_MAX_DB)
+        NativeBridge.nativeSetMasterDb(masterDb)
+        prefs().edit().putFloat("masterDb", masterDb).apply()
+    }
 
     /**
      * Routing runs here, never on the main thread: entering a direct mode can
@@ -1502,13 +1226,10 @@ class MainActivity : androidx.activity.ComponentActivity() {
         if (mMode.direct && midi?.usb != null) {
             val s = sessions.getValue(midi.usb.deviceName)
             val err = NativeBridge.nativeStartUsbMidi(s.fd, s.raw, true, midi.port)
-            runOnUiThread {
-                midiView.text = if (err == null) "MIDI: ${midi.name}  [${mMode.label}]"
-                                else "MIDI: $err"
-            }
+            midiStatus = if (err == null) "${midi.name}  [${mMode.label}]" else err
         } else if (mMode.off) {
             // nativeCloseMidi() and the device close have already run.
-            runOnUiThread { midiView.text = "MIDI: none" }
+            midiStatus = "none"
         } else {
             runOnUiThread { lastMidiAttempt = 0L; openMidi() }
         }
@@ -1812,55 +1533,6 @@ class MainActivity : androidx.activity.ComponentActivity() {
         sessions.clear()
     }
 
-    /**
-     * Mode and buffer, for one use. Long-press on the Audio or MIDI button.
-     * A list of choices rather than a form: it has to be usable in a hurry.
-     */
-    private fun showModeDialog(use: Use) {
-        val audio = resolveAudio()
-        val midi = resolveMidi()
-        val isUsb = if (use == Use.AUDIO) audio?.usb != null else midi?.usb != null
-        val current = if (use == Use.AUDIO) audioMode else midiMode
-        val target = if (use == Use.AUDIO) audio?.name ?: "speaker" else midi?.name ?: "none"
-        val same = sameDevice(audio, midi)
-
-        val items = ArrayList<String>()
-        val actions = ArrayList<() -> Unit>()
-        for (m in IoMode.values()) {
-            val note = when {
-                m == IoMode.USB_INTERFACE && use == Use.AUDIO ->
-                    "  -- fragile: Android can still route system sounds here"
-                m == IoMode.USB_DEVICE && same -> "  -- owns the whole device: MIDI too"
-                m == IoMode.USB_DEVICE -> "  -- owns the whole device"
-                m == IoMode.NONE && use == Use.MIDI -> "  -- not opened by anyone"
-                m == IoMode.NONE -> "  -- silent: nothing is opened"
-                else -> ""
-            }
-            items += (if (m == current) "(o)  " else "( )  ") + m.label + note
-            actions += { setMode(use, m) }
-        }
-        if (use == Use.AUDIO) {
-            for (ms in UsbBuffers.choicesMs) {
-                items += (if (ms == usbBufferMs) "(o)  " else "( )  ") + "Direct USB buffer $ms ms" +
-                    if (ms == UsbBuffers.DEFAULT_MS) "  (default)" else ""
-                actions += {
-                    usbBufferMs = ms
-                    saveModePrefs()
-                    if (effectiveMode(Use.AUDIO).direct) applyRouting("buffer change")
-                }
-            }
-        }
-        android.app.AlertDialog.Builder(this)
-            .setTitle(if (isUsb) "${if (use == Use.AUDIO) "Audio" else "MIDI"}: $target"
-                      else "$target is not a USB device -- always ALSA")
-            .setItems(items.toTypedArray()) { _, which ->
-                actions[which]()
-                refreshDeviceButtons()
-            }
-            .setNegativeButton("Close", null)
-            .show()
-    }
-
     private fun setMode(use: Use, to: IoMode) {
         val same = sameDevice(resolveAudio(), resolveMidi())
         val (a, m) = ModeRule.change(audioMode, midiMode, use, to, same)
@@ -2038,22 +1710,6 @@ class MainActivity : androidx.activity.ComponentActivity() {
                 // Driven by name rather than by tapping a coordinate: fixed
                 // screen positions went stale silently three times.
                 "com.rigalong.PANIC" -> NativeBridge.nativePanic()
-                // Select a part from a script. Added while hunting THE LATCH:
-                // every stress test until then had been silently landing on
-                // whatever part was last tapped, and the tell was voices=0/0 in
-                // the health line -- the cluster was playing, but not through
-                // sfizz, which is the engine the fault needs.
-                //   adb shell am broadcast -a com.rigalong.PART --es name sfizz
-                "com.rigalong.PART" -> {
-                    val want = intent.getStringExtra("name").orEmpty()
-                    val hit = Part.values().firstOrNull { it.name.equals(want, true) }
-                    if (hit == null) {
-                        android.util.Log.i("rigalong-ui",
-                            "parts: " + Part.values().joinToString { it.name })
-                    } else {
-                        runOnUiThread { showPart(hit, solo = true) }
-                    }
-                }
                 // The acoustic oracle. THE LATCH has no host-visible signature
                 // -- measured -- so the only way to answer "is sound actually
                 // reaching the CP-88" is to make a noise and listen for it with
@@ -2083,10 +1739,6 @@ class MainActivity : androidx.activity.ComponentActivity() {
                 }
                 "com.rigalong.STRESS" -> NativeBridge.nativeStressChord(
                     intent.getIntExtra("count", 30))
-                // Because a stress test that ends leaves 64 voices ringing, and
-                // whoever is in the room did not ask for that.
-                //   adb shell am broadcast -a com.rigalong.PANIC
-                "com.rigalong.PANIC" -> NativeBridge.nativePanic()
                 // REINIT: the cheap recovery candidate.
                 //
                 // Michiel: "if routing to alsa and back fixes it, surely you
@@ -2150,13 +1802,6 @@ class MainActivity : androidx.activity.ComponentActivity() {
                     android.util.Log.i("rigalong-ui", "library and patches reset; ending")
                     android.os.Process.killProcess(android.os.Process.myPid())
                 }
-                // sfizz's level, so a test can make a measurable sound
-                // without tapping a fader: a restored patch may have left
-                // sfizz quiet, and a microphone in a room with a PC fan needs
-                // signal it can actually hear.
-                //   adb shell am broadcast -a com.rigalong.LEVEL --ef value 0.8
-                "com.rigalong.LEVEL" ->
-                    NativeBridge.nativeSetSfizzLevel(intent.getFloatExtra("value", 0.8f))
                 // The whole graph, to the log: which node holds a level down is
                 // otherwise a question only a human with the screen can answer.
                 // EXCLUSIVE/MMAP or SHARED, scriptable. The long-press on the
@@ -2343,12 +1988,7 @@ class MainActivity : androidx.activity.ComponentActivity() {
         val deviceId = findOutputDeviceId()
         val ok = NativeBridge.nativeStart(deviceId, bufferBursts)
         alsaAudioOn = if (ok) resolveAudio()?.usb?.deviceName else null
-        if (!ok) {
-            runOnUiThread {
-                statusView.text = "Failed to open audio stream.\n" +
-                    "Is the USB audio device connected and powered on?"
-            }
-        }
+        if (!ok) status("could not open the audio stream: is the USB audio device connected and powered on?")
     }
 
     /**
@@ -2578,16 +2218,6 @@ class MainActivity : androidx.activity.ComponentActivity() {
         }.apply { priority = Thread.MIN_PRIORITY; isDaemon = true }.start()
     }
 
-    /** Cycles through the library. Loading happens on the background thread. */
-    private fun nextInstrument() {
-        if (library.isEmpty()) {
-            loadFirstInstrument()
-            return
-        }
-        val i = library.indexOfFirst { it.id == currentInstrument?.id }
-        selectInstrument(library[(i + 1) % library.size])
-    }
-
     /** Seeds the private instruments folder from assets, once. */
     private fun copyAssetInstruments(target: java.io.File) {
         val names = runCatching { assets.list("instruments") }.getOrNull() ?: return
@@ -2618,32 +2248,30 @@ class MainActivity : androidx.activity.ComponentActivity() {
     private fun openMidi() {
         val manager = getSystemService(Context.MIDI_SERVICE) as? MidiManager
         if (manager == null) {
-            midiView.text = "MIDI: no MidiManager"
+            midiStatus = "no MidiManager"
             return
         }
         val choice = resolveMidi()
         val info = choice?.info
         if (choice == null) {
-            midiView.text = "MIDI: no input device found"
+            midiStatus = "no input device found"
             return
         }
         if (info == null) {
             // Visible over USB but not to Android: this process owns the
             // device, so there is no ALSA MIDI port to open.
-            midiView.text = "MIDI: ${choice.name} -- not an ALSA device right now"
+            midiStatus = "${choice.name} -- not an ALSA device right now"
             return
         }
 
         manager.openDevice(info, { device ->
             if (device == null) {
-                runOnUiThread { midiView.text = "MIDI: openDevice returned null" }
+                midiStatus = "openDevice returned null"
                 return@openDevice
             }
             midiDevice = device
             val opened = NativeBridge.nativeOpenMidi(device, choice.port)
-            runOnUiThread {
-                midiView.text = if (opened) "MIDI: ${choice.name}  [ALSA]" else "MIDI: failed to open port"
-            }
+            midiStatus = if (opened) "${choice.name}  [ALSA]" else "failed to open port"
         }, handler)
     }
 
@@ -2667,22 +2295,17 @@ class MainActivity : androidx.activity.ComponentActivity() {
 
     // --------------------------------------------------------------------- UI
 
-    // ------------------------------------------------------------ the new UI
-
-    private lateinit var prototypeView: View
-    private lateinit var composeView: androidx.compose.ui.platform.ComposeView
     private lateinit var appLibrary: Library
 
     private lateinit var player: com.rigalong.ui.SongPlayer
 
     /**
-     * Page turners and footswitches arrive as keys (I9.2). On the new UI's
-     * stage: Page Down / right / down arrow / space the next live set, Page Up /
+     * Page turners and footswitches arrive as keys (I9.2). On the stage: Page Down / right / down arrow / space the next live set, Page Up /
      * left / up arrow the previous one. Configurable in the environment once
      * that view exists (S9.2).
      */
     override fun dispatchKeyEvent(event: android.view.KeyEvent): Boolean {
-        if (::composeView.isInitialized && composeView.visibility == View.VISIBLE && player.onStage &&
+        if (::player.isInitialized && player.onStage &&
             event.action == android.view.KeyEvent.ACTION_DOWN) {
             when (event.keyCode) {
                 android.view.KeyEvent.KEYCODE_PAGE_DOWN, android.view.KeyEvent.KEYCODE_DPAD_RIGHT,
@@ -2741,17 +2364,6 @@ class MainActivity : androidx.activity.ComponentActivity() {
         return text to (status >= android.os.PowerManager.THERMAL_STATUS_MODERATE)
     }
 
-    private fun showNewUi(on: Boolean) {
-        val was = composeView.visibility == View.VISIBLE
-        composeView.visibility = if (on) View.VISIBLE else View.GONE
-        prototypeView.visibility = if (on) View.GONE else View.VISIBLE
-        prefs().edit().putBoolean("ui.new", on).apply()
-        // The prototype knows nothing of zones and wires: hand it the rack
-        // neutral, and take the song back on the way in.
-        if (was && !on) runCatching { player.releaseRack() }
-        if (!was && on) runCatching { player.reload() }
-    }
-
     private val engineHost = object : com.rigalong.ui.EngineHost {
         override fun instruments() = library.map { it.id to "${it.name} (${it.sizeLabel})" }
         override fun selectInstrument(id: String) {
@@ -2759,10 +2371,9 @@ class MainActivity : androidx.activity.ComponentActivity() {
         }
         override fun instrumentPath(id: String): String? = library.firstOrNull { it.id == id }?.sfz?.absolutePath
         override fun currentInstrument() = currentInstrument?.id
-        override fun showPrototype() = showNewUi(false)
         override fun healthLine(): String = stageHealth()
         override fun healthDetail(): String = this@MainActivity.healthDetail()
-        override fun statusLines(): List<String> = statusView.text.toString().lines()
+        override fun statusLines(): List<String> = statusLines
         override fun resetCounts() = this@MainActivity.resetCounts()
         override fun routing(): com.rigalong.ui.Routing {
             val midi = resolveMidi()
@@ -2898,367 +2509,6 @@ class MainActivity : androidx.activity.ComponentActivity() {
         }
     }
 
-    private fun buildUi(): View {
-        val root = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setBackgroundColor(Color.parseColor("#14161A"))
-            setPadding(48, 48, 48, 48)
-        }
-        root.addView(Button(this).apply {
-            text = "← New UI"
-            setOnClickListener { showNewUi(true) }
-        })
-
-        root.addView(TextView(this).apply {
-            text = "RigAlong"
-            setTextColor(Color.parseColor("#E6E9EF"))
-            textSize = 28f
-            setTypeface(Typeface.DEFAULT_BOLD)
-        })
-
-        midiView = TextView(this).apply {
-            text = "MIDI: —"
-            setTextColor(Color.parseColor("#7FD1B9"))
-            textSize = 18f
-            setPadding(0, 16, 0, 16)
-        }
-        root.addView(midiView)
-
-        statusView = TextView(this).apply {
-            text = "starting…"
-            setTextColor(Color.parseColor("#E6E9EF"))
-            textSize = 20f
-            typeface = Typeface.MONOSPACE
-            setLineSpacing(0f, 1.25f)
-        }
-        root.addView(statusView)
-        root.addView(buildMasterVolume())
-
-        val buttonRow = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            setPadding(0, 32, 0, 0)
-        }
-
-        // Audio out and MIDI in, cycled independently. Two cables, two choices:
-        // a Scarlett can carry the sound while the CP-88 carries the notes.
-        //
-        // TAP cycles the device; LONG-PRESS chooses the mode -- ALSA, USB
-        // interface, USB device -- and, for audio, the direct-USB buffer. Hung
-        // off the existing buttons so nothing in the row moves.
-        audioButton = makeButton("Audio: auto") { cycleOutput(); refreshDeviceButtons() }
-        audioButton.setOnLongClickListener { showModeDialog(Use.AUDIO); true }
-        buttonRow.addView(audioButton)
-        midiButton = makeButton("MIDI: auto") { cycleMidi(); refreshDeviceButtons() }
-        midiButton.setOnLongClickListener { showModeDialog(Use.MIDI); true }
-        buttonRow.addView(midiButton)
-
-        buttonRow.addView(makeButton("Buffer: $bufferBursts") { button ->
-            // AAudio bursts. The direct-USB buffer is a different thing -- the
-            // URBs in flight -- and lives in the Audio button's long-press.
-            if (effectiveMode(Use.AUDIO).direct) {
-                android.widget.Toast.makeText(this@MainActivity,
-                    "Direct USB: buffer is in the Audio long-press menu",
-                    android.widget.Toast.LENGTH_SHORT).show()
-                return@makeButton
-            }
-            bufferBursts = if (bufferBursts >= 4) 1 else bufferBursts + 1
-            button.text = "Buffer: $bufferBursts"
-            NativeBridge.nativeStop()
-            NativeBridge.nativeStart(findOutputDeviceId(), bufferBursts)
-            NativeBridge.nativeResetPeaks()
-        }.apply {
-            // LONG-PRESS: EXCLUSIVE <-> SHARED.
-            //
-            // Deliberately hung off an existing button rather than given one of
-            // its own. Every control added to this row moves the ones after it,
-            // and the adb tap coordinates in tools/ are read from a screenshot
-            // and go stale silently when they move -- which has now cost time
-            // twice, once from a button and once from a single status LINE.
-            //
-            // The mode already shows on the `path` line, so nothing new has to
-            // be displayed either.
-            setOnLongClickListener {
-                if (effectiveMode(Use.AUDIO).direct) return@setOnLongClickListener true
-                wantExclusive = !wantExclusive
-                NativeBridge.nativeSetExclusive(wantExclusive)
-                NativeBridge.nativeStop()
-                NativeBridge.nativeStart(findOutputDeviceId(), bufferBursts)
-                NativeBridge.nativeResetPeaks()
-                android.widget.Toast.makeText(
-                    this@MainActivity,
-                    if (wantExclusive) "EXCLUSIVE" else "SHARED",
-                    android.widget.Toast.LENGTH_SHORT,
-                ).show()
-                true
-            }
-        })
-
-        // The part switch lives in the TOP row on purpose: it is the control most
-        // reached for while testing, and the faders that actually do the work sit
-        // below the drawbars, which swallow a drag. One tap, always on screen.
-        buttonRow.addView(makeButton("SAVE PATCH") {
-            savePatch(named = true)
-        })
-
-        buttonRow.addView(makeButton("PATCH ▶") {
-            val patches = PatchStore.list(this)
-            if (patches.isEmpty()) {
-                patchStatus = "no saved patches"
-                return@makeButton
-            }
-            patchIndex = (patchIndex + 1) % patches.size
-            PatchStore.read(patches[patchIndex])?.let { applyPatch(it, "loaded") }
-        })
-
-        buttonRow.addView(makeButton("Reset peaks") {
-            // Everything counts from now: dropouts, and the peaks the engine keeps.
-            resetCounts()
-        })
-
-        buttonRow.addView(makeButton("Panic") {
-            NativeBridge.nativePanic()
-        })
-
-        // Next to Panic on purpose: both are things reached for mid-song, with
-        // no time to read, and both do one thing with no options to weigh.
-        buttonRow.addView(makeButton("RESET USB") {
-            resetAudioPath()
-        })
-
-        buttonRow.addView(makeButton("MEASURE") {
-            enableInputIfPermitted()
-            NativeBridge.nativeStartLatencyProbe()
-        })
-
-        buttonRow.addView(makeButton("STRESS 30") {
-            NativeBridge.nativeStressChord(30)
-            handler.postDelayed({ NativeBridge.nativeLogProfile() }, 1500)
-        })
-
-        buttonRow.addView(makeButton("REC 30s") { b ->
-            // One capture, analysed offline as often as needed -- rather than
-            // asking a human to replay a passage per threshold tweak.
-            val dir = java.io.File(getExternalFilesDir(null), "captures").apply { mkdirs() }
-            if (NativeBridge.nativeIsRecording()) return@makeButton
-            enableInputIfPermitted()
-            NativeBridge.nativeStartRecording(30)
-            b.text = "RECORDING…"
-            handler.postDelayed({
-                val stamp = System.currentTimeMillis()
-                NativeBridge.nativeWriteRecording(
-                    java.io.File(dir, "capture-$stamp.wav").absolutePath,
-                    java.io.File(dir, "capture-$stamp.marks.txt").absolutePath)
-                b.text = "REC 30s"
-            }, 31_000)
-        })
-
-        buttonRow.addView(makeButton("KEY→TONE") {
-            enableInputIfPermitted()
-            NativeBridge.nativeStartNoteProbe()
-        })
-
-        buttonRow.addView(makeButton("INSTRUMENT ▶") {
-            nextInstrument()
-        })
-
-        buttonRow.addView(makeButton("RESCAN") {
-            loadFirstInstrument()
-        })
-
-        // Scrollable sideways, because the row is now wider than the tablet and
-        // a button that has fallen off the edge is a button that does not exist.
-        // Audio and MIDI sit FIRST so they are reachable without scrolling: they
-        // are what gets reached for when something goes wrong mid-set.
-        root.addView(android.widget.HorizontalScrollView(this).apply {
-            isHorizontalScrollBarEnabled = false
-            addView(buttonRow)
-        })
-
-        // The instrument selector, in place of the old PART cycle.
-        //
-        // A cycle was fine for three parts and absurd for seven: getting from
-        // sfizz to FluidSynth was five taps with no way back. And with one panel
-        // per instrument stacked, reaching the last of them took eight swipes.
-        //
-        // Tabs fix both. Tap shows that panel and solos that part; LONG-PRESS
-        // brings a part into the mix without silencing the others, which is how
-        // a layer is built and is the one thing the cycle could never do. The
-        // tabs themselves are a view of the levels, never a setting of their own.
-        val tabRow = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            setPadding(0, 16, 0, 8)
-        }
-        for (target in Part.values()) {
-            val tab = makePartTab(target)
-            partTabs[target] = tab
-            tabRow.addView(tab)
-        }
-        root.addView(tabRow)
-
-        // setBfree's front panel, ABOVE the test keys: the drawbars are played
-        // during a set and the test keys only ever exist for bringing the audio
-        // path up without a CP-88 attached, so setBfree gets the screen.
-        //
-        // sfizz and setBfree share it, because it carries both faders -- it is
-        // really the keyboards panel. Worth splitting one day; not worth
-        // splitting while sfizz's only other control is a library picker
-        // that already lives in the button row.
-        setBfreePanel = SetBfreePanelBuilder(this)
-        val setBfreeView = setBfreePanel.build()
-        root.addView(setBfreeView)
-        partPanels[Part.Sfizz] = setBfreeView
-        partPanels[Part.SetBfree] = setBfreeView
-
-        surgePanel = SurgePanelBuilder(this)
-        partPanels[Part.Surge] = surgePanel.build().also { root.addView(it) }
-
-        dexedPanel = DexedPanelBuilder(this)
-        partPanels[Part.Dexed] = dexedPanel.build().also { root.addView(it) }
-
-        plaitsPanel = PlaitsPanelBuilder(this)
-        partPanels[Part.Plaits] = plaitsPanel.build().also { root.addView(it) }
-
-        fluidPanel = FluidPanelBuilder(this)
-        partPanels[Part.Fluid] = fluidPanel.build().also { root.addView(it) }
-
-        // Open on sfizz's panel. Levels are deliberately NOT touched here:
-        // the nodes carry their own defaults and a saved patch may be restored a
-        // moment from now, and forcing a solo would overwrite it.
-        applyPanelVisibility(visiblePart)
-
-        // The panel makes the screen taller than the tablet in landscape, and a
-        // control that cannot be reached is worse than one that is not there.
-        //
-        // The keyboard is PINNED BELOW the scroller rather than placed inside
-        // it. Inside, it sat under the drawbars and needed a scroll past every
-        // panel to reach -- fine as a test fixture, useless as an instrument.
-        // Pinned, it is playable whatever the rest of the screen is showing,
-        // which is what makes the app demonstrable with no CP-88 attached.
-        val scroller = android.widget.ScrollView(this).apply {
-            setBackgroundColor(Color.parseColor("#14161A"))
-            addView(root)
-            layoutParams = LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f)
-        }
-        return LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setBackgroundColor(Color.parseColor("#14161A"))
-            // Inset for the navigation bar and the taskbar. Without this the
-            // system bar sits over the BOTTOM of the keys -- which is where the
-            // loudest velocities are, so the keyboard lost its forte and the
-            // octave labels at the same time.
-            fitsSystemWindows = true
-            addView(scroller)
-            addView(makeTestKeys())
-        }
-    }
-
-    /**
-     * The master volume: a centred fader in dB at the end of the chain.
-     *
-     * Centred, not a 0-to-max slider, because the instrument's own mix is the
-     * reference: the control exists to cut BELOW it and to lift ABOVE it, and
-     * a fader whose useful position is 80 % of the way up tells you nothing at
-     * a glance. The scale is dB and therefore logarithmic in amplitude, which
-     * is the only scale on which "half as loud" is a fixed distance.
-     *
-     * It matters more since the direct-USB modes arrived: those bypass
-     * Android's stream volume entirely -- measured 2026-09-22, about 28 dB
-     * louder than the ALSA path at the same settings -- so the instrument
-     * needs a volume of its own rather than borrowing the system's.
-     *
-     * Tap the label to return to 0 dB.
-     */
-    private fun buildMasterVolume(): View {
-        val row = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            setPadding(0, 16, 0, 0)
-            gravity = Gravity.CENTER_VERTICAL
-        }
-        masterLabel = TextView(this).apply {
-            setTextColor(Color.parseColor("#E6E9EF"))
-            textSize = 18f
-            typeface = Typeface.MONOSPACE
-            setPadding(0, 0, 24, 0)
-            setOnClickListener { setMasterDb(0f) }
-        }
-        row.addView(masterLabel)
-
-        masterBar = android.widget.SeekBar(this).apply {
-            max = MASTER_STEPS
-            progress = dbToProgress(masterDb)
-            layoutParams = LinearLayout.LayoutParams(0,
-                ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
-            setOnSeekBarChangeListener(object : android.widget.SeekBar.OnSeekBarChangeListener {
-                override fun onProgressChanged(bar: android.widget.SeekBar, value: Int, fromUser: Boolean) {
-                    if (fromUser) setMasterDb(progressToDb(value), moveBar = false)
-                }
-                override fun onStartTrackingTouch(bar: android.widget.SeekBar) {}
-                override fun onStopTrackingTouch(bar: android.widget.SeekBar) {}
-            })
-        }
-        row.addView(masterBar)
-        refreshMasterLabel()
-        return row
-    }
-
-    private fun refreshMasterLabel() {
-        if (!::masterLabel.isInitialized) return
-        masterLabel.text = "MASTER %+5.1f dB".format(masterDb)
-    }
-
-    private fun setMasterDb(db: Float, moveBar: Boolean = true) {
-        masterDb = db.coerceIn(NativeBridge.MASTER_MIN_DB, NativeBridge.MASTER_MAX_DB)
-        NativeBridge.nativeSetMasterDb(masterDb)
-        prefs().edit().putFloat("masterDb", masterDb).apply()
-        if (moveBar && ::masterBar.isInitialized) masterBar.progress = dbToProgress(masterDb)
-        refreshMasterLabel()
-    }
-
-    private fun makeButton(label: String, onClick: (Button) -> Unit): Button {
-        return Button(this).apply {
-            text = label
-            textSize = 18f
-            setPadding(32, 24, 32, 24)
-            layoutParams = LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT
-            ).apply { rightMargin = 24 }
-            setOnClickListener { onClick(this) }
-        }
-    }
-
-    /**
-     * A playable touch keyboard, so the instrument can be demonstrated with no
-     * CP-88 attached — through the tablet's own speaker if need be.
-     *
-     * Two octaves from C3, which is what a demo actually needs: one
-     * octave forces everything into the right hand. Black keys are drawn as
-     * narrower, darker keys in the same row rather than overlaid, because an
-     * overlay needs a custom ViewGroup and hit-testing, and this has to be
-     * right today rather than pretty.
-     *
-     * Velocity comes from WHERE the key is touched — near the top is soft, near
-     * the bottom is loud, as on a real keybed where the pivot gives you less
-     * leverage at the back. Without it every note is mezzo-forte and a sampled
-     * piano with sixteen velocity layers sounds like a toy.
-     */
-    private lateinit var audioButton: Button
-    private lateinit var midiButton: Button
-
-    private fun refreshDeviceButtons() {
-        // The mode in force, not merely the one stored: a use on a non-USB
-        // device is ALSA whatever the setting, and the device rule applies.
-        val (a, m) = effectiveModes(resolveAudio(), resolveMidi())
-        if (::audioButton.isInitialized) {
-            audioButton.text = "Audio: ${shortName(chosenOutputName)} · ${a.short}"
-        }
-        if (::midiButton.isInitialized) {
-            midiButton.text = "MIDI: ${shortName(chosenMidiName)} · ${m.short}"
-        }
-    }
-
-
     // --- the audio status (S19.3) -------------------------------------------
     //
     // What the latch hunt left behind was every counter it ever needed, on one
@@ -3293,7 +2543,7 @@ class MainActivity : androidx.activity.ComponentActivity() {
         return counts.indices.filter { counts[it] > 0 }.joinToString(", ") { "${counts[it]} ${names[it]}" }.ifEmpty { null }
     }
 
-    /** Every status figure for Setup (and the prototype's panel): grouped, and only what applies to the path in use. */
+    /** Every status figure for Setup: grouped, and only what applies to the path in use. */
     private fun statusReport(s: NativeBridge.Stats, warn: String, fault: Boolean): List<String> {
         val out = ArrayList<String>()
         fun line(label: String, text: String) = out.add(label.padEnd(12) + text)
@@ -3350,7 +2600,9 @@ class MainActivity : androidx.activity.ComponentActivity() {
         val bars = (s.outputPeak.coerceIn(0f, 1f) * 24f).toInt()
         line("level", "${"#".repeat(bars).padEnd(24, '.')} ${"%.3f".format(s.outputPeak)}" +
             if (s.outputPeak >= 0.999f) "  CLIPPING" else "")
-        line("midi", "${if (NativeBridge.nativeMidiOpen()) "connected" else "NOT CONNECTED"} (${mMode.label})  ·  " +
+        val midiOpen = NativeBridge.nativeMidiOpen()
+        line("midi", (if (midiOpen) "connected" else "NOT CONNECTED") + " (${mMode.label})  ·  " +
+            (if (!midiOpen && midiStatus.isNotEmpty()) "$midiStatus  ·  " else "") +
             "${s.midiMessages} messages in  ·  ${NativeBridge.nativeMidiClockTicks()} clock ticks out")
         line("heat", thermal().first.removePrefix("heat "))
         if (s.loading || warming) line("loading", if (warming) "$warmedMb MB read into the page cache…" else "an instrument…")
@@ -3401,17 +2653,7 @@ class MainActivity : androidx.activity.ComponentActivity() {
         audioHealth.reset()
     }
 
-    private fun makeTestKeys(): View {
-        return TouchKeyboardView(this) { note, velocity ->
-            NativeBridge.nativeTestNote(note, velocity)
-        }.apply {
-            layoutParams = LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, 360)
-        }
-    }
-
     private fun updateStats() {
-        refreshDeviceButtons()
         val s = NativeBridge.stats()
 
         val xrunsNow = s.xRuns - xrunBaseline
@@ -3446,6 +2688,6 @@ class MainActivity : androidx.activity.ComponentActivity() {
         audioHealth.update(s)
         lastWarn = warn
         lastFault = fault
-        statusView.text = statusReport(s, warn, fault).joinToString("\n")
+        statusLines = statusReport(s, warn, fault)
     }
 }

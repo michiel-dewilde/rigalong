@@ -49,9 +49,7 @@ data class Routing(
 /**
  * The setup view, first slice of the environment (REQUIREMENTS section 3):
  * which device carries audio and MIDI and in which mode, the USB buffer, the
- * CP-88's reserved page and channel, and every status figure (S19.3). Named
- * ports and several environments come with the rest of M3; this is the
- * routing the prototype screen had, without needing it.
+ * CP-88's reserved page and channel, and every status figure (S19.3).
  */
 @Composable
 fun SetupScreen(player: SongPlayer, host: EngineHost, lib: Library) {
@@ -182,7 +180,6 @@ fun SetupScreen(player: SongPlayer, host: EngineHost, lib: Library) {
             SetupToggle(stringResource(R.string.keys_turn_pages), player.keysTurnPages, accent, dim) {
                 player.keysTurnPages = it; player.saveSheetSettings()
             }
-            OutlinedButton(onClick = host::showPrototype) { Text(stringResource(R.string.open_prototype)) }
         }
     }, second = { m ->
         Column(m.background(panel, RoundedCornerShape(10.dp)).padding(12.dp)
