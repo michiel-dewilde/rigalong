@@ -464,7 +464,9 @@ is capped per block so a flood cannot blow the deadline.
 
 | Where | What |
 |---|---|
-| `MainActivity` | The lifecycle, permissions, keys, Do Not Disturb; puts the parts together. |
+| `Rig` | Everything that plays, one per process: the parts below, the master volume, Do Not Disturb, the microphone for Measure. An activity shows it; it ends when the activity finishes, the task is swiped away, or with Stop on the notification. |
+| `MainActivity` | The screen on the rig: the lifecycle, permission answers, keys. Owns nothing that plays. |
+| `EngineService` | The foreground service that lets the rig play on while no activity shows it. |
 | `AudioRouter`, `UsbRouting` | Which device carries audio and MIDI, in which mode; the switch between modes; the watchdog. |
 | `EngineContent` | The SFZ instruments and the engines' folders; Import; a patch as its engine's own file. |
 | `AudioStatus`, `AudioHealth` | Setup's figures and the stage's health line. |

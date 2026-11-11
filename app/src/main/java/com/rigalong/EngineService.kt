@@ -59,6 +59,18 @@ class EngineService : Service() {
 
     override fun onBind(intent: Intent?): IBinder? = null
 
+    /**
+     * The task was swiped away: the player closed the instrument. Android
+     * does not promise the activity an onDestroy here, and the process may
+     * live on behind this service -- so the end is said here.
+     */
+    override fun onTaskRemoved(rootIntent: Intent?) {
+        Rig.running()?.end()
+        releaseWakeLock()
+        stopForeground(STOP_FOREGROUND_REMOVE)
+        stopSelf()
+    }
+
     override fun onDestroy() {
         releaseWakeLock()
         super.onDestroy()
@@ -72,9 +84,13 @@ class EngineService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (intent?.action == ACTION_STOP) {
             // The notification's Stop button. Close the instrument properly:
-            // release the stream, then take the notification down with us.
-            NativeBridge.nativeCloseMidi()
-            NativeBridge.nativeStop()
+            // the rig ends (both uses down, the USB interfaces back, its
+            // activity finished -- or its watchdog would start the sound
+            // again), then the notification goes down with us.
+            Rig.running()?.end() ?: run {
+                NativeBridge.nativeCloseMidi()
+                NativeBridge.nativeStop()
+            }
             releaseWakeLock()
             stopForeground(STOP_FOREGROUND_REMOVE)
             stopSelf()
