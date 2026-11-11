@@ -36,22 +36,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.rigalong.R
 import com.rigalong.model.Tempo
-
-/** Taps to a tempo: four or more less than 2 s apart give one, as the stage's TAP does. */
-class TapTempo {
-    private val taps = ArrayDeque<Long>()
-
-    /** One tap; the tempo it gives, or null while there are too few. */
-    fun tap(): Double? {
-        val now = System.nanoTime()
-        if (taps.isNotEmpty() && now - taps.last() > 2_000_000_000L) taps.clear()
-        taps.addLast(now)
-        while (taps.size > 6) taps.removeFirst()
-        if (taps.size < 4) return null
-        val span = (taps.last() - taps.first()) / (taps.size - 1).toDouble()
-        return Math.round(60e9 / span * 10) / 10.0
-    }
-}
+import com.rigalong.play.SongPlayer
+import com.rigalong.play.TapTempo
 
 /** "120", "92.5". */
 fun bpmText(bpm: Double): String = if (bpm % 1.0 == 0.0) "%.0f".format(bpm) else "%.1f".format(bpm)

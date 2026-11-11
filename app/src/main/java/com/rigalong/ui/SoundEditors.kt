@@ -53,6 +53,8 @@ import com.rigalong.model.RackSlot
 import com.rigalong.model.RackSong
 import com.rigalong.model.getTyped
 import kotlinx.coroutines.delay
+import com.rigalong.play.SongPlayer
+import com.rigalong.play.EngineHost
 
 /* The dialogs a sound is edited in: its preset, its parameters, its effect, the reverb, and its library patch. */
 

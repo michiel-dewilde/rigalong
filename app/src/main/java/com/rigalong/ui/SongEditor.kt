@@ -50,6 +50,8 @@ import com.rigalong.model.RackEngine
 import com.rigalong.model.RackLiveSet
 import com.rigalong.model.RackPart
 import com.rigalong.model.RackSong
+import com.rigalong.play.SongPlayer
+import com.rigalong.play.EngineHost
 
 /* The song editor: its sounds, its live sets and what each sound does in them. */
 

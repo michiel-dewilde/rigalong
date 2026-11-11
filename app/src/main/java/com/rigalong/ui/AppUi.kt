@@ -40,6 +40,8 @@ import androidx.compose.ui.unit.sp
 import com.rigalong.R
 import com.rigalong.model.Library
 import kotlinx.coroutines.delay
+import com.rigalong.play.SongPlayer
+import com.rigalong.play.EngineHost
 
 /*
  * The app's screen: the top bar and its four views -- the stage, the songs

@@ -33,6 +33,7 @@ import com.rigalong.model.ExternalSynth
 import com.rigalong.model.Library
 import com.rigalong.model.RackDevicePart
 import com.rigalong.model.RackSong
+import com.rigalong.play.SongPlayer
 
 /*
  * External devices in the song editor, drawn from what each device's driver

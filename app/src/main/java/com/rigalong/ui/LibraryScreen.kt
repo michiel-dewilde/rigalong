@@ -45,6 +45,8 @@ import com.rigalong.R
 import com.rigalong.model.Digest
 import com.rigalong.model.Exchange
 import com.rigalong.model.Store
+import com.rigalong.play.SongPlayer
+import com.rigalong.play.EngineHost
 
 /*
  * The library, first slice (REQUIREMENTS section 8): setlists and songs as

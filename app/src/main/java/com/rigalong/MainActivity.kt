@@ -10,7 +10,7 @@ import android.os.Handler
 import android.os.Looper
 import android.view.WindowManager
 import com.rigalong.model.Library
-import com.rigalong.ui.SongPlayer
+import com.rigalong.play.SongPlayer
 
 /**
  * The one activity. It puts the parts together and gives them what only an
@@ -24,7 +24,7 @@ import com.rigalong.ui.SongPlayer
  *    everything the screen (ui/AppUi.kt) shows;
  *  * [TestHooks]: the scriptable broadcasts.
  *
- * The screen reaches the first three through [com.rigalong.ui.EngineHost].
+ * The screen reaches the first three through [com.rigalong.play.EngineHost].
  */
 class MainActivity : androidx.activity.ComponentActivity() {
 
@@ -88,7 +88,7 @@ class MainActivity : androidx.activity.ComponentActivity() {
         status = AudioStatus(this, router, content)
         appLibrary = Library(java.io.File(filesDir, "library"), Build.MODEL)
         player = SongPlayer(appLibrary, engineHost, prefs)
-        val diagnostics = com.rigalong.ui.Diagnostics(this)
+        val diagnostics = com.rigalong.play.Diagnostics(this)
         player.diagnostics = diagnostics
         diagnostics.event("app started")
         // A crash is the one event a player cannot describe afterwards: its
@@ -352,7 +352,7 @@ class MainActivity : androidx.activity.ComponentActivity() {
 
     // ------------------------------------------------------ what the screen gets
 
-    private val engineHost = object : com.rigalong.ui.EngineHost {
+    private val engineHost = object : com.rigalong.play.EngineHost {
         override fun instruments() = content.library.map { it.id to "${it.name} (${it.sizeLabel})" }
         override fun selectInstrument(id: String) = content.select(id)
         override fun instrumentPath(id: String): String? = content.path(id)
@@ -370,7 +370,7 @@ class MainActivity : androidx.activity.ComponentActivity() {
 
         override fun routing() = router.routing()
         override fun routingSpec() = router.routingSpec()
-        override fun applyRoutingSpec(spec: com.rigalong.ui.RoutingSpec) = router.applyRoutingSpec(spec)
+        override fun applyRoutingSpec(spec: com.rigalong.play.RoutingSpec) = router.applyRoutingSpec(spec)
         override fun availableDevices(): Set<String> = router.availableDevices()
         override fun cycleAudioDevice() = router.cycleOutput()
         override fun cycleMidiDevice() = router.cycleMidi()

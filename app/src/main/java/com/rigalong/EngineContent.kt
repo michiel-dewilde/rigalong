@@ -211,7 +211,7 @@ class EngineContent(private val context: Context, private val prefs: SharedPrefe
 
     // ------------------------------------------------- Import and file export
 
-    /** An engine's own file put where its engine looks ([com.rigalong.ui.EngineHost.installEngineFile]). */
+    /** An engine's own file put where its engine looks ([com.rigalong.play.EngineHost.installEngineFile]). */
     fun installEngineFile(kind: com.rigalong.model.EngineFiles.Kind, fileName: String, bytes: ByteArray): String? {
         val dir = when (kind) {
             com.rigalong.model.EngineFiles.Kind.SOUNDFONT -> java.io.File(getExternalFilesDir(null), "soundfonts")
@@ -231,7 +231,7 @@ class EngineContent(private val context: Context, private val prefs: SharedPrefe
         return target.nameWithoutExtension
     }
 
-    /** A patch as its engine's own file ([com.rigalong.ui.EngineHost.exportPatch]). */
+    /** A patch as its engine's own file ([com.rigalong.play.EngineHost.exportPatch]). */
     fun exportPatch(patch: com.rigalong.model.Patch, name: String): Pair<String, ByteArray>? {
         val export = com.rigalong.model.PatchExport
         val kind = export.kind(patch.engine) ?: return null
@@ -260,7 +260,7 @@ class EngineContent(private val context: Context, private val prefs: SharedPrefe
         }
     }
 
-    /** An SFZ pack from a zip into the instruments folder ([com.rigalong.ui.EngineHost.importInstrumentZip]). */
+    /** An SFZ pack from a zip into the instruments folder ([com.rigalong.play.EngineHost.importInstrumentZip]). */
     fun importInstrumentZip(input: java.io.InputStream, fileName: String): String {
         val id = fileName.substringBeforeLast('.').lowercase()
             .replace(Regex("[^a-z0-9._-]+"), "-").trim('-').ifEmpty { "instrument" }

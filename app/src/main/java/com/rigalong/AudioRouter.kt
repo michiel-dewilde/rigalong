@@ -1403,20 +1403,20 @@ class AudioRouter(private val context: Context, private val prefs: SharedPrefere
     /** The audio output as the player chose it, short ("CP-88", "auto"). */
     fun audioName(): String = shortName(chosenOutputName)
 
-    fun routing(): com.rigalong.ui.Routing {
+    fun routing(): com.rigalong.play.Routing {
         val midi = resolveMidi()
         val (a, m) = effectiveModes(resolveAudio(), midi)
-        return com.rigalong.ui.Routing(
+        return com.rigalong.play.Routing(
             audioDevice = shortName(chosenOutputName), audioMode = a.name,
             midiDevice = shortName(chosenMidiName), midiMode = m.name,
             usbBufferMs = usbBufferMs, usbBufferChoices = UsbBuffers.choicesMs.toList(),
             midiIn = midi != null && !m.off)
     }
 
-    fun routingSpec() = com.rigalong.ui.RoutingSpec(
+    fun routingSpec() = com.rigalong.play.RoutingSpec(
         chosenOutputName, audioMode.name, chosenMidiName, midiMode.name, usbBufferMs)
 
-    fun applyRoutingSpec(spec: com.rigalong.ui.RoutingSpec) {
+    fun applyRoutingSpec(spec: com.rigalong.play.RoutingSpec) {
         chosenOutputName = spec.audioName
         chosenMidiName = spec.midiName
         audioMode = IoMode.parse(spec.audioMode)

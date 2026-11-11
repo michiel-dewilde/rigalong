@@ -1,4 +1,4 @@
-package com.rigalong.ui
+package com.rigalong.play
 
 import android.content.Context
 import android.content.Intent

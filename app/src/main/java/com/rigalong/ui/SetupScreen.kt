@@ -36,15 +36,10 @@ import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.delay
 import androidx.compose.ui.res.stringResource
 import com.rigalong.R
-
-/** The routing the activity has in force, for the setup view. */
-data class Routing(
-    val audioDevice: String, val audioMode: String,
-    val midiDevice: String, val midiMode: String,
-    val usbBufferMs: Int, val usbBufferChoices: List<Int>,
-    /** A MIDI input is there to play from (a device, its use not switched off): no on-screen keys needed. */
-    val midiIn: Boolean = false,
-)
+import com.rigalong.play.SongPlayer
+import com.rigalong.play.EngineHost
+import com.rigalong.play.DeviceRig
+import com.rigalong.play.Environments
 
 /**
  * The setup view, first slice of the environment (REQUIREMENTS section 3):

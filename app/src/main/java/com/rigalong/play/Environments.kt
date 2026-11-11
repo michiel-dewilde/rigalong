@@ -1,4 +1,4 @@
-package com.rigalong.ui
+package com.rigalong.play
 
 import com.rigalong.model.Binding
 import com.rigalong.model.DeviceMatch

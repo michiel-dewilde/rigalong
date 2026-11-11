@@ -23,7 +23,7 @@ class TestHooks(
     private val context: Context,
     private val router: AudioRouter,
     private val content: EngineContent,
-    private val player: com.rigalong.ui.SongPlayer,
+    private val player: com.rigalong.play.SongPlayer,
     /** MEASURE: the latency probe, as Setup's button starts it. */
     private val measure: () -> Unit,
     private val setMasterDb: (Float) -> Unit,
