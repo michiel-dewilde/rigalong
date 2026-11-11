@@ -2,7 +2,7 @@
 <!--
   Every string of the UI (REQUIREMENTS S19.1): English at release, and a
   translation is a values-xx/strings.xml with no code change. Not here yet:
-  the engine's status lines (MainActivity.statusReport), and the player's own
+  the engine's status lines (AudioStatus.statusReport), and the player's own
   status messages (DeviceRig.status).
 -->
 <resources>

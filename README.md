@@ -22,7 +22,7 @@ One spelling, everywhere: the display name is **RigAlong** and every
 identifier is `rigalong` — repo, package, namespace, native library, Gradle
 project, and the logcat tags (`rigalong-audio`, `rigalong-fluid` and so on).
 
-## Status: M3 done, setBfree built (M4)
+## Status: 0.0.1
 
 Measured on the CP-88: AAudio **EXCLUSIVE LOW_LATENCY**, 44100 Hz, 89-frame burst,
 **9-10 ms output latency, 0 xruns**, 4-17% CPU while playing. Acoustic round trip
@@ -449,26 +449,35 @@ them would mean cross-compiling six engines for a laptop to gain nothing
 testable. They move when there is a reason better than symmetry.
 
 
-The audio thread lives entirely in C++ and never calls into Java. MIDI is polled
-from inside the audio callback (as in Google's native-midi sample) rather than
-from a reader thread, because `AMidiOutputPort_receive` is non-blocking — a
-separate thread would have to spin or sleep, costing either a core or latency.
-The tradeoff is that MIDI events are quantised to the 2 ms block boundary.
-Sample-accurate scheduling is an M5 refinement.
+The audio lives entirely in C++ and never calls into Java. A render thread
+fills a ring a 128-frame block ahead of time; the sink -- the AAudio callback,
+or the direct-USB reap loop -- only copies out of it, which cannot be late.
+MIDI is polled by the render thread at the top of each block (on the ALSA
+path with `AMidiOutputPort_receive`, which is non-blocking; on the direct path
+from the USB reader's queue), so events are quantised to the 2.9 ms block.
 
-Everything in the callback is preallocated and bounded: the render scratch is
-sized at stream-open time, the voice array is fixed at 64, and the MIDI poll is
-capped at 64 messages per block so a flood cannot blow the deadline.
+Everything on those threads is preallocated and bounded: the render scratch is
+sized at stream-open time, sfizz's voice array is fixed at 64, and the MIDI poll
+is capped per block so a flood cannot blow the deadline.
+
+**The Kotlin side**, under `app/src/main/java/com/rigalong/`:
+
+| Where | What |
+|---|---|
+| `MainActivity` | The lifecycle, permissions, keys, Do Not Disturb; puts the parts together. |
+| `AudioRouter`, `UsbRouting` | Which device carries audio and MIDI, in which mode; the switch between modes; the watchdog. |
+| `EngineContent` | The SFZ instruments and the engines' folders; Import; a patch as its engine's own file. |
+| `AudioStatus`, `AudioHealth` | Setup's figures and the stage's health line. |
+| `TestHooks` | The scriptable broadcasts ([PROVISIONAL.md](PROVISIONAL.md)). |
+| `play/` | `SongPlayer` (the setlist on the rack), `DeviceRig` (external devices), environments, diagnostics. No drawing. |
+| `ui/` | The screen: `AppUi` and a file per view. |
+
+`model/` (plain Kotlin, tested on a laptop) holds the library, the songs and
+the device drivers; see [docs/FORMAT.md](docs/FORMAT.md).
 
 ## Next
 
-Six instruments are shipped and **all six have been played**: *"all instruments
-play well"*. Earlier verdicts were *"perfect!"* for sfizz under forearm
-clusters and *"works beautifully!"* for setBfree, Surge XT and Dexed.
-
-The next choice is open. The one thing still standing between this and a gig is
-**an hour warm** — thermal throttling is what bites live rather than at a desk,
-and it is the last piece of abuse testing left. After that: a real General MIDI
-SoundFont, Clouds as a granular effect node (already compiled, as Plaits was),
-or the graph editor ([GRAPH.md](GRAPH.md)).
-
+[PLAN.md](PLAN.md) has the milestones and where each stands. A review of the
+whole app after 0.0.1 -- how practical each flow is, what is left of the
+structure, and what is odd -- is `REVIEW.md` in the workspace around this
+repository.

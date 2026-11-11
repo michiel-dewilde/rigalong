@@ -302,7 +302,7 @@ next time this file is read, delete it.
 | what | status | delete when |
 |---|---|---|
 | `USBSTALL` broadcast (`UsbAudioOut::testStall`) | **Injector**, regression infrastructure for the starved-IN-queue cascade (LOG.md 2026-10-11): one reap-loop stall longer than the IN queue. Its A/B switch (re-anchoring off) was removed once the fix was proven. | The re-anchoring has a host test, or the transport is rewritten. |
-| `SYSEX` broadcast (`MainActivity.sysexExchange`) | **Test hook** for `tools/cp88sysex/`: sends MIDI on the direct path and logs every SysEx reply. | The CP-88 edit page (M4) does the same through the app's own code. |
+| `SYSEX` broadcast (`TestHooks.sysexExchange`) | **Test hook** for `tools/cp88sysex/`: sends MIDI on the direct path and logs every SysEx reply. | The CP-88 edit page (M4) does the same through the app's own code. |
 | `midi monitor` log line (`UsbMidiIn::drainMonitor`) | **Measurement**, the first piece of the MIDI monitor the plan wants (S20.5). | The MIDI monitor view replaces it. |
 | `usb/UsbMidiOut`, SysEx capture in `UsbMidiIn` | **Product code**, not provisional: MIDI out on the direct path is a requirement (R3.3). | -- |
 | `kHoldStarve` and the re-anchoring | **A fix that measurably fixed it**: 275 holds -> 1 after a 600 ms stall. | -- |
