@@ -72,9 +72,9 @@ fun DeviceSoundEditor(device: String, title: String, sound: ByteArray, driver: D
     Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)) {
         androidx.compose.foundation.layout.Box(Modifier.fillMaxSize().systemBarsPadding().imePadding(), contentAlignment = Alignment.Center) {
         Column(Modifier.fillMaxWidth(0.92f).fillMaxHeight(0.92f)
-            .background(Color(0xFF1A1D23), RoundedCornerShape(12.dp)).padding(16.dp)) {
+            .background(Panel, RoundedCornerShape(12.dp)).padding(16.dp)) {
             Text(stringResource(R.string.device_sound_title, device, title), fontWeight = FontWeight.SemiBold, fontSize = 18.sp)
-            Text(format.description, color = Color(0xFF8A919C), fontSize = 12.sp)
+            Text(format.description, color = Dim, fontSize = 12.sp)
             OutlinedTextField(value = text, onValueChange = { text = it },
                 textStyle = TextStyle(fontFamily = FontFamily.Monospace, fontSize = 14.sp),
                 keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.None, autoCorrectEnabled = false,
@@ -83,7 +83,7 @@ fun DeviceSoundEditor(device: String, title: String, sound: ByteArray, driver: D
             // What the text is now: the sound it reads as, or where it goes wrong.
             Text(parsed.fold({ stringResource(R.string.text_reads_as, sounds.name(it).trimEnd()) + if (changed) " •" else "" },
                     { it.message ?: "?" }),
-                color = if (edited != null) Color(0xFF7EE787) else Color(0xFFE5534B), fontSize = 13.sp, maxLines = 4)
+                color = if (edited != null) Color(0xFF7EE787) else Danger, fontSize = 13.sp, maxLines = 4)
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically,
                 modifier = Modifier.padding(top = 8.dp)) {
                 if (play != null) OutlinedButton(enabled = edited != null, onClick = {
@@ -93,7 +93,7 @@ fun DeviceSoundEditor(device: String, title: String, sound: ByteArray, driver: D
                     saver.launch("${sounds.name(edited!!).trim().ifEmpty { device }}.${file.first}")
                 }) { Text(stringResource(R.string.save_as_ext, file.first)) }
                 TextButton(enabled = text != original, onClick = { text = original }) { Text(stringResource(R.string.revert)) }
-                Text(note, color = Color(0xFF8A919C), fontSize = 12.sp, modifier = Modifier.weight(1f))
+                Text(note, color = Dim, fontSize = 12.sp, modifier = Modifier.weight(1f))
                 TextButton(onClick = onDismiss) { Text(stringResource(R.string.cancel)) }
                 Button(enabled = changed, onClick = { onSave(edited!!); onDismiss() }) {
                     Text(stringResource(R.string.save))

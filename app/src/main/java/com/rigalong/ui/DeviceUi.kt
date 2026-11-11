@@ -149,4 +149,3 @@ fun DeviceAreaFileButton(song: RackSong, name: String, d: ExternalSynth, player:
     }
 }
 
-private val Dim = Color(0xFF8A919C)

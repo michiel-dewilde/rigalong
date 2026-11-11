@@ -23,7 +23,7 @@ import androidx.compose.ui.input.pointer.pointerInput
  */
 @Composable
 fun RelativeFader(value: Float, onValue: (Float) -> Unit, modifier: Modifier = Modifier,
-                  color: Color = Color(0xFF3FB68B)) {
+                  color: Color = Accent) {
     val current by rememberUpdatedState(value)
     val emit by rememberUpdatedState(onValue)
     Canvas(modifier.fillMaxSize().pointerInput(Unit) {
@@ -43,7 +43,7 @@ fun RelativeFader(value: Float, onValue: (Float) -> Unit, modifier: Modifier = M
         // A layout can squeeze a fader to nothing (a phone on its side): draw nothing, never throw.
         if (w <= 0f || h <= 0f) return@Canvas
         val track = w * 0.18f
-        drawRoundRect(Color(0xFF2A2E36), Offset((w - track) / 2, 0f), Size(track, h), CornerRadius(track / 2))
+        drawRoundRect(Line, Offset((w - track) / 2, 0f), Size(track, h), CornerRadius(track / 2))
         val filled = h * current
         drawRoundRect(color.copy(alpha = 0.55f), Offset((w - track) / 2, h - filled), Size(track, filled),
             CornerRadius(track / 2))

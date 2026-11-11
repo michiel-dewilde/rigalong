@@ -204,4 +204,3 @@ fun TempoDialog(player: SongPlayer, onDismiss: () -> Unit) {
             }
         })
 }
-private val Dim = androidx.compose.ui.graphics.Color(0xFF8A919C)

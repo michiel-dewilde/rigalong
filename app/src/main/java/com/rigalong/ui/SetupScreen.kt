@@ -70,9 +70,9 @@ fun SetupScreen(player: SongPlayer, host: EngineHost, lib: Library) {
             delay(700)
         }
     }
-    val panel = Color(0xFF1A1D23)
-    val dim = Color(0xFF8A919C)
-    val accent = Color(0xFF3FB68B)
+    val panel = Panel
+    val dim = Dim
+    val accent = Accent
     Column(Modifier.fillMaxSize()) {
     Box(Modifier.weight(1f)) {
     AdaptivePair(560.dp, first = { m ->
@@ -115,7 +115,7 @@ fun SetupScreen(player: SongPlayer, host: EngineHost, lib: Library) {
                     Text(d.name, fontWeight = FontWeight.SemiBold)
                     Text("  " + drv.label, color = dim, fontSize = 12.sp, modifier = Modifier.weight(1f))
                     TextButton(onClick = { player.devices.update(player.devices.devices - d); tick++ }) {
-                        Text(stringResource(R.string.remove_device), color = Color(0xFFE5534B))
+                        Text(stringResource(R.string.remove_device), color = Danger)
                     }
                 }
                 Stepper(stringResource(R.string.device_channel), d.channel, 1..16, dim) { put(d.copy(channel = it)) }
@@ -210,7 +210,7 @@ fun SetupScreen(player: SongPlayer, host: EngineHost, lib: Library) {
                 Text(line.take(12).trim(), color = dim, fontSize = 13.sp, modifier = Modifier.width(96.dp))
                 val text = line.drop(12)
                 Text(text, fontSize = 13.sp, fontFamily = if (line.startsWith("level")) FontFamily.Monospace else FontFamily.Default,
-                    color = if (needsAttention(line)) Color(0xFFE3B341) else Color.Unspecified)
+                    color = if (needsAttention(line)) Warn else Color.Unspecified)
             }
 
         }

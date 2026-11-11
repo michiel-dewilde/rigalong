@@ -99,8 +99,8 @@ public:
     }
 
     // --- graph -------------------------------------------------------------
-    // The signal path is a node graph (see GRAPH.md). M3 builds a fixed default
-    // patch in code; the editor comes later and changes nothing down here.
+    // The signal path is a node graph (see GRAPH.md): the rack, built in code --
+    // six instances to begin with, more as songs ask for them (see instances).
     rigalong::Graph& graph() { return mGraph; }
 
     // Recompiles and publishes a new schedule. Off the audio thread only.
@@ -151,9 +151,7 @@ public:
 
     // Queues a Surge patch load. Same reasoning as loadInstrumentAsync: the load
     // opens and parses a file, so it happens off both the audio and UI threads.
-    // `index` addresses the scanned list; `name` is the stable "Category/Name"
-    // that a saved patch stores.
-    void loadSurgePatchAsync(int index);
+    // `name` is the stable "Category/Name" that a patch stores.
     void loadSurgePatchNamedAsync(const std::string& name);
     bool isSurgeBusy() const { return mSurgeBusy.load(std::memory_order_relaxed); }
 
@@ -173,7 +171,6 @@ public:
     // but loading a font afterwards is -- megabytes of samples, and for SF3 a
     // Vorbis decode of every one of them -- so all of it runs on the loader.
     void initFluidAsync(const std::vector<std::string>& dirs);
-    void loadSoundFontAsync(int index);
     void loadSoundFontNamedAsync(const std::string& name);
     bool isFluidBusy() const { return mFluidBusy.load(std::memory_order_relaxed); }
 
@@ -182,8 +179,6 @@ public:
     // and must not block the UI either.
     void loadInstrumentAsync(const std::string& id, const std::string& path);
 
-    std::string loadedInstrument() const;
-    std::string instrumentId() const;
     bool isLoading() const { return mLoading.load(std::memory_order_relaxed); }
 
     // Injects a note from the on-screen keys, as if it had arrived over MIDI.
@@ -352,19 +347,6 @@ public:
     void resetPeaks();
     void setConcealment(bool on) { mConcealOn.store(on, std::memory_order_relaxed); }
 
-    // EXPERIMENT ONLY: stop the render thread producing, while leaving the USB
-    // transport running on concealment.
-    //
-    // The last in-process difference from usbhost -- which holds `late` at 32
-    // under a system load of 62 -- is that this app renders the whole graph
-    // every block whether or not a note is sounding, and usbhost has no
-    // equivalent thread at all. `late` measures the reap thread and does not
-    // care what is in the ring, so pausing production isolates that difference
-    // from everything else about being an Android app.
-    void setRenderPaused(bool paused) {
-        mRenderPaused.store(paused, std::memory_order_relaxed);
-    }
-
     /// The rate the CHOSEN DEVICE declares, from AudioDeviceInfo. 0 = let
     /// AAudio decide. Takes effect on the next openStream().
     ///
@@ -453,16 +435,6 @@ private:
     // Runs on the audio thread, after the engines have rendered. May overwrite the
     // output block with a click while a measurement is in flight.
     void runLatencyProbe(float* out, int32_t numFrames);
-
-public:
-    // Capture the microphone plus note-on markers for `seconds`, then analyse
-    // offline. Returns false if there is no input stream.
-    bool startRecording(int seconds);
-    bool writeRecording(const std::string& wavPath, const std::string& marksPath);
-    bool isRecording() const { return mRecording.load(std::memory_order_relaxed); }
-    float recordedSeconds() const;
-
-private:
 
     std::shared_ptr<oboe::AudioStream> mStream;
     std::mutex mStreamLock;          // guards start/stop only, never the callback
@@ -621,7 +593,7 @@ private:
     // measurement in MEASUREMENTS.md was taken on. It is also the one
     // unusual thing the rig does, so when the USB audio path started dying
     // after a quarter of an hour it became a hypothesis worth being able to
-    // test rather than argue about. Toggled by long-pressing Buffer.
+    // test rather than argue about. Set by the SHARING test hook.
     std::atomic<bool> mWantExclusive{true};
 
     std::atomic<float> mMasterDb{0.0f};
@@ -678,21 +650,6 @@ private:
     float mMaxPeakSinceTrigger = 0.0f;
     float mEnvelope = 0.0f;
 
-    // --- capture ------------------------------------------------------------
-    // Record the microphone and the note-on positions once, then analyse the
-    // result offline as many times as needed. Far better than asking a human to
-    // replay a passage every time a detection threshold changes.
-    //
-    // The buffer is preallocated and the audio thread only ever memcpys into it;
-    // the file is written afterwards, from an ordinary thread.
-    std::vector<int16_t> mRecordBuffer;
-    std::atomic<int32_t> mRecordWrite{0};
-    std::atomic<bool> mRecording{false};
-    static constexpr int kMaxMarks = 512;
-    int32_t mMarks[kMaxMarks] = {};
-    std::atomic<int32_t> mMarkCount{0};
-    int32_t mRecordRate = 48000;
-
     // ~10 ms of buzz. Longer than strictly needed, because the click has to
     // survive a trip through the room and a tablet microphone, not a cable.
     static constexpr int32_t kClickFrames = 441;
@@ -714,8 +671,8 @@ private:
     // larger output buffer would. What it buys is immunity to jitter of every
     // kind -- disk, scheduler, thermal -- rather than only the kind we predicted.
     //
-    // The ring holds interleaved stereo int16, already dithered, so the callback
-    // is a straight memcpy.
+    // The ring holds interleaved stereo float (see mRing); the one conversion
+    // to the device's format happens at the sink.
     static constexpr int kRingFrames = 4096;          // power of two
     // 128. Finer blocks were tried and are WORSE: at 64 frames the render peak
     // was 1.38 ms to produce 1.45 ms of audio (95% utilisation), against 0.90 ms
@@ -919,7 +876,6 @@ private:
     // Switchable so concealment can be judged by ear against its own absence
     // on the same load, rather than in the absolute. Default on.
     std::atomic<bool> mConcealOn{true};
-    std::atomic<bool> mRenderPaused{false};
     // Frames concealed since the stream started. The reserve adapts on the
     // DELTA of this rather than on the underrun count, because it carries
     // severity: one frame short and a whole packet short are not the same

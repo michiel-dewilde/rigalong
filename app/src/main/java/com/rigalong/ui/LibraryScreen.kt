@@ -53,9 +53,6 @@ import com.rigalong.model.Store
  * is the same object, and a divergent entry is kept beside the local one.
  */
 
-private val PanelColor = Color(0xFF1A1D23)
-private val DimColor = Color(0xFF8A919C)
-
 @Composable
 fun LibraryScreen(player: SongPlayer, lib: Library, host: EngineHost, onOpened: () -> Unit) {
     val context = LocalContext.current
@@ -125,11 +122,11 @@ fun LibraryScreen(player: SongPlayer, lib: Library, host: EngineHost, onOpened: 
             if (last != null) TextButton(onClick = { lib.undo(); revision++; player.reload() }) {
                 Text(stringResource(R.string.undo_named, last.name))
             }
-            Text(message, color = DimColor, fontSize = 13.sp)
+            Text(message, color = Dim, fontSize = 13.sp)
         }
         Spacer(Modifier.height(10.dp))
         AdaptivePair(380.dp, first = { m ->
-            Column(m.background(PanelColor, RoundedCornerShape(10.dp)).padding(10.dp)) {
+            Column(m.background(Panel, RoundedCornerShape(10.dp)).padding(10.dp)) {
                 Text(stringResource(R.string.setlists), fontWeight = FontWeight.SemiBold)
                 LazyColumn(Modifier.weight(1f)) {
                     items(setlists) { e ->
@@ -137,7 +134,7 @@ fun LibraryScreen(player: SongPlayer, lib: Library, host: EngineHost, onOpened: 
                             .clickable { player.openSetlist(e.id); onOpened() }.padding(vertical = 8.dp)) {
                             Text(e.version.name + if (e.id == player.setlistId) stringResource(R.string.on_stage) else "",
                                 modifier = Modifier.weight(1f))
-                            Text(e.id.short.take(7), color = DimColor, fontSize = 11.sp)
+                            Text(e.id.short.take(7), color = Dim, fontSize = 11.sp)
                             TextButton(onClick = { detail = e.id }) { Text(stringResource(R.string.details)) }
                         }
                     }
@@ -151,7 +148,7 @@ fun LibraryScreen(player: SongPlayer, lib: Library, host: EngineHost, onOpened: 
                 }
             }
         }, second = { m ->
-            Column(m.background(PanelColor, RoundedCornerShape(10.dp)).padding(10.dp)) {
+            Column(m.background(Panel, RoundedCornerShape(10.dp)).padding(10.dp)) {
                 // One list for the panel, its sections one after the other: a library with
                 // many device sounds or patches can still reach every one of them.
                 LazyColumn(Modifier.weight(1f)) {
@@ -179,7 +176,7 @@ fun LibraryScreen(player: SongPlayer, lib: Library, host: EngineHost, onOpened: 
                         for ((drv, entries) in deviceSounds.groupBy { com.rigalong.model.devices.Devices.forSounds(it.version.target?.type ?: "") }) {
                             if (drv == null) continue
                             val sounds = drv.sounds!!
-                            item { Text(stringResource(R.string.device_sounds_of, drv.label), color = DimColor, fontSize = 12.sp) }
+                            item { Text(stringResource(R.string.device_sounds_of, drv.label), color = Dim, fontSize = 12.sp) }
                             items(entries) { e ->
                                 Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
                                     Text(e.version.name, modifier = Modifier.weight(1f))
@@ -209,7 +206,7 @@ fun LibraryScreen(player: SongPlayer, lib: Library, host: EngineHost, onOpened: 
                         items(patches) { (e, p) ->
                             Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
                                 Text(e.version.name, modifier = Modifier.weight(1f))
-                                Text(p.engine, color = DimColor, fontSize = 12.sp)
+                                Text(p.engine, color = Dim, fontSize = 12.sp)
                                 com.rigalong.model.PatchExport.kind(p.engine)?.let { kind ->
                                     val ext = if (kind == com.rigalong.model.EngineFiles.Kind.SOUNDFONT &&
                                         p.preset?.endsWith(".sf3", ignoreCase = true) == true) "sf3" else kind.extension
@@ -282,7 +279,7 @@ private fun EntryDialog(id: Digest, lib: Library, player: SongPlayer, onChanged:
         confirmButton = { TextButton(onClick = onDismiss) { Text(stringResource(R.string.done)) } },
         dismissButton = {
             // Held, not tapped: a delete must not happen by accident (I8.4).
-            Text(stringResource(R.string.delete_hold), color = Color(0xFFE5534B),
+            Text(stringResource(R.string.delete_hold), color = Danger,
                 modifier = Modifier.padding(12.dp).combinedClickable(onClick = {}, onLongClick = { lib.deleteEntry(id); onChanged(); onDismiss() }))
         },
         title = { Text(entry.version.name) },
@@ -295,8 +292,8 @@ private fun EntryDialog(id: Digest, lib: Library, player: SongPlayer, onChanged:
                         TextButton(enabled = name.isNotBlank() && name != entry.version.name,
                             onClick = { lib.rename(id, name.trim()); changed() }) { Text(stringResource(R.string.rename)) }
                     }
-                    Text(stringResource(R.string.entry_id, id.short), color = DimColor, fontSize = 12.sp)
-                    origin?.let { Text(stringResource(R.string.forked_from, it.first.version.name), color = DimColor, fontSize = 12.sp) }
+                    Text(stringResource(R.string.entry_id, id.short), color = Dim, fontSize = 12.sp)
+                    origin?.let { Text(stringResource(R.string.forked_from, it.first.version.name), color = Dim, fontSize = 12.sp) }
                 }
                 if (diverged.isNotEmpty()) {
                     item { Section(stringResource(R.string.diverged)) }
@@ -312,11 +309,11 @@ private fun EntryDialog(id: Digest, lib: Library, player: SongPlayer, onChanged:
                 }
                 if (isSong) {
                     item { Section(stringResource(R.string.used_by)) }
-                    if (uses.isEmpty()) item { Text(stringResource(R.string.used_by_none), color = DimColor, fontSize = 13.sp) }
+                    if (uses.isEmpty()) item { Text(stringResource(R.string.used_by_none), color = Dim, fontSize = 13.sp) }
                     items(uses) { u ->
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Text(u.setlist.version.name, modifier = Modifier.weight(1f))
-                            if (u.latest) Text(stringResource(R.string.latest_version), color = DimColor, fontSize = 12.sp)
+                            if (u.latest) Text(stringResource(R.string.latest_version), color = Dim, fontSize = 12.sp)
                             else TextButton(onClick = { lib.updateReference(u.setlist.id, id); changed() }) {
                                 Text(stringResource(R.string.update_reference))
                             }
@@ -325,11 +322,11 @@ private fun EntryDialog(id: Digest, lib: Library, player: SongPlayer, onChanged:
                 }
                 if (isPatch) {
                     item { Section(stringResource(R.string.used_by)) }
-                    if (patchUses.isEmpty()) item { Text(stringResource(R.string.used_by_no_song), color = DimColor, fontSize = 13.sp) }
+                    if (patchUses.isEmpty()) item { Text(stringResource(R.string.used_by_no_song), color = Dim, fontSize = 13.sp) }
                     items(patchUses) { u ->
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Text(u.song.version.name, modifier = Modifier.weight(1f))
-                            if (u.latest) Text(stringResource(R.string.latest_version), color = DimColor, fontSize = 12.sp)
+                            if (u.latest) Text(stringResource(R.string.latest_version), color = Dim, fontSize = 12.sp)
                             else TextButton(onClick = { lib.updatePatchReference(u.song.id, id); changed() }) {
                                 Text(stringResource(R.string.update_reference))
                             }
@@ -343,10 +340,10 @@ private fun EntryDialog(id: Digest, lib: Library, player: SongPlayer, onChanged:
                 }
                 // Stop dragging the history along (exports, sync): held, and not undoable.
                 if (history.size > 1) item {
-                    Text(stringResource(R.string.forget_history_hold), color = Color(0xFFE5534B),
+                    Text(stringResource(R.string.forget_history_hold), color = Danger,
                         modifier = Modifier.padding(top = 10.dp)
                             .combinedClickable(onClick = {}, onLongClick = { lib.forgetHistory(id); changed() }))
-                    Text(stringResource(R.string.forget_history_note), color = DimColor, fontSize = 12.sp)
+                    Text(stringResource(R.string.forget_history_note), color = Dim, fontSize = 12.sp)
                 }
             }
         })
@@ -369,7 +366,7 @@ private fun VersionRow(v: com.rigalong.model.EntryVersion, action: String?, onAc
                     .format(java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm"))
             }.getOrDefault(v.time)
             Text(time + "  ·  " + v.author + (v.target?.let { "  ·  " + it.digest.short.take(7) } ?: ""),
-                color = DimColor, fontSize = 12.sp)
+                color = Dim, fontSize = 12.sp)
         }
         if (action != null) TextButton(onClick = onAction) { Text(action) }
     }

@@ -68,8 +68,8 @@ fun LeadSheetView(file: File, firstPage: Int, twoUp: Boolean, onPageCount: (Int)
     val sheet = remember(file) { runCatching { SheetRenderer(file) }.getOrNull() }
     DisposableEffect(sheet) { onDispose { sheet?.close() } }
     if (sheet == null) {
-        Box(modifier.background(Color(0xFF1A1D23)), contentAlignment = Alignment.Center) {
-            Text("This lead sheet cannot be opened.", color = Color(0xFF8A919C))
+        Box(modifier.background(Panel), contentAlignment = Alignment.Center) {
+            Text("This lead sheet cannot be opened.", color = Dim)
         }
         return
     }
@@ -91,13 +91,13 @@ private fun PageImage(sheet: SheetRenderer, index: Int, widthPx: Int, modifier: 
     LaunchedEffect(sheet, index, widthPx) {
         bmp = withContext(Dispatchers.Default) { runCatching { sheet.render(index, widthPx) }.getOrNull() }
     }
-    Box(modifier.background(Color(0xFF101216)), contentAlignment = Alignment.TopCenter) {
+    Box(modifier.background(Bg), contentAlignment = Alignment.TopCenter) {
         val b = bmp
         if (b != null) {
             Image(b.asImageBitmap(), contentDescription = null, contentScale = ContentScale.Fit,
                 modifier = Modifier.fillMaxSize())
         } else if (index < sheet.pageCount) {
-            Text("…", color = Color(0xFF8A919C), fontSize = 24.sp, modifier = Modifier.padding(24.dp))
+            Text("…", color = Dim, fontSize = 24.sp, modifier = Modifier.padding(24.dp))
         }
     }
 }

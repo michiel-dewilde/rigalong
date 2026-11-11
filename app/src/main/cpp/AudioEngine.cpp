@@ -1244,12 +1244,6 @@ void AudioEngine::renderLoop() {
         const uint32_t read = mRingRead.load(std::memory_order_acquire);
         const uint32_t filled = write - read;
 
-        if (mRenderPaused.load(std::memory_order_relaxed)) {
-            // Produce nothing and sleep, so this thread costs what usbhost's
-            // absent render thread costs. The transport runs on concealment.
-            std::this_thread::sleep_for(std::chrono::milliseconds(5));
-            continue;
-        }
         if (filled < static_cast<uint32_t>(target)) {
             const double t0 = nowSeconds();
             mRenderLock.lock();
@@ -1337,7 +1331,7 @@ void AudioEngine::renderRescueLoop() {
         auto filled = [this] { return mRingWrite.load(std::memory_order_relaxed) - mRingRead.load(std::memory_order_acquire); };
         auto starved = [this] { return nowSeconds() - mLastBlockAt.load(std::memory_order_relaxed) >= kStarvedSeconds; };
         const int32_t low = floor * mRescueAtPercent.load(std::memory_order_relaxed) / 100;
-        if (mRenderPaused.load(std::memory_order_relaxed) || filled() >= static_cast<uint32_t>(low) || !starved()) continue;
+        if (filled() >= static_cast<uint32_t>(low) || !starved()) continue;
         // A render thread preempted mid-block now runs at this thread's priority until it lets go.
         const double asked = nowSeconds();
         mRenderLock.lock();
@@ -1522,16 +1516,6 @@ void AudioEngine::runLatencyProbe(float* out, int32_t numFrames) {
         auto readResult = mInputStream->read(mInputBuffer.data(), want, 0);
         const int32_t n = readResult ? readResult.value() : 0;
         if (n <= 0) break;
-
-        // Capture first: a plain memcpy into a preallocated buffer.
-        if (mRecording.load(std::memory_order_relaxed)) {
-            int32_t w = mRecordWrite.load(std::memory_order_relaxed);
-            const int32_t room = static_cast<int32_t>(mRecordBuffer.size()) - w;
-            const int32_t take = std::min(n, room);
-            for (int32_t i = 0; i < take; ++i) mRecordBuffer[w + i] = mInputBuffer[i * ch];
-            mRecordWrite.store(w + take, std::memory_order_release);
-            if (take < n) mRecording.store(false, std::memory_order_release);
-        }
 
         for (int32_t i = 0; i < n; ++i) {
             const float v = std::fabs(static_cast<float>(mInputBuffer[i * ch]) / 32768.0f);
@@ -2222,17 +2206,6 @@ void AudioEngine::initSurgeAsync(const std::string& dataPath, const std::string&
     }
 }
 
-void AudioEngine::loadSurgePatchAsync(int index) {
-    if (mSurge == nullptr || !mSurge->ready()) return;
-    if (mSurgeBusy.exchange(true, std::memory_order_acq_rel)) return;
-    if (!runOnBigStack([this, index] {
-            mSurge->loadPatch(index);
-            mSurgeBusy.store(false, std::memory_order_release);
-        })) {
-        mSurgeBusy.store(false, std::memory_order_release);
-    }
-}
-
 void AudioEngine::loadSurgePatchNamedAsync(const std::string& name) {
     if (mSurge == nullptr) return;
 
@@ -2275,17 +2248,6 @@ void AudioEngine::initFluidAsync(const std::vector<std::string>& dirs) {
                 // had in two engines, one of them silently.
                 mFluid->applyRequestedSoundFont();
             }
-            mFluidBusy.store(false, std::memory_order_release);
-        })) {
-        mFluidBusy.store(false, std::memory_order_release);
-    }
-}
-
-void AudioEngine::loadSoundFontAsync(int index) {
-    if (mFluid == nullptr || !mFluid->ready()) return;
-    if (mFluidBusy.exchange(true, std::memory_order_acq_rel)) return;
-    if (!runOnBigStack([this, index] {
-            mFluid->loadSoundFont(index);
             mFluidBusy.store(false, std::memory_order_release);
         })) {
         mFluidBusy.store(false, std::memory_order_release);
@@ -2344,14 +2306,6 @@ void AudioEngine::rescanContentAsync() {
 
 std::string AudioEngine::surgeUserPatchesPath() const {
     return mSurge != nullptr ? mSurge->userPatchesPath() : std::string();
-}
-
-std::string AudioEngine::loadedInstrument() const {
-    return mSfizz ? mSfizz->loadedName() : std::string();
-}
-
-std::string AudioEngine::instrumentId() const {
-    return mSfizz ? mSfizz->instrumentId() : std::string();
 }
 
 void AudioEngine::injectNote(int note, int velocity) {
@@ -2456,60 +2410,6 @@ void AudioEngine::allNotesOff() {
         mInjected[write % kInjectCapacity] = e;
         mInjectWrite.store(write + 1, std::memory_order_release);
     }
-}
-
-
-// ----------------------------------------------------------------- capture
-
-bool AudioEngine::startRecording(int seconds) {
-    if (!mInputStream) return false;
-    mRecordRate = mInputStream->getSampleRate();
-    // Preallocated here, on the calling thread. The audio thread never resizes.
-    mRecordBuffer.assign(static_cast<size_t>(mRecordRate) * std::max(1, seconds), 0);
-    mRecordWrite.store(0, std::memory_order_release);
-    mMarkCount.store(0, std::memory_order_release);
-    mRecording.store(true, std::memory_order_release);
-    LOGI("recording %d s at %d Hz", seconds, mRecordRate);
-    return true;
-}
-
-float AudioEngine::recordedSeconds() const {
-    return static_cast<float>(mRecordWrite.load(std::memory_order_relaxed)) /
-           static_cast<float>(std::max(1, mRecordRate));
-}
-
-bool AudioEngine::writeRecording(const std::string& wavPath, const std::string& marksPath) {
-    mRecording.store(false, std::memory_order_release);
-    const int32_t frames = mRecordWrite.load(std::memory_order_acquire);
-    if (frames <= 0) return false;
-
-    FILE* f = fopen(wavPath.c_str(), "wb");
-    if (f == nullptr) {
-        LOGE("cannot write %s", wavPath.c_str());
-        return false;
-    }
-    const uint32_t dataBytes = static_cast<uint32_t>(frames) * 2u;
-    const uint32_t riff = 36u + dataBytes;
-    const uint32_t rate = static_cast<uint32_t>(mRecordRate);
-    const uint32_t byteRate = rate * 2u;
-    auto w32 = [&](uint32_t v) { fwrite(&v, 4, 1, f); };
-    auto w16 = [&](uint16_t v) { fwrite(&v, 2, 1, f); };
-    fwrite("RIFF", 1, 4, f); w32(riff); fwrite("WAVE", 1, 4, f);
-    fwrite("fmt ", 1, 4, f); w32(16); w16(1); w16(1);
-    w32(rate); w32(byteRate); w16(2); w16(16);
-    fwrite("data", 1, 4, f); w32(dataBytes);
-    fwrite(mRecordBuffer.data(), 2, static_cast<size_t>(frames), f);
-    fclose(f);
-
-    FILE* m = fopen(marksPath.c_str(), "w");
-    if (m != nullptr) {
-        const int32_t count = mMarkCount.load(std::memory_order_acquire);
-        fprintf(m, "# sampleRate %d\n# frames %d\n# noteOn frame positions\n", mRecordRate, frames);
-        for (int32_t i = 0; i < count; ++i) fprintf(m, "%d\n", mMarks[i]);
-        fclose(m);
-        LOGI("recording written: %d frames, %d marks", frames, count);
-    }
-    return true;
 }
 
 
