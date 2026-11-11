@@ -205,7 +205,7 @@ class SongPlayer(private val lib: Library, private val host: EngineHost, private
         if (!sameSong) {
             if (index != null) sessionBpm.clear()
             if (!clickRunning) beatOrigin = System.nanoTime()
-            taps.clear()
+            tapper = TapTempo()
         }
         updateTempo(liveSet)
         setUpEngines()
@@ -312,7 +312,7 @@ class SongPlayer(private val lib: Library, private val host: EngineHost, private
     var beatOrigin by mutableStateOf(0L); private set
     /** The tempo in force was tapped or typed this session, not as stored: it can be saved, or let go. */
     var bpmTapped by mutableStateOf(false); private set
-    private val taps = ArrayDeque<Long>()
+    private var tapper = TapTempo()
     private var songEntries: List<Digest?> = emptyList()
     /**
      * Tempos tapped or typed this session, by where they belong ([tempoKey]):
@@ -339,15 +339,11 @@ class SongPlayer(private val lib: Library, private val host: EngineHost, private
         applyMidiClock()
     }
 
-    /** One tap; four or more taps less than 2 s apart set the tempo. */
+    /** One tap; four or more taps less than 2 s apart set the tempo ([TapTempo]). */
     fun tap() {
         val now = System.nanoTime()
-        if (taps.isNotEmpty() && now - taps.last() > 2_000_000_000L) taps.clear()
-        taps.addLast(now)
-        while (taps.size > 6) taps.removeFirst()
-        if (taps.size >= 4) {
-            val span = (taps.last() - taps.first()) / (taps.size - 1).toDouble()
-            sessionBpm[tempoKey(liveSetIndex)] = Math.round(60e9 / span * 10) / 10.0
+        tapper.tap()?.let {
+            sessionBpm[tempoKey(liveSetIndex)] = it
             updateTempo()
         }
         // The visual beat falls on the tap, unless the click is counting: then

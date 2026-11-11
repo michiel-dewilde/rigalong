@@ -72,11 +72,13 @@
             android:exported="true"
             android:screenOrientation="fullUser"
             android:launchMode="singleTask"
-            android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboardHidden|uiMode">
+            android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboard|keyboardHidden|navigation|touchscreen|uiMode|density|fontScale|locale|layoutDirection|mcc|mnc|colorMode|fontWeightAdjustment">
             <!--
               Both orientations (REQUIREMENTS S20.2), as the user's own rotation
-              lock allows; the new UI adapts. Rotating never recreates the
-              activity: the engine and the USB session live in it.
+              lock allows; the UI adapts. NO configuration change recreates the
+              activity, not a rotation, and not a keyboard, a page turner or a
+              dock arriving mid-song: the engine and the USB sessions live in
+              it, and Compose follows a changed configuration by itself.
             -->
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
@@ -93,7 +95,7 @@
           prototype measured what a second instance does: it fights the first
           for the interfaces and kills its stream.
 
-          Off until a direct-USB mode is chosen (MainActivity.syncUsbAttach),
+          Off until a direct-USB mode is chosen (AudioRouter.syncUsbAttach),
           and only for the devices RigAlong has a profile for (the CP88/CP73):
           a player on ALSA, or a dock's own sound card, gets no "Open RigAlong?".
           "Always" needs the microphone permission (asked when direct USB is
