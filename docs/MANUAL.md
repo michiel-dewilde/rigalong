@@ -37,6 +37,7 @@ upright, the tabs take a row of their own and PANIC stays beside this line.
 What you play from.
 
 * **Song**: its name, what comes next, and ◀ ▶ to move through the setlist.
+  Tap the name for the whole setlist, and a song in it to go straight there.
 * **Live sets**: the large buttons. A live set is one state of the song, such
   as "Verse", "Chorus" or "Solo". **Hold** a live set button to edit it: the
   song opens in Songs at that live set. **Hold** a sound's name above its
@@ -151,8 +152,10 @@ On the right is the song being edited:
   set may have its **own tempo** and metre, in place of the song's. For each
   live set and each sound:
   * whether it **plays**;
-  * a **key range**, from low to high, which makes a split;
-  * **transposition** in semitones;
+  * a **key range**, from low to high, which makes a split. Tap the note
+    (it reads "play…") and play the key where the split should be; − and +
+    move a semitone, or an octave when held;
+  * **transposition** in semitones (an octave when − or + is held);
   * the MIDI **channel** it listens to (0 means any);
   * optionally its **own level**;
   * when the sound has an effect, whether the **effect** is on in this live

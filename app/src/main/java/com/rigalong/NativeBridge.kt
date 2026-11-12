@@ -48,6 +48,9 @@ object NativeBridge {
     external fun nativeControlLearn(on: Boolean)
     /** The controller that arrived while learning, or -1. */
     external fun nativeTakeLearnedControl(): Int
+    /** The same for a key: the next note played, or -1. */
+    external fun nativeNoteLearn(on: Boolean)
+    external fun nativeTakeLearnedNote(): Int
     /** Bit k: map k moved its parameter since the last call. */
     external fun nativeTakeMovedControls(): Long
     external fun nativeGetStats(): FloatArray

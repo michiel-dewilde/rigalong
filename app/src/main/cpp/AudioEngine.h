@@ -203,6 +203,13 @@ public:
     // Learning: the next controller that arrives is reported by takeLearnedControl.
     void setControlLearn(bool on);
     int takeLearnedControl() { return mLearnedControl.exchange(-1, std::memory_order_acq_rel); }
+    // The same for a key: the next note played is reported by takeLearnedNote
+    // (a split set by playing the key where it is).
+    void setNoteLearn(bool on) {
+        mLearnedNote.store(-1, std::memory_order_relaxed);
+        mNoteLearn.store(on, std::memory_order_release);
+    }
+    int takeLearnedNote() { return mLearnedNote.exchange(-1, std::memory_order_acq_rel); }
     // Which maps (by their index in the last setControlMaps) moved a parameter since the last call.
     uint64_t takeMovedControls() { return mControlMoved.exchange(0, std::memory_order_acq_rel); }
     // Fires a dense cluster in one block: the reproducible stress case.
@@ -544,6 +551,8 @@ private:
     float mControlLast[kMaxControlMaps] = {};
     std::atomic<uint64_t> mControlMoved{0};
     std::atomic<bool> mControlLearn{false};
+    std::atomic<bool> mNoteLearn{false};
+    std::atomic<int> mLearnedNote{-1};
     std::atomic<int> mLearnedControl{-1};
     void applyControlMaps(const rigalong::MidiBuffer& in);
 

@@ -105,12 +105,38 @@ private fun StageControls(player: SongPlayer, host: EngineHost, modifier: Modifi
     val s = if (side) fit else minOf(fit, w / if (narrow) 420f else 760f).coerceAtLeast(0.5f)
     fun d(v: Float) = (v * s).dp
 
+    // The setlist, to go to any song of it: opened by the song's name.
+    var songList by remember { mutableStateOf(false) }
+    if (songList) {
+        androidx.compose.material3.AlertDialog(onDismissRequest = { songList = false },
+            confirmButton = {},
+            dismissButton = {
+                androidx.compose.material3.TextButton(onClick = { songList = false }) { Text(stringResource(R.string.cancel)) }
+            },
+            title = { Text(player.setlistName) },
+            text = {
+                Column(Modifier.heightIn(max = 520.dp).verticalScroll(rememberScrollState())) {
+                    player.songNames.forEachIndexed { k, name ->
+                        val here = k == player.songIndex
+                        Text("${k + 1}.  $name", fontSize = 20.sp, color = if (here) Accent else Color.Unspecified,
+                            fontWeight = if (here) FontWeight.Bold else FontWeight.Normal, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.fillMaxWidth().clickable {
+                                songList = false
+                                if (!here) player.selectSong(k)
+                            }.padding(vertical = 14.dp, horizontal = 4.dp))
+                    }
+                }
+            })
+    }
     val songRow = @Composable {
         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
             BigButton("◀", enabled = player.songIndex > 0, width = 88, scale = s) { player.previousSong() }
-            Column(Modifier.weight(1f).padding(horizontal = d(12f))) {
-                Text(player.songNames.getOrNull(player.songIndex) ?: "—", fontSize = (30f * s).sp,
-                    fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Column(Modifier.weight(1f).clickable(enabled = player.songNames.size > 1) { songList = true }.padding(horizontal = d(12f))) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(player.songNames.getOrNull(player.songIndex) ?: "—", fontSize = (30f * s).sp,
+                        fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
+                    if (player.songNames.size > 1) Text("  ▾", color = Dim, fontSize = (22f * s).sp)
+                }
                 val next = player.songNames.getOrNull(player.songIndex + 1)
                 val sel = (if (player.lastSelection.isEmpty()) "" else stringResource(R.string.from_keys, player.lastSelection)) +
                     player.devices.status.let { if (it.isEmpty()) "" else "   ·   $it" }

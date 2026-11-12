@@ -263,6 +263,8 @@ private fun LiveSetCard(song: RackSong, i: Int, ls: RackLiveSet, player: SongPla
     // Opened from the stage on this live set: scrolled into view and outlined.
     val into = remember { androidx.compose.foundation.relocation.BringIntoViewRequester() }
     LaunchedEffect(focused) { if (focused) into.bringIntoView() }
+    // A key still waited for is not waited for once the live set is off the screen.
+    androidx.compose.runtime.DisposableEffect(i) { onDispose { player.cancelKeyLearn() } }
     Column(Modifier.fillMaxWidth().padding(vertical = 6.dp)
         .bringIntoViewRequester(into)
         .border(if (focused) 2.dp else 1.dp, if (focused) Accent else Line, RoundedCornerShape(8.dp))
@@ -306,9 +308,16 @@ private fun LiveSetCard(song: RackSong, i: Int, ls: RackLiveSet, player: SongPla
                         else stringResource(R.string.live_set_sound_n, p.params.size),
                         color = if (p.params.isEmpty()) Color.White else Warn)
                 }
-                NumberField(stringResource(R.string.key_low), p.keyLow, 0..127, noteName = true) { putPart(p.copy(keyLow = it)) }
-                NumberField(stringResource(R.string.key_high), p.keyHigh, 0..127, noteName = true) { putPart(p.copy(keyHigh = it)) }
-                NumberField(stringResource(R.string.transpose_short), p.transpose, -48..48) { putPart(p.copy(transpose = it)) }
+                // A split where the hands are: tap the note, play the key. Held, − and + move an octave.
+                for ((which, label, now) in listOf(Triple("low", R.string.key_low, p.keyLow), Triple("high", R.string.key_high, p.keyHigh))) {
+                    val field = "$i/${inst.id}/$which"
+                    fun set(v: Int) = putPart(if (which == "low") p.copy(keyLow = v) else p.copy(keyHigh = v))
+                    NumberField(stringResource(label), now, 0..127, noteName = true, bigStep = 12,
+                        learning = player.learningKey == field,
+                        onLearn = { if (player.learningKey == field) player.cancelKeyLearn() else player.learnKey(field, ::set) },
+                        onValue = ::set)
+                }
+                NumberField(stringResource(R.string.transpose_short), p.transpose, -48..48, bigStep = 12) { putPart(p.copy(transpose = it)) }
                 NumberField(stringResource(R.string.channel_in_short), p.channelIn, 0..16) { putPart(p.copy(channelIn = it)) }
                 Checkbox(checked = p.level != null, onCheckedChange = { on ->
                     putPart(p.copy(level = if (on) inst.slot.level else null))

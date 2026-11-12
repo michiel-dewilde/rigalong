@@ -2369,9 +2369,13 @@ void AudioEngine::applyControlMaps(const rigalong::MidiBuffer& in) {
     mControlAck.store(gen, std::memory_order_release);
     const ControlTable& t = mControlTables[gen & 1u];
     const bool learn = mControlLearn.load(std::memory_order_relaxed);
-    if (t.count == 0 && !learn) return;
+    const bool noteLearn = mNoteLearn.load(std::memory_order_relaxed);
+    if (t.count == 0 && !learn && !noteLearn) return;
     for (int i = 0; i < in.size(); ++i) {
         const rigalong::MidiEvent& e = in[i];
+        if (noteLearn && (e.status & 0xF0u) == 0x90u && e.data2 > 0) {
+            mLearnedNote.store(e.data1, std::memory_order_release);
+        }
         if ((e.status & 0xF0u) != 0xB0u) continue;
         const int cc = e.data1;
         // Bank selects and channel mode messages are not controls.

@@ -202,6 +202,16 @@ Java_com_rigalong_NativeBridge_nativeTakeLearnedControl(JNIEnv*, jobject) {
     return engine().takeLearnedControl();
 }
 
+JNIEXPORT void JNICALL
+Java_com_rigalong_NativeBridge_nativeNoteLearn(JNIEnv*, jobject, jboolean on) {
+    engine().setNoteLearn(on == JNI_TRUE);
+}
+
+JNIEXPORT jint JNICALL
+Java_com_rigalong_NativeBridge_nativeTakeLearnedNote(JNIEnv*, jobject) {
+    return engine().takeLearnedNote();
+}
+
 JNIEXPORT jlong JNICALL
 Java_com_rigalong_NativeBridge_nativeTakeMovedControls(JNIEnv*, jobject) {
     return static_cast<jlong>(engine().takeMovedControls());

@@ -561,7 +561,34 @@ class SongPlayer(private val lib: Library, private val host: EngineHost, private
         runCatching { NativeBridge.nativeControlLearn(false) }
     }
 
+    /** A key range being set by playing the key (which field asked), or null. */
+    var learningKey by mutableStateOf<String?>(null); private set
+    private var onKeyLearned: ((Int) -> Unit)? = null
+
+    /** The next key played goes to [field]: [done] gets its note number. */
+    fun learnKey(field: String, done: (Int) -> Unit) {
+        learningKey = field
+        onKeyLearned = done
+        runCatching { NativeBridge.nativeNoteLearn(true) }
+    }
+
+    fun cancelKeyLearn() {
+        if (learningKey == null) return
+        learningKey = null
+        onKeyLearned = null
+        runCatching { NativeBridge.nativeNoteLearn(false) }
+    }
+
     private fun pollLearn() {
+        if (learningKey != null) {
+            val note = runCatching { NativeBridge.nativeTakeLearnedNote() }.getOrDefault(-1)
+            if (note >= 0) {
+                val done = onKeyLearned
+                note("key learned: $note -> $learningKey")
+                cancelKeyLearn()
+                done?.invoke(note)
+            }
+        }
         if (learningControl == null) return
         val cc = runCatching { NativeBridge.nativeTakeLearnedControl() }.getOrDefault(-1)
         if (cc < 0) return

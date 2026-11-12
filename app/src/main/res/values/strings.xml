@@ -127,6 +127,7 @@
     <string name="import_current_sound">Import current sound</string>
     <string name="as_loaded">As loaded</string>
     <string name="keep">Keep</string>
+    <string name="play_a_key">play…</string>
     <string name="play_note">Play a note</string>
     <string name="tap_to_hear">Tap one to hear it</string>
     <string name="cancel">Cancel</string>
