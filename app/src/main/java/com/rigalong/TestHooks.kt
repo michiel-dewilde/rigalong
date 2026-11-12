@@ -35,7 +35,7 @@ class TestHooks(
             "NOTE", "CC", "PANIC", "STRESS", "PROFILE", "DUMP", "PARAM", "INSTANCE", "INSTRUMENT", "RESCAN",
             "MASTER", "CONCEAL", "RESETPEAKS", "FILL", "RENDERPRIO", "USBSTALL",
             "ROUTE", "OUTPUT", "SHARING", "RATE", "RESET", "REINIT", "DEVHEALTH", "SYSEX", "MEASURE",
-            "STAGE", "DEVICESELFTEST", "DEVICEPRELOADTEST", "DEVICEWRITESELECT", "RESET_LIBRARY")
+            "STAGE", "DEVICESELFTEST", "DEVICEWRITESELECT", "RESET_LIBRARY")
     }
 
     fun register() {
@@ -198,7 +198,6 @@ class TestHooks(
             "STAGE" -> stage(intent)
             // A device's own-sound path end to end (SongPlayer.deviceSelfTest):  --ei liveset 1
             "DEVICESELFTEST" -> player.deviceSelfTest(intent.getIntExtra("liveset", 1))
-            "DEVICEPRELOADTEST" -> player.devicePreloadTest()
             //   --es delays 0,0,10,10,50,50
             "DEVICEWRITESELECT" -> player.deviceWriteSelectTest(
                 (intent.getStringExtra("delays") ?: "0,0,0,0").split(',').mapNotNull { it.trim().toIntOrNull() })

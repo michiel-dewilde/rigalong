@@ -160,9 +160,8 @@
     <string name="add_device">+ %1$s</string>
     <string name="device_channel">MIDI channel</string>
     <string name="reserved_area">Reserved %1$s</string>
-    <string name="reserved_area_note">songs write their own sounds here</string>
-    <string name="preload_area">A second %1$s, %2$d, for the next song of the setlist: it is written while the current song plays, so changing songs writes nothing</string>
-    <string name="device_follows">Its own selections choose the song\'s live sets. Its reserved %1$s then gets a silent sound wherever a live set does not give it one, so it never mixes in sounds of its own.</string>
+    <string name="reserved_area_note">the open song\'s sounds are written here, one per live set, each under its live set\'s name</string>
+    <string name="device_follows">Its own selections choose the song\'s live sets. Its reserved %1$s then gets a silent sound, named after the live set, wherever a live set does not give it one, so it never mixes in sounds of its own.</string>
     <string name="rewrite_area">Rewrite the reserved %1$s</string>
     <string name="remove_device">Remove</string>
     <string name="from_library">From library…</string>

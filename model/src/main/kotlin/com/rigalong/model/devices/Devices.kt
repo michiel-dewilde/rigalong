@@ -68,9 +68,9 @@ interface DeviceDriver {
 
 /**
  * A device the app can give sounds of its own (S4.9-S4.11): each kept in the
- * library as one object in the driver's own stored form, written into an
+ * library as one object in the driver's own stored form, written into the
  * area of the device reserved for the app when a song opens -- live set n's
- * sound in slot n -- and selected from there.
+ * sound in slot n, under the live set's name -- and selected from there.
  */
 interface DeviceSounds {
     /** The library's media type for one of its sounds. */
@@ -84,6 +84,15 @@ interface DeviceSounds {
 
     /** The sound's own name, as the device shows it. */
     fun name(sound: ByteArray): String
+    /**
+     * [sound] under [name], as far as the device's display can show it: on
+     * the stage a device shows the live set's name, whatever sound of its own
+     * the live set uses (Michiel, 2026-11-12). A device whose sounds carry no
+     * name leaves this as it is.
+     */
+    fun named(sound: ByteArray, name: String): ByteArray = sound
+    /** The (area, slot) of the stored sound at [address], to read it; null if the address is not one of its slots. */
+    fun slotOf(address: Map<String, Int>): Pair<Int, Int>? = null
     /** The MIDI that writes [sound] into [slot] of [area]. */
     fun write(sound: ByteArray, area: Int, slot: Int): List<ByteArray>
     /** The MIDI that puts [sound] in the device's current sound, to hear it, no stored slot touched. */

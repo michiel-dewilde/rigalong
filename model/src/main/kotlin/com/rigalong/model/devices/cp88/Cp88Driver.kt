@@ -50,6 +50,12 @@ object Cp88Driver : DeviceDriver {
         override val slots = 8
         override fun slotAddress(area: Int, slot: Int) = mapOf("page" to area, "set" to slot)
         override fun name(sound: ByteArray) = Cp88.name(sound)
+        override fun named(sound: ByteArray, name: String) = Cp88.rename(sound, name)
+        override fun slotOf(address: Map<String, Int>): Pair<Int, Int>? {
+            val page = address["page"] ?: return null
+            val set = address["set"] ?: return null
+            return if (page in 1..40 && set in 1..8) page to set else null
+        }
         override fun write(sound: ByteArray, area: Int, slot: Int) = Cp88.retarget(sound, area, slot)
         override fun audition(sound: ByteArray) = Cp88.split(sound)
         override val silent get() = Cp88.SILENT

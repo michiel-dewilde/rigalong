@@ -360,6 +360,35 @@ Interpreted (built 2026-10-11)
 * I4.20 Consequence: a song has at most 8 live sets that the CP-88's buttons
   can reach (one page), and at most 8 own sounds.
 
+Stated (2026-11-12)
+
+* S4.13 **On the stage the CP-88's display shows the name of the app's live
+  set**, the whole patch as the rig plays it, whatever the CP-88's part in it
+  is: a sound of its own, one of its stored sounds, or nothing. As far as its
+  characters allow.
+* S4.14 **One reserved page.** Everything a song gives the CP-88 is on that
+  page. No second page for the next song: a page is written fast enough when
+  the song opens.
+
+Interpreted (built 2026-11-12)
+
+* I4.21 Every slot the app writes carries its live set's name (15 characters
+  of ASCII; accents folded, anything else a "?"): an own sound, the silence
+  of I4.19, and, replacing I4.19's exception, a **copy** of the stored sound
+  a live set selects, read from the CP-88 when the song opens (once per
+  session and address) and written into the live set's slot. If the CP-88
+  does not give the original, the stored sound is selected where it is, as
+  before, under its own name.
+* I4.22 Consequences: selecting a stored sound no longer leaves the reserved
+  page, so the CP-88's buttons keep choosing the song's live sets there; a
+  change made to the stored sound on the CP-88 reaches the songs that use it
+  at the next start, re-plug or "Rewrite the reserved page"; every song now
+  writes its page when it opens (the names differ), about 0.1 s for eight
+  slots, while the CP-88 plays on from its current sound.
+* I4.23 A live set past the page's eighth slot still leaves the CP-88 where
+  it is (S4.11: reserved slots only), so there it shows the name of the last
+  live set that had a slot.
+
 * S4.10 A CP-88 patch is stored and hashed as the **byte-exact bulk dump**.
   cp-liveset's YAML is the view: what the editor shows and what import and
   export accept.
@@ -433,12 +462,15 @@ Interpreted
   at a live set switch.
 * I5.2 The writing goes to the reserved page range (I3.4), one page per song
   (8 sets), or more pages for a song with more than 8 CP-88 sounds.
-* I5.3 **Preloading the next song while the current one plays** needs at least
-  two reserved areas used in turn, so the slots in use are never overwritten.
-  The app does the same for its own instances, within the memory limit (R4.2).
+* I5.3 ~~**Preloading the next song while the current one plays** needs at least
+  two reserved areas used in turn, so the slots in use are never overwritten.~~
+  Dropped for the CP-88, 2026-11-12 (S4.14). The app's own instances are
+  another matter, within the memory limit (R4.2).
 * I5.4 Before first writing into the reserved pages, the app reads their
   current contents and keeps them as a backup library item.
-* I5.5 A song may also use "select" (I4.7) only, which writes nothing.
+* I5.5 ~~A song may also use "select" (I4.7) only, which writes nothing.~~
+  Since 2026-11-12 a selected stored sound is copied into the page under the
+  live set's name (I4.21).
 
 Risks
 
@@ -1091,3 +1123,4 @@ Risk
 | 2026-10-11 | Carried over from the prototype (20): six engines, MEASURE, test keyboard confirmed; MIDI monitor added; both orientations everywhere (replaces "landscape tablet UI") | Round 17 |
 | 2026-10-11 | Portrait stage view derived from the landscape layout (S15.4); the four project rules A20.1-A20.4 confirmed | Round 18 |
 | 2026-10-11 | The CP-88's page is kept silent where songs do not use it (S4.12, I4.19, I4.20) | Michiel, during the unattended session |
+| 2026-11-12 | The CP-88 shows the live set's name; a selected stored sound is copied into the page under it (S4.13, I4.21-I4.23). One reserved page, no next-song preload (S4.14; I5.3 and I5.5 dropped) | Michiel, after the review |

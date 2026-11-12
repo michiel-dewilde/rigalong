@@ -183,6 +183,59 @@ object Cp88 {
         return ""
     }
 
+    /**
+     * [name] as the CP-88's display can show it: 15 characters of printable
+     * ASCII. Accented letters lose their accents, typographic dashes and
+     * quotes become plain ones, anything else it has no character for is a
+     * '?'. A colon becomes a semicolon: that is what the CP-88 itself stores
+     * for one, the only character of the 95 it changes (written and read
+     * back, 2026-11-12).
+     */
+    fun displayName(name: String): String {
+        val folded = java.text.Normalizer.normalize(name, java.text.Normalizer.Form.NFD)
+        val out = StringBuilder()
+        var i = 0
+        while (i < folded.length) {
+            val c = folded.codePointAt(i)
+            i += Character.charCount(c)
+            when {
+                c == ':'.code -> out.append(';')
+                c in 0x20..0x7E -> out.append(c.toChar())
+                Character.getType(c) == Character.NON_SPACING_MARK.toInt() -> Unit   // the accent of a folded letter
+                c == 0x2010 || c == 0x2011 || c == 0x2012 || c == 0x2013 || c == 0x2014 || c == 0x2212 -> out.append('-')
+                c == 0x2018 || c == 0x2019 -> out.append('\'')
+                c == 0x201C || c == 0x201D -> out.append('"')
+                c == 0x00A0 -> out.append(' ')
+                Character.isISOControl(c) -> out.append(' ')
+                else -> out.append('?')
+            }
+        }
+        return out.toString().trim().take(15).trimEnd()
+    }
+
+    /**
+     * [sound] under another name ([displayName]): the first 15 bytes of its
+     * common block and that block's checksum, nothing else. A blank name
+     * leaves the sound as it is.
+     */
+    fun rename(sound: ByteArray, name: String): ByteArray {
+        val shown = displayName(name)
+        if (shown.isEmpty()) return sound
+        val text = shown.padEnd(15, ' ').toByteArray(Charsets.US_ASCII)
+        val out = java.io.ByteArrayOutputStream()
+        for (m in split(sound)) {
+            val d = parse(m) ?: throw IllegalArgumentException("corrupt CP-88 sound")
+            if (d.address.contentEquals(COMMON) && d.data.size >= 15) {
+                val data = d.data.copyOf()
+                text.copyInto(data, 0, 0, 15)
+                out.write(build(d.address, data))
+            } else {
+                out.write(m)
+            }
+        }
+        return out.toByteArray()
+    }
+
     private fun slot(page: Int?, set: Int): Pair<Int, Int> {
         if (page == null) return 0x7F to 0x00
         require(page in 1..40 && set in 1..8) { "page 1-40, set 1-8" }

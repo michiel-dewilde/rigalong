@@ -156,15 +156,16 @@ class SongPlayer(private val lib: Library, private val host: EngineHost, private
         sheetFile = s.leadSheet?.toRef()?.digest?.let { java.io.File(lib.store.root, "blobs/sha256/${it.hex}") }
             ?.takeIf { it.exists() }
         liveSetObjects = liveSets
+        // The first song on a MIDI out that was up before it: this is where
+        // the devices are brought in line, in the one pass that writes the
+        // song. (Left to watchMidiOut, a moment later, the page went out
+        // twice.)
+        if (!midiOutWasReady && midiOutReady()) {
+            midiOutWasReady = true
+            devices.forget()
+        }
         devices.writeSong(liveSets)
         if (liveSets.isNotEmpty()) selectLiveSet(liveSet.coerceIn(0, liveSets.size - 1))
-        // The next song's device sounds into the other reserved area, while this one plays.
-        if (index != null) devices.preload(nextLiveSets())
-    }
-
-    /** The setlist's next song's live sets, for the devices to preload; null at the end. */
-    private fun nextLiveSets(): List<LiveSet>? = songs.getOrNull(songIndex + 1)?.let { n ->
-        runCatching { n.liveSets.map { lib.store.getTyped<LiveSet>(it.toRef().digest) } }.getOrNull()
     }
 
     fun selectLiveSet(index: Int) {
@@ -685,44 +686,6 @@ class SongPlayer(private val lib: Library, private val host: EngineHost, private
         }.start()
     }
 
-    /**
-     * DEBUG HOOK (PROVISIONAL.md): three songs of one live set each, owning
-     * three different sounds of the first device that has them, opened in turn
-     * through the rig as the stage would -- each preloading the next -- and
-     * then the first again. Logs under rigalong-devices which area each plays from
-     * and what was written; the stage's own song is left as it was.
-     */
-    fun devicePreloadTest() {
-        Thread {
-            runCatching {
-                val d = devices.withSounds().firstOrNull() ?: error("no device that can own a sound")
-                val type = devices.driver(d).sounds!!.mediaType
-                val sounds = lib.deviceSounds(type).mapNotNull { it.version.target?.digest }.distinct().take(3).toMutableList()
-                check(sounds.isNotEmpty()) { "no device sound in the library" }
-                // Short of three: renamed copies of the first, through its text form (kept only in the store).
-                val text = devices.driver(d).sounds!!.formats.firstOrNull { it.editable }
-                while (sounds.size < 3) {
-                    val f = text ?: error("need three different device sounds, have ${sounds.size}")
-                    val renamed = f.toText(lib.store.get(sounds[0])!!).replaceFirst(Regex("(?m)^name: .*$"), "name: Preload ${sounds.size + 1}")
-                    sounds += lib.store.put(f.fromText(renamed))
-                }
-                val songs = sounds.mapIndexed { i, digest ->
-                    val draft = RackSong(instances = listOf(com.rigalong.model.RackInstance("sfizz", RackEngine.SFIZZ,
-                        com.rigalong.model.RackSlot(level = 0.0))), liveSets = listOf(com.rigalong.model.RackLiveSet("Own ${i + 1}",
-                        devices = mapOf(d.name to com.rigalong.model.RackDevicePart(d.kind, "own", sound = digest)))))
-                    draft.toObjects(lib.store).liveSets.map { lib.store.getTyped<LiveSet>(it.toRef().digest) }
-                }
-                for (k in listOf(0, 1, 2, 0)) {
-                    devices.writeSong(songs[k])
-                    devices.liveSetSelected(0, songs[k][0])
-                    devices.preload(songs.getOrNull(k + 1))
-                    devices.settle()
-                    Log.i("rigalong-devices", "preloadtest: song ${k + 1} done; ${devices.status}")
-                }
-            }.onFailure { Log.e("rigalong-devices", "preloadtest failed: $it") }
-        }.start()
-    }
-
     /** DEBUG HOOK (PROVISIONAL.md): [DeviceRig.writeSelectTest] with two renamed copies of a library sound. */
     fun deviceWriteSelectTest(delays: List<Int>) {
         Thread {
@@ -852,20 +815,23 @@ class SongPlayer(private val lib: Library, private val host: EngineHost, private
      * page rewritten, the current live set selected again.
      *
      * MIDI out that is ready before a song is open stays "not yet seen" until
-     * one is. It used to be taken as seen, so a start whose route was quicker
-     * than the stage (the usual one, now that plugging in no longer starts
-     * the app) wrote only what its own record said had changed, and selected
-     * a slot it had never looked at: on 2026-11-12 the record said "Silent",
-     * the CP-88's pages held Init Sound, and the piano played along.
+     * one is ([play] then does the bringing in line). It used to be taken as
+     * seen, so a start whose route was quicker than the stage (the usual one,
+     * now that plugging in no longer starts the app) wrote only what its own
+     * record said had changed, and selected a slot it had never looked at: on
+     * 2026-11-12 the record said "Silent", the CP-88's pages held Init Sound,
+     * and the piano played along.
      */
+    private fun midiOutReady() = runCatching { NativeBridge.nativeUsbMidiOutReady() }.getOrDefault(false)
+
     private fun watchMidiOut() {
-        val ready = runCatching { NativeBridge.nativeUsbMidiOutReady() }.getOrDefault(false)
+        val ready = midiOutReady()
         if (ready && !midiOutWasReady) {
             if (songIndex < 0) return
             // It may be another unit than before (the stage's spare, a rental),
             // or the same one having lost what was written: what this tablet
             // wrote last says nothing.
-            devices.midiOutReady(liveSetObjects, liveSetIndex, nextLiveSets())
+            devices.midiOutReady(liveSetObjects, liveSetIndex)
         }
         midiOutWasReady = ready
     }

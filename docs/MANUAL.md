@@ -193,6 +193,17 @@ On the right is the song being edited:
     device's reserved area (see Setup): live set 1 in its first slot, and so
     on -- for a CP88/CP73, set 1 of the reserved page.
 
+  On such a device **Select** works the same way: the stored sound is
+  copied into the live set's slot of the reserved area when the song opens.
+  The device stays on the reserved page, so its own buttons keep choosing
+  the song's live sets.
+
+  **The device shows the live set's name.** Every sound the app writes is
+  named after its live set, so the keyboard's display says which live set of
+  the song is playing, whatever its own part in it is. A CP88/CP73 shows 15
+  characters, without accents. (A live set after the eighth has no slot on a
+  CP88/CP73's page: the keyboard stays on the last one that had.)
+
   **CP-88 page .X9P** (at the top, when a live set owns a sound; one per
   device that has a file for it) saves the area the app writes into the
   device for this song as the device's own file, to load on a CP88/CP73
@@ -200,8 +211,9 @@ On the right is the song being edited:
 
   When the keyboard's own live set buttons select the app's live sets (the
   default), every set of the reserved page that a live set doesn't give a
-  sound of its own holds a **silent** sound. Pressing a button on the
-  keyboard then never brings in its own instruments by accident.
+  sound of its own holds a **silent** sound, named after the live set too.
+  Pressing a button on the keyboard then never brings in its own instruments
+  by accident.
 
 **Save** stores the song (it reads "Save •" while there is something to
 save). Earlier versions are kept in the library. **Undo** above the song
@@ -305,14 +317,11 @@ Every setlist and song, with its history.
   Songs refer to a device by its name here. For each:
   * the **MIDI channel** it listens on;
   * for a device whose own sounds the app holds, the **reserved area** that
-    songs write their sounds into -- for a CP88/CP73, a page (40 by default),
-    whose eight sounds are overwritten -- and whether its **own selections
-    choose the app's live sets**; **Rewrite the reserved page** writes it all
-    again;
-  * **a second area for the next song** (on by default; for a CP88/CP73 the
-    page below, 39): while a song plays, the setlist's next song is written
-    into the other area, so changing songs only selects, and writes nothing.
-    A song plays from whichever of the two already holds it.
+    the open song's sounds are written into -- for a CP88/CP73, a page (40
+    by default), whose eight sounds are overwritten each time a song opens
+    (it takes about a tenth of a second) -- and whether its **own selections
+    choose the app's live sets**; **Rewrite the reserved page** reads the
+    stored sounds the song copies and writes it all again.
 
   Before the app writes into an area for the first time, it reads back what
   the area holds and keeps it in the library's **Device sounds**, so no

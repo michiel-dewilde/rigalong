@@ -5,6 +5,7 @@ import kotlin.test.Test
 import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 
 class Cp88Test {
@@ -58,6 +59,46 @@ class Cp88Test {
         assertContentEquals(hex("f043207f1c080e7f00f7"), Cp88.dumpRequest())
         assertContentEquals(hex("f043207f1c080e0100f7"), Cp88.dumpRequest(2, 1))
         assertContentEquals(hex("b0003fb02027c007"), Cp88.selectMessages(40, 8))
+    }
+
+    @Test
+    fun aRenamedSoundDiffersInItsNameOnly() {
+        val sound = Cp88.normalize(slot40x8)
+        val renamed = Cp88.rename(sound, "Verse")
+        assertEquals("Verse", Cp88.name(renamed))
+        val before = Cp88.split(sound)
+        val after = Cp88.split(renamed)
+        assertEquals(19, after.size)
+        var changed = 0
+        for (i in before.indices) {
+            // Every dump still has a checksum the CP-88 accepts: a bad one is stored as Init Sound's block.
+            val a = assertNotNull(Cp88.parse(after[i]), "dump $i")
+            val b = assertNotNull(Cp88.parse(before[i]))
+            assertContentEquals(b.address, a.address)
+            if (!after[i].contentEquals(before[i])) {
+                changed++
+                assertEquals("Verse".padEnd(15, ' '), String(a.data, 0, 15, Charsets.US_ASCII))
+                assertContentEquals(b.data.copyOfRange(15, b.data.size), a.data.copyOfRange(15, a.data.size))
+            }
+        }
+        assertEquals(1, changed)
+        // Renamed back, it is the sound it was (its own name padded the same way).
+        assertEquals("Test Sound", Cp88.name(Cp88.rename(renamed, "Test Sound")))
+        // A blank name changes nothing.
+        assertContentEquals(sound, Cp88.rename(sound, "  "))
+        // The silent sound under a live set's name is still whole.
+        assertContentEquals(Cp88.rename(Cp88.SILENT, "Chorus"), Cp88.normalize(Cp88.retarget(Cp88.rename(Cp88.SILENT, "Chorus"), 40, 3)))
+    }
+
+    @Test
+    fun aNameIsCutAndFoldedToWhatTheDisplayShows() {
+        assertEquals("Rhodes and pad", Cp88.displayName("Rhodes and pad"))
+        assertEquals("A very long nam", Cp88.displayName("A very long name indeed"))
+        assertEquals("Cafe creme", Cp88.displayName("Café crème"))
+        assertEquals("Intro - 'A'", Cp88.displayName("Intro – ‘A’"))
+        assertEquals("? piano", Cp88.displayName("♫ piano"))
+        assertEquals("Piano", Cp88.displayName("  Piano\t"))
+        assertEquals("", Cp88.displayName(" "))
     }
 
     @Test
