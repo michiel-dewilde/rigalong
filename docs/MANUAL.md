@@ -110,6 +110,15 @@ On the right is the song being edited:
   can have several of one engine: **Add a sound** "+ sfizz" twice gives two
   sfizz instances, each with its own instrument, split, transposition and
   fader. Tap a sound's name to name it ("Bright"); ✕ removes it.
+  * The wide button beside the name is **what the sound plays**, chosen by
+    ear. Tap it for the list (search narrows it); tap an entry and it is on
+    the keys at once, the list staying open; **◀ ▶** step to the one before
+    and after; **Play a note** sounds middle C when no hand is on the
+    keyboard. **Keep** (or a second tap on the entry) takes it into the
+    song, **Cancel** puts back what the sound had. While the list is open
+    the song being edited is what the keys play, on a live set where this
+    sound plays. For FluidSynth every preset of every installed SoundFont is
+    an entry ("0:012 Marimba", its font beside it).
   * **Patch…** shows every setting of that sound (drawbars, models, sends,
     transposition) as sliders over their real ranges. What you change is
     heard at once and kept in the song.
