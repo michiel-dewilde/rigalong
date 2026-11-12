@@ -1112,15 +1112,9 @@ class SongPlayer(private val lib: Library, private val host: EngineHost, private
                         NativeBridge.nativeSurgeLoadPatchNamed(preset)
                     }
                 RackEngine.DEXED -> if (NativeBridge.nativeDexedReady()) NativeBridge.nativeDexedSelectVoiceNamed(preset)
+                // The font and the preset in it, the latest asked for winning (AudioEngine::loadInstancePreset).
                 RackEngine.FLUID -> if (NativeBridge.nativeFluidReady()) {
-                    if (NativeBridge.nativeFluidCurrentFont() != preset) NativeBridge.nativeFluidLoadFontNamed(preset)
-                    if (program != null) Thread {
-                        for (k in 0 until 200) {
-                            if (!NativeBridge.nativeFluidBusy()) break
-                            Thread.sleep(50)
-                        }
-                        NativeBridge.nativeFluidSelectPreset(program)
-                    }.start()
+                    NativeBridge.nativeInstanceLoadPreset(i, preset, program ?: -1, null)
                 }
                 RackEngine.PLAITS -> {
                     val k = NativeBridge.nativePlaitsEngineNames().indexOf(preset)

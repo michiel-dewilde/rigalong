@@ -2769,14 +2769,49 @@ void AudioEngine::loadInstancePreset(int i, const std::string& name, int program
             return;
         }
         default: {
+            // FluidSynth, the first instance like any other. THE LATEST FONT AND
+            // PRESET ASKED FOR WIN: a request that finds a load in flight is not
+            // dropped (it used to be, and two songs in a row, or stepping
+            // through presets, left the wrong one playing); the loader takes
+            // it up when it is done.
             auto* f = static_cast<rigalong::FluidNode*>(n);
+            std::atomic<bool>* busy = (i == kRackFluid) ? &mFluidBusy : &mInstanceBusy[i];
             f->requestSoundFontNamed(name);
-            if (!f->ready() || mInstanceBusy[i].exchange(true, std::memory_order_acq_rel)) return;
-            if (!runOnBigStack([this, f, i, program] {
-                    f->applyRequestedSoundFont();
-                    if (program >= 0) f->selectPreset(program);
-                    mInstanceBusy[i].store(false, std::memory_order_release);
-                })) mInstanceBusy[i].store(false, std::memory_order_release);
+            mFluidProgram[i].store(program + 1, std::memory_order_release);
+            if (!f->ready() || busy->exchange(true, std::memory_order_acq_rel)) return;
+            if (f->currentSoundFontName() == name) {
+                // The font is in: a preset is a pointer swapped, done here.
+                f->requestSoundFontNamed("");
+                if (program >= 0) f->selectPreset(program);
+                busy->store(false, std::memory_order_release);
+                return;
+            }
+            if (!runOnBigStack([this, f, i, busy] {
+                    std::string failed;      // a font that would not load is not tried for ever
+                    int applied = -1;
+                    for (;;) {
+                        for (;;) {
+                            const std::string want = f->requestedSoundFont();
+                            if (!want.empty() && want != f->currentSoundFontName() && want != failed) {
+                                f->applyRequestedSoundFont();
+                                if (f->currentSoundFontName() != want) failed = want;
+                            } else if (!want.empty()) {
+                                f->requestSoundFontNamed("");
+                            }
+                            applied = mFluidProgram[i].load(std::memory_order_acquire) - 1;
+                            if (applied >= 0) f->selectPreset(applied);
+                            const std::string now = f->requestedSoundFont();
+                            if ((now.empty() || now == failed) &&
+                                mFluidProgram[i].load(std::memory_order_acquire) - 1 == applied) break;
+                        }
+                        busy->store(false, std::memory_order_release);
+                        // Asked again between the last look and the flag going down?
+                        const std::string now = f->requestedSoundFont();
+                        const bool more = (!now.empty() && now != failed) ||
+                            mFluidProgram[i].load(std::memory_order_acquire) - 1 != applied;
+                        if (!more || busy->exchange(true, std::memory_order_acq_rel)) break;
+                    }
+                })) busy->store(false, std::memory_order_release);
             return;
         }
     }

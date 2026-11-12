@@ -299,6 +299,11 @@ void FluidNode::requestSoundFontNamed(const std::string& name) {
     mWantedFont = name;
 }
 
+std::string FluidNode::requestedSoundFont() const {
+    std::lock_guard<std::mutex> lock(mLock);
+    return mWantedFont;
+}
+
 void FluidNode::applyRequestedSoundFont() {
     std::string wanted;
     {

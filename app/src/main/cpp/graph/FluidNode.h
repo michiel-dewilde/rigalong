@@ -98,6 +98,8 @@ public:
     int soundFontCount() const;
     std::string soundFontName(int index) const;     // the file's stem
     std::string currentSoundFontName() const;
+    // The font asked for with requestSoundFontNamed and not loaded yet; empty if none.
+    std::string requestedSoundFont() const;
     // The file of the font loadSoundFontNamed(name) would load; empty if none.
     std::string soundFontPath(const std::string& name) const;
 

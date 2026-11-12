@@ -126,6 +126,9 @@
     <string name="no_sound_yet">no sound yet</string>
     <string name="import_current_sound">Import current sound</string>
     <string name="as_loaded">As loaded</string>
+    <string name="keep">Keep</string>
+    <string name="play_note">Play a note</string>
+    <string name="tap_to_hear">Tap one to hear it</string>
     <string name="cancel">Cancel</string>
     <string name="patch_of">%1$s: patch</string>
     <string name="search">Search</string>

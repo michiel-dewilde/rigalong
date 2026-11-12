@@ -283,7 +283,8 @@ def flow_reuse_patch(f):
     to_songs()
     f.tap("3. Surge XT and sfizz")
     f.tap("(as loaded)")
-    f.tap(PATCH)
+    f.tap(PATCH)                       # heard at once, the picker stays open
+    f.tap("Keep")
     f.tap("Save •")
 
 
@@ -292,6 +293,7 @@ def flow_update_everywhere(f):
     f.tap("1. sfizz")
     f.tap("(as loaded)")
     f.tap("Salamander Grand (tightened)", exact=False)
+    f.tap("Keep")
     f.tap("Save •")
     f.see("A library patch changed")
     f.see("1 other song uses it.", exact=False)
@@ -405,13 +407,15 @@ def flow_sound_for_live_set(f):
     f.tap("setBfree", long=True, pick="lowest-left")
     f.tap("New sound for this live set")
     f.see("setBfree: patch")          # the preset picker for the new sound
-    picks = [n for n in screen() if n.text and n.text not in ("setBfree: patch", "As loaded", "Cancel", "Search")
-             and n.y > find_all("Search")[0].y + 60]
+    chrome = ("setBfree: patch", "As loaded", "Cancel", "Search", "Keep", "◀", "▶", "Play a note",
+              "Tap one to hear it", "library")
+    picks = [n for n in screen() if n.text and n.text not in chrome and n.y > find_all("Search")[0].y + 60]
     if len(picks) < 2:
         raise AssertionError("no presets to pick")
     shell(f"input tap {picks[1].x} {picks[1].y}")
     f.taps += 1
     time.sleep(0.8)
+    f.tap("Keep")
     f.tap("Save •")
     to_stage()
     try:
@@ -633,6 +637,7 @@ def make_patch(engine, search, pick, name, param, at):
         s.tap("Search")
         type_text(search)
     s.tap(pick, pick="last")
+    s.tap("Keep")
     time.sleep(1.5)
     patch = [n for n in find_all("Patch…") if abs(n.y - row.y) < 12][0]
     shell(f"input tap {patch.x} {patch.y}")
@@ -731,7 +736,8 @@ def flow_export_dexed_patch(f):
 
 
 def flow_export_fluid_patch(f):
-    export_patch(f, "FluidSynth", None, "VintageDreamsWaves-v2.sf3", "FlowFluid", "Transpose", 0.66, "sf3",
+    # Every preset of every font is a row: the font's name narrows the list to its own.
+    export_patch(f, "FluidSynth", "v2.sf3", "0:000 FM Bells 1", "FlowFluid", "Transpose", 0.66, "sf3",
                  check_soundfont("FlowFluid"))
 
 
@@ -743,13 +749,13 @@ FLOWS = [
     ("quick-edit-patch", 2, flow_quick_edit_patch),
     ("count-in", 5, flow_count_in),
     ("share-patch", 8, flow_share_patch),
-    ("reuse-patch", 4, flow_reuse_patch),
-    ("update-everywhere", 5, flow_update_everywhere),
+    ("reuse-patch", 5, flow_reuse_patch),
+    ("update-everywhere", 6, flow_update_everywhere),
     ("undo-all", 4, flow_undo_all),
     ("second-sfizz", 3, flow_second_sfizz),
     ("tweak-in-live-set", 4, flow_tweak_in_live_set),
     ("use-in-whole-song", 5, flow_use_in_whole_song),
-    ("sound-for-live-set", 4, flow_sound_for_live_set),
+    ("sound-for-live-set", 5, flow_sound_for_live_set),
     ("store-in-live-set", 2, flow_store_in_live_set),
     ("knob-controls-sound", 4, flow_knob_controls_sound),
     ("import-cp88-file", 4, flow_import_cp88_file),

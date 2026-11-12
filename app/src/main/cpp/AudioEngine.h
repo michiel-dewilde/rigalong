@@ -495,6 +495,8 @@ private:
     int mInstanceLevelParam[kMaxInstances] = {};
     std::atomic<int> mInstanceCount{0};
     std::atomic<bool> mInstanceBusy[kMaxInstances] = {};
+    // A FluidSynth instance's preset as last asked for, plus one (0: none).
+    std::atomic<int> mFluidProgram[kMaxInstances] = {};
     rigalong::NodeId mIdMidiIn = -1;
     rigalong::NodeId mIdReverb = -1;
     // What the first instances were brought up with, for the ones added later.

@@ -53,6 +53,7 @@ import com.rigalong.model.RackSlot
 import com.rigalong.model.RackSong
 import com.rigalong.model.getTyped
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import com.rigalong.play.SongPlayer
 import com.rigalong.play.EngineHost
 
@@ -449,53 +450,129 @@ internal fun fxLabel(type: String) = when (type) {
     else -> R.string.fx_off
 }
 
+/** One thing a sound can play: what goes into its slot, and how it reads in the list. */
+internal class PresetChoice(val preset: String, val program: Int?, val label: String, val from: String = "")
+
+/** One row of the picker: how it reads, and what the slot becomes if it is kept. */
+private class PickRow(val label: String, val tag: String, val library: Boolean, val slot: (RackSlot) -> RackSlot)
+
+/**
+ * What a sound plays, chosen BY EAR: a tap puts a preset on the engine at
+ * once ([onAudition]) and the picker stays open; ◀ ▶ step through the list as
+ * it is filtered; Keep (or a second tap on the row) takes it into the song,
+ * Cancel puts back what the sound had. The library's own patches come first:
+ * keeping one links the slot to it. For FluidSynth every preset of every
+ * SoundFont is a row.
+ */
 @Composable
-internal fun PresetPicker(e: RackEngine, host: EngineHost, lib: Library, onPick: (String?, Int?) -> Unit,
-                         onPatch: (Digest, com.rigalong.model.Patch) -> Unit, onDismiss: () -> Unit) {
-    val choices = remember(e) { presetChoices(e, host) }
+internal fun PresetPicker(e: RackEngine, slot: RackSlot, host: EngineHost, lib: Library,
+                         onAudition: (RackSlot) -> Unit, onKeep: (RackSlot) -> Unit, onCancel: () -> Unit) {
+    val libraryTag = stringResource(R.string.library_tag)
     val shared = remember(e) { lib.patches(e.key) }
+    // Off the main thread: a SoundFont's presets are read from its file.
+    val choices by androidx.compose.runtime.produceState<List<PresetChoice>?>(null, e) {
+        value = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) { presetChoices(e, host) }
+    }
+    val rows = remember(shared, choices) {
+        shared.map { (entry, patch) -> PickRow(entry.version.name, libraryTag, true) { it.withPatch(patch, entry.id) } } +
+            choices.orEmpty().map { c -> PickRow(c.label, c.from, false) { it.copy(preset = c.preset, program = c.program) } }
+    }
     var filter by remember { mutableStateOf("") }
-    AlertDialog(onDismissRequest = onDismiss, confirmButton = {
-        TextButton(onClick = { onPick(null, null) }) { Text(stringResource(R.string.as_loaded)) }
-    }, dismissButton = { TextButton(onClick = onDismiss) { Text(stringResource(R.string.cancel)) } },
+    var picked by remember { mutableStateOf<PickRow?>(null) }
+    val shown = remember(rows, filter) {
+        rows.filter { filter.isEmpty() || it.label.contains(filter, true) || it.tag.contains(filter, true) }
+    }
+    val list = androidx.compose.foundation.lazy.rememberLazyListState()
+    val scope = androidx.compose.runtime.rememberCoroutineScope()
+    fun audition(r: PickRow) { picked = r; onAudition(r.slot(slot)) }
+    fun step(by: Int) {
+        if (shown.isEmpty()) return
+        val at = shown.indexOf(picked)
+        val next = (if (at < 0) (if (by > 0) 0 else shown.size - 1) else at + by).coerceIn(0, shown.size - 1)
+        audition(shown[next])
+        scope.launch { list.animateScrollToItem((next - 2).coerceAtLeast(0)) }
+    }
+    AlertDialog(onDismissRequest = onCancel,
+        confirmButton = {
+            Button(enabled = picked != null, onClick = { picked?.let { onKeep(it.slot(slot)) } }) { Text(stringResource(R.string.keep)) }
+        },
+        dismissButton = {
+            Row {
+                TextButton(onClick = { onKeep(slot.copy(preset = null, program = null)) }) { Text(stringResource(R.string.as_loaded)) }
+                TextButton(onClick = onCancel) { Text(stringResource(R.string.cancel)) }
+            }
+        },
         title = { Text(stringResource(R.string.patch_of, engineLabel(e))) },
         text = {
-            Column(Modifier.height(420.dp)) {
+            Column(Modifier.height(460.dp)) {
                 OutlinedTextField(value = filter, onValueChange = { filter = it }, singleLine = true,
                     label = { Text(stringResource(R.string.search)) }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Text))
-                val shown = choices.filter { filter.isEmpty() || it.second.contains(filter, true) }.take(300)
-                LazyColumn {
-                    // The library's own patches first: picking one links the slot to it (by content).
-                    val mine = shared.filter { filter.isEmpty() || it.first.version.name.contains(filter, true) }
-                    itemsIndexed(mine) { _, (entry, patch) ->
-                        Row(Modifier.fillMaxWidth().clickable { onPatch(entry.id, patch) }.padding(vertical = 10.dp)) {
-                            Text(entry.version.name, color = Accent, modifier = Modifier.weight(1f))
-                            Text(stringResource(R.string.library_tag), color = Dim, fontSize = 12.sp)
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    TextButton(onClick = { step(-1) }) { Text("◀") }
+                    TextButton(onClick = { step(1) }) { Text("▶") }
+                    // A note for when no hand is on the keys.
+                    TextButton(onClick = {
+                        scope.launch {
+                            NativeBridge.nativeTestNote(60, 100)
+                            delay(500)
+                            NativeBridge.nativeTestNote(60, 0)
                         }
-                    }
-                    itemsIndexed(shown) { _, (value, label) ->
-                        Text(label, modifier = Modifier.fillMaxWidth().clickable { onPick(value, null) }
-                            .padding(vertical = 10.dp))
+                    }) { Text(stringResource(R.string.play_note)) }
+                    Text(picked?.label ?: stringResource(if (choices == null) R.string.loading else R.string.tap_to_hear),
+                        color = if (picked != null) Accent else Dim, fontSize = 13.sp, maxLines = 1,
+                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+                }
+                LazyColumn(state = list) {
+                    itemsIndexed(shown) { _, r ->
+                        val on = picked === r
+                        Row(Modifier.fillMaxWidth().background(if (on) Accent.copy(alpha = 0.18f) else Color.Transparent)
+                            .clickable { if (on) onKeep(r.slot(slot)) else audition(r) }.padding(vertical = 10.dp, horizontal = 4.dp)) {
+                            Text(r.label, color = if (r.library) Accent else Color.Unspecified, modifier = Modifier.weight(1f))
+                            if (r.tag.isNotEmpty()) Text(r.tag, color = Dim, fontSize = 12.sp, maxLines = 1)
+                        }
                     }
                 }
             }
         })
 }
 
-/** Installed content an engine can play: value stored in the patch, label shown. */
-private fun presetChoices(e: RackEngine, host: EngineHost): List<Pair<String, String>> = runCatching {
+/** Installed content an engine can play: what goes into the slot, and how it reads. */
+private fun presetChoices(e: RackEngine, host: EngineHost): List<PresetChoice> = runCatching {
+    fun plain(names: List<String>) = names.map { PresetChoice(it, null, it) }
     when (e) {
-        RackEngine.SFIZZ -> host.instruments()
-        RackEngine.SETBFREE -> NativeBridge.nativeSetBfreePresetNames().map { it to it }
-        RackEngine.SURGE -> (0 until NativeBridge.nativeSurgePatchCount()).map {
-            NativeBridge.nativeSurgePatchName(it).let { n -> n to n }
+        RackEngine.SFIZZ -> host.instruments().map { (id, label) -> PresetChoice(id, null, label) }
+        RackEngine.SETBFREE -> plain(NativeBridge.nativeSetBfreePresetNames().toList())
+        RackEngine.SURGE -> plain((0 until NativeBridge.nativeSurgePatchCount()).map { NativeBridge.nativeSurgePatchName(it) })
+        RackEngine.DEXED -> plain((0 until NativeBridge.nativeDexedVoiceCount()).map { NativeBridge.nativeDexedVoiceName(it) })
+        RackEngine.FLUID -> (0 until NativeBridge.nativeFluidFontCount()).flatMap { k ->
+            val font = NativeBridge.nativeFluidFontName(k)
+            fluidPresets(font).let { presets ->
+                // A font of one preset is that preset; otherwise each, in the order FluidSynth has them.
+                if (presets.size <= 1) listOf(PresetChoice(font, null, font))
+                else presets.mapIndexed { i, label -> PresetChoice(font, i, label, font) }
+            }
         }
-        RackEngine.DEXED -> (0 until NativeBridge.nativeDexedVoiceCount()).map {
-            NativeBridge.nativeDexedVoiceName(it).let { n -> n to n }
-        }
-        RackEngine.FLUID -> (0 until NativeBridge.nativeFluidFontCount()).map {
-            NativeBridge.nativeFluidFontName(it).let { n -> n to n }
-        }
-        RackEngine.PLAITS -> NativeBridge.nativePlaitsEngineNames().map { it to it }
+        RackEngine.PLAITS -> plain(NativeBridge.nativePlaitsEngineNames().toList())
     }
 }.getOrDefault(emptyList())
+
+/** The presets of an installed SoundFont, by bank and program as FluidSynth indexes them: "0:012 Marimba". */
+internal fun fluidPresets(font: String): List<String> = runCatching {
+    val path = NativeBridge.nativeFluidFontPath(font)
+    if (path.isEmpty()) emptyList()
+    else com.rigalong.model.SoundFontFile.presets(java.io.File(path)).map { "%d:%03d %s".format(it.bank, it.program, it.name) }
+}.getOrDefault(emptyList())
+
+/** How a slot's preset reads on its button: a SoundFont's preset by name, behind its font. */
+@Composable
+internal fun presetLabel(e: RackEngine, slot: RackSlot): String? {
+    val preset = slot.preset ?: return null
+    val program = slot.program
+    if (e != RackEngine.FLUID || program == null) return preset
+    val name by androidx.compose.runtime.produceState<String?>(null, preset, program) {
+        value = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
+            fluidPresets(preset).getOrNull(program)?.substringAfter(' ')
+        }
+    }
+    return name?.let { "$it  ·  $preset" } ?: preset
+}

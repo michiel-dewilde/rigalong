@@ -131,7 +131,7 @@ internal fun SongEditor(song: RackSong, name: String, host: EngineHost, player: 
             }
             val preset = @Composable { m: Modifier ->
                 OutlinedButton(onClick = { picker = inst.id }, modifier = m) {
-                    Text(slot.preset ?: stringResource(R.string.as_loaded_paren), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text(presetLabel(inst.engine, slot) ?: stringResource(R.string.as_loaded_paren), maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
             }
             val edits = @Composable {
@@ -231,14 +231,25 @@ internal fun SongEditor(song: RackSong, name: String, host: EngineHost, player: 
     }
     picker?.let { id ->
         song.instance(id)?.let { inst ->
-            PresetPicker(inst.engine, host, lib, onPick = { preset, program ->
-                // Still linked: a linked patch given another sound is a change to it, asked about at Save.
-                onChange(song.withSlot(id, inst.slot.copy(preset = preset, program = program)))
-                picker = null
-            }, onPatch = { entry, p ->
-                onChange(song.withSlot(id, inst.slot.withPatch(p, entry)))
-                picker = null
-            }, onDismiss = { picker = null })
+            // Chosen by ear: the song is on the engine while the picker is open, at
+            // a live set where this sound plays (the one being heard, if it does).
+            LaunchedEffect(id) {
+                fun plays(i: Int) = song.liveSets.getOrNull(i)?.parts?.get(id)?.plays == true
+                val at = hearing?.takeIf { plays(it) } ?: song.liveSets.indices.firstOrNull { plays(it) } ?: hearing ?: 0
+                if (at in song.liveSets.indices) onHear(at)
+            }
+            PresetPicker(inst.engine, inst.slot, host, lib,
+                onAudition = { slot -> player.previewSlot(song, id, slot) },
+                onKeep = { slot ->
+                    // Still linked: a linked patch given another sound is a change to it, asked about at Save.
+                    onChange(song.withSlot(id, slot))
+                    picker = null
+                },
+                onCancel = {
+                    // What it had, back on the engine.
+                    player.previewSlot(song, id, inst.slot)
+                    picker = null
+                })
         }
     }
 }
