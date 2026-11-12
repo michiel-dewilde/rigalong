@@ -392,6 +392,11 @@ Every setlist and song, with its history.
    replugged keyboard comes back without asking in the middle of a set. Both sound and notes
    then travel over that single cable, and the tablet's sound comes out of
    the keyboard's own outputs.
+
+   Plugging the keyboard in never starts RigAlong. While RigAlong is not
+   running, the keyboard is an ordinary sound card for the tablet's other
+   apps; RigAlong takes it when you start it, and gives it back when you
+   close it.
 4. Mind the volume: the direct modes bypass Android's volume. Use the Master
    fader on the stage.
 5. Save the setup as an environment, for example "Stage".

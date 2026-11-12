@@ -402,10 +402,11 @@ class AudioRouter(private val context: Context, private val prefs: SharedPrefere
     }
 
     /**
-     * The USB attach filter (the manifest's UsbAttach alias) on only while a
-     * direct-USB mode is chosen. Off, plugging in a USB audio device raises no
+     * The USB attach filter (the manifest's [UsbAttach]) on only while a
+     * direct-USB mode is chosen. Off, plugging in a CP88/CP73 raises no
      * "Open RigAlong?" dialog, and the app never asks for USB permission:
-     * ALSA needs none. Choosing a direct mode is the opt-in to both.
+     * ALSA needs none. Choosing a direct mode is the opt-in to both. On, it
+     * still starts nothing: see [UsbAttach].
      */
     fun syncUsbAttach() {
         val on = audioMode.direct || midiMode.direct
@@ -1374,7 +1375,7 @@ class AudioRouter(private val context: Context, private val prefs: SharedPrefere
         if (effectiveMode(Use.MIDI).direct) applyRouting("midi lost") else openMidi()
     }
 
-    /** A USB device was attached (the manifest's filter launched the activity again): re-route, never restart. */
+    /** A CP88/CP73 was attached while the rig runs ([UsbAttach], after Android's grant): re-route. */
     fun deviceAttached() { if (started) applyRouting("device attached") }
 
     /** The owner is going away: no more USB broadcasts. */

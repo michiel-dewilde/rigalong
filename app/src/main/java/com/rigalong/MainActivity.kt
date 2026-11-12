@@ -1,6 +1,5 @@
 package com.rigalong
 
-import android.hardware.usb.UsbManager
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
@@ -77,17 +76,6 @@ class MainActivity : androidx.activity.ComponentActivity() {
                 if (!rig.player.onStage) rig.player.backToStage?.invoke()
             }
         })
-    }
-
-    /**
-     * Launched again by USB_DEVICE_ATTACHED (the manifest's filter, which is
-     * what lets "always open with RigAlong" make a replug permission-free).
-     * The instrument is singleTask, so this is the running one: re-route, never
-     * restart.
-     */
-    override fun onNewIntent(intent: android.content.Intent) {
-        super.onNewIntent(intent)
-        if (intent.action == UsbManager.ACTION_USB_DEVICE_ATTACHED) rig.router.deviceAttached()
     }
 
     override fun onResume() {

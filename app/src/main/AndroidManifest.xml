@@ -77,8 +77,9 @@
               Both orientations (REQUIREMENTS S20.2), as the user's own rotation
               lock allows; the UI adapts. NO configuration change recreates the
               activity, not a rotation, and not a keyboard, a page turner or a
-              dock arriving mid-song: the engine and the USB sessions live in
-              it, and Compose follows a changed configuration by itself.
+              dock arriving mid-song: Compose follows a changed configuration
+              by itself, and a new activity mid-song is a screen rebuilt for
+              nothing.
             -->
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
@@ -87,13 +88,18 @@
         </activity>
 
         <!--
-          USB audio and MIDI devices. This is what lets "always open with
-          RigAlong" grant USB permission once and for all, so that a replugged
-          CP-88 in a direct-USB mode comes back without a dialog in the middle
-          of a set. singleTask above makes the attach land on the running
-          instrument (onNewIntent) instead of starting a second one; the usbhost
-          prototype measured what a second instance does: it fights the first
-          for the interfaces and kills its stream.
+          USB audio and MIDI devices. This filter is what lets "always open
+          with RigAlong" grant USB permission once and for all, so that a
+          replugged CP-88 in a direct-USB mode comes back without a dialog in
+          the middle of a set.
+
+          It is on an activity WITHOUT A SCREEN (UsbAttach), not on the
+          instrument: plugging the keyboard in must not start RigAlong, nor
+          hand it the keyboard (Michiel, 2026-11-12). UsbAttach tells a rig
+          that is already running and finishes; with none running, nothing
+          happens and the keyboard stays Android's sound card. A task of its
+          own (taskAffinity), or Android would bring the instrument's task to
+          the front with it.
 
           Off until a direct-USB mode is chosen (AudioRouter.syncUsbAttach),
           and only for the devices RigAlong has a profile for (the CP88/CP73):
@@ -102,18 +108,21 @@
           chosen): Android greys it out for an app that may not record when the
           device has audio input.
         -->
-        <activity-alias
+        <activity
             android:name=".UsbAttach"
-            android:targetActivity=".MainActivity"
             android:enabled="false"
-            android:exported="true">
+            android:exported="true"
+            android:theme="@android:style/Theme.NoDisplay"
+            android:taskAffinity=""
+            android:excludeFromRecents="true"
+            android:noHistory="true">
             <intent-filter>
                 <action android:name="android.hardware.usb.action.USB_DEVICE_ATTACHED" />
             </intent-filter>
             <meta-data
                 android:name="android.hardware.usb.action.USB_DEVICE_ATTACHED"
                 android:resource="@xml/usb_audio_devices" />
-        </activity-alias>
+        </activity>
 
         <service
             android:name=".EngineService"
