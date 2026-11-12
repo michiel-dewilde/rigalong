@@ -28,22 +28,26 @@ import java.util.concurrent.Executors
  * driver (model/devices): what the songs' live sets do to them, done.
  *
  * Per device, from the environment ([ExternalSynth]): its MIDI channel, the
- * area reserved for the app's sounds (a CP-88's page) and whether its own
+ * areas reserved for the app's sounds (a CP-88's pages) and whether its own
  * selections choose the app's live sets. When a song opens, a device that can
- * own sounds gets the song in its reserved area: live set n's sound in slot
- * n, UNDER THE LIVE SET'S NAME, so that its display says what the whole rig
- * is playing (Michiel, 2026-11-12). That sound is the live set's own one from
- * the library, a copy of the stored sound of the device's that the live set
- * selects, or silence where the device follows the app and the live set gives
- * it nothing. Only slots whose content changed are written. Selecting a live
- * set selects its slot, and nothing else: reserved slots are the one way a
- * song's sounds reach a device (S4.11), so a live set past the area's last
- * slot leaves the device where it is.
+ * own sounds gets the song in its reserved areas: live set n's sound in slot
+ * n, the ninth on in the next area, UNDER THE LIVE SET'S NAME, so that its
+ * display says what the whole rig is playing (Michiel, 2026-11-12). That
+ * sound is the live set's own one from the library, a copy of the stored
+ * sound of the device's that the live set selects, or silence where the
+ * device follows the app and the live set gives it nothing -- and in every
+ * reserved slot the song has no live set for, so that no button of the
+ * device brings back a sound of another song (S4.12). Only slots whose
+ * content changed are written. Selecting a live set selects its slot, and
+ * nothing else: reserved slots are the one way a song's sounds reach a
+ * device on the stage (S4.11; the device's current sound is for importing
+ * and for hearing a sound while a song is set up). How many live sets have a
+ * slot is how many areas are reserved, which is the player's to say.
  *
- * One area, written when the song opens: a page of eight goes out in under a
- * tenth of a second and the device plays on from its current sound meanwhile.
- * (Until 2026-11-12 there were two, the next song written ahead into the
- * other; it saved that tenth and cost a second page of the player's sounds.)
+ * The song is written when it opens: eight slots go out in under a tenth of
+ * a second and the device plays on from its current sound meanwhile. (Until
+ * 2026-11-12 the next song was written ahead into a second area; it saved
+ * that tenth.)
  *
  * Before the app first writes into an area, what the area held is read back
  * and kept in the library's device sounds: nobody's own sounds are lost to a
@@ -68,8 +72,8 @@ class DeviceRig(private val lib: Library, private val prefs: SharedPreferences, 
 
     /** Per device name: what the open song gives it. Set and read on the queue. */
     private val plans = HashMap<String, Plan>()
-    /** Per device name: live set index -> the slot of its reserved area its sound is in. */
-    private val owned = ConcurrentHashMap<String, Map<Int, Int>>()
+    /** Per device name: live set index -> the (area, slot) its sound is in. */
+    private val owned = ConcurrentHashMap<String, Map<Int, Pair<Int, Int>>>()
     /** Per device name: what the app selected last, and when, so the device echoing it back is not the player. */
     private val lastSent = ConcurrentHashMap<String, Pair<Map<String, Int>, Long>>()
     /**
@@ -106,13 +110,13 @@ class DeviceRig(private val lib: Library, private val prefs: SharedPreferences, 
         note("${drv.label} recognised: added as \"${drv.defaultName}\"")
     }
 
-    /** A device of [drv]'s kind, with its last area reserved. */
+    /** A device of [drv]'s kind, with its last two areas reserved (on a CP-88, sixteen live sets); Setup has more or fewer. */
     fun add(drv: DeviceDriver) {
         var name = drv.defaultName
         var n = 2
         while (devices.any { it.name == name }) name = "${drv.defaultName} ${n++}"
         update(devices + ExternalSynth(name = name, kind = drv.kind, midiOut = "Keys", midiIn = "Keys",
-            reservedAreas = listOfNotNull(drv.sounds?.area?.range?.last),
+            reservedAreas = drv.sounds?.area?.range?.let { r -> listOf(r.last - 1, r.last).filter { it in r }.distinct() }.orEmpty(),
             selectsLiveSets = drv.selection(0, 0, 0) != null || drv.sounds != null))
     }
 
@@ -124,36 +128,50 @@ class DeviceRig(private val lib: Library, private val prefs: SharedPreferences, 
     }
 
     /**
-     * The reserved area of [d] that songs' sounds go to, if it can own sounds.
-     * The first one listed: an environment from before 2026-11-12 may list a
-     * second, for the next song, which is no longer written.
+     * The reserved areas of [d] that a song's sounds go to, if it can own
+     * sounds, in the device's own order: the first live sets in the lowest,
+     * the next in the one after, as on the device's own page buttons.
      */
-    private fun area(d: ExternalSynth): Int? = if (driver(d).sounds == null) null else d.reservedAreas.firstOrNull()
+    private fun areas(d: ExternalSynth): List<Int> =
+        if (driver(d).sounds == null) emptyList() else d.reservedAreas.distinct().sorted()
 
     // ------------------------------------------------------- song and live set
 
     /** What one live set gives a device: a sound the library has ([own], or silence), or a stored sound of the device's own to copy. */
     private class Want(val name: String, val sound: ByteArray?, val copyOf: Map<String, Int>?, val own: Boolean = false)
 
-    /** For a device that can own sounds: live set index -> what it gets there. */
-    private class Plan(val d: ExternalSynth, val s: DeviceSounds, val area: Int, val wants: Map<Int, Want>)
+    /**
+     * For a device that can own sounds: live set index -> what it gets
+     * there. An index past the song's last live set is a reserved slot kept
+     * silent.
+     */
+    private class Plan(val d: ExternalSynth, val s: DeviceSounds, val areas: List<Int>, val wants: Map<Int, Want>) {
+        /** How many live sets have a slot. */
+        val capacity get() = areas.size * s.slots
+        /** The (area, slot) of live set [index], or null past the last reserved area. */
+        fun place(index: Int): Pair<Int, Int>? = areas.getOrNull(index / s.slots)?.let { it to index % s.slots + 1 }
+        /** "page 39+40" */
+        val where get() = "${s.area.label} ${areas.joinToString("+")}"
+    }
 
     // On the caller's thread: the store is read here, never on the queue.
     private fun plansFor(liveSets: List<LiveSet>): List<Plan> = devices.mapNotNull { d ->
         val s = driver(d).sounds ?: return@mapNotNull null
-        val area = area(d) ?: return@mapNotNull null
+        val areas = areas(d).ifEmpty { return@mapNotNull null }
         val wants = HashMap<Int, Want>()
         for ((i, ls) in liveSets.withIndex()) {
             val a = ls.devices[d.name]
             val own = if (a?.mode == "own") a.sound?.toRef()?.digest?.let { lib.store.get(it) } else null
             when {
                 own != null -> wants[i] = Want(ls.name, own, null, own = true)
-                // A stored sound in the reserved area itself is the app's own writing: not copied onto itself.
-                a?.mode == "select" -> if (s.slotOf(a.address)?.first != area) wants[i] = Want(ls.name, null, a.address)
+                // A stored sound in a reserved area is the app's own writing: not copied onto itself.
+                a?.mode == "select" -> if (s.slotOf(a.address)?.first !in areas) wants[i] = Want(ls.name, null, a.address)
                 d.selectsLiveSets -> wants[i] = Want(ls.name, s.silent, null)
             }
         }
-        Plan(d, s, area, wants)
+        // The reserved slots this song has no live set for: silent, under the silent sound's own name.
+        if (d.selectsLiveSets) for (i in liveSets.size until areas.size * s.slots) wants[i] = Want("", s.silent, null)
+        Plan(d, s, areas, wants)
     }
 
     /** [w]'s sound under its live set's name, or null if it is a copy and the device did not give the original. On the queue. */
@@ -178,36 +196,37 @@ class DeviceRig(private val lib: Library, private val prefs: SharedPreferences, 
 
     /**
      * The song's sounds into every device that can own them (S5.3, S4.11):
-     * live set n's in slot n of the reserved area, under the live set's name.
-     * Only the slots that differ are written ([forget] makes every slot count
-     * as different).
+     * live set n's in slot n of the reserved areas, under the live set's
+     * name. Only the slots that differ are written ([forget] makes every slot
+     * count as different).
      */
     fun writeSong(liveSets: List<LiveSet>) {
         val all = plansFor(liveSets)
         queue.execute {
             plans.clear()
-            val o = HashMap<String, Map<Int, Int>>()
+            val o = HashMap<String, Map<Int, Pair<Int, Int>>>()
             for (p in all) {
                 plans[p.d.name] = p
-                backupOnce(p.d, p.s, p.area)
+                // Only the areas this song writes into are read back first.
+                for (area in p.wants.keys.mapNotNull { p.place(it)?.first }.distinct().sorted()) backupOnce(p.d, p.s, area)
                 var written = 0; var kept = 0; var failed = 0
-                val good = HashMap<Int, Int>()
+                val good = HashMap<Int, Pair<Int, Int>>()
                 for ((index, want) in p.wants.toSortedMap()) {
-                    if (index >= p.s.slots) break
-                    val slot = index + 1
+                    val (area, slot) = p.place(index) ?: break
                     val bytes = sound(p, want) ?: continue
-                    when (write(p, slot, bytes)) {
-                        true -> { written++; good[index] = slot }
-                        null -> { kept++; good[index] = slot }
+                    when (write(p, area, slot, bytes)) {
+                        true -> { written++; good[index] = area to slot }
+                        null -> { kept++; good[index] = area to slot }
                         false -> failed++
                     }
                 }
                 o[p.d.name] = good
                 when {
-                    p.wants.any { (index, want) -> index >= p.s.slots && want.own } ->
-                        say("${p.d.name}: only live sets 1-${p.s.slots} can own a sound (one ${p.s.area.label})")
+                    // The player's own limit, and the player's to lift: the device is left where it is from there on.
+                    p.wants.keys.any { it >= p.capacity } ->
+                        say("${p.d.name}: only live sets 1-${p.capacity} have a slot (${p.where} reserved; Setup reserves more)")
                     failed > 0 -> say("${p.d.name}: could not write $failed slot(s) -- it did not confirm them, or MIDI out is not on direct USB")
-                    else -> say("${p.d.name}: ${p.s.area.label} ${p.area}, $written slot(s) written, $kept unchanged", log = written > 0)
+                    else -> say("${p.d.name}: ${p.where}, $written slot(s) written, $kept unchanged", log = written > 0)
                 }
             }
             owned.clear()
@@ -215,13 +234,13 @@ class DeviceRig(private val lib: Library, private val prefs: SharedPreferences, 
         }
     }
 
-    /** [bytes] into [slot] of [p]'s area: true written, null already there, false not confirmed. */
-    private fun write(p: Plan, slot: Int, bytes: ByteArray): Boolean? {
-        val key = slotKey(p.d, p.area, slot)
+    /** [bytes] into [slot] of [area]: true written, null already there, false not confirmed. */
+    private fun write(p: Plan, area: Int, slot: Int, bytes: ByteArray): Boolean? {
+        val key = slotKey(p.d, area, slot)
         val digest = Digest.of(bytes).hex
         if (prefs.getString(key, null) == digest) return null
         // Once more if the device does not say it stored it: the slot is only taken as written when it does.
-        return if ((1..2).any { p.s.write(bytes, p.area, slot).all(::send) && stored(p, p.area, slot) }) {
+        return if ((1..2).any { p.s.write(bytes, area, slot).all(::send) && stored(p, area, slot) }) {
             prefs.edit().putString(key, digest).apply()
             true
         } else {
@@ -319,7 +338,6 @@ class DeviceRig(private val lib: Library, private val prefs: SharedPreferences, 
             val e = prefs.edit()
             for (d in all) {
                 val s = driver(d).sounds ?: continue
-                // Every area listed, a former second one included.
                 for (area in d.reservedAreas) for (n in 1..s.slots) e.remove(slotKey(d, area, n))
             }
             e.apply()
@@ -333,7 +351,7 @@ class DeviceRig(private val lib: Library, private val prefs: SharedPreferences, 
      * Live set [index] selected: each device goes to the slot that holds this
      * live set's sound. A stored sound that has no slot -- the device owns no
      * sounds, the original could not be read to be copied, or the live set is
-     * past the area's last slot -- is selected where it is. Otherwise a live
+     * past the last reserved slot -- is selected where it is. Otherwise a live
      * set without a slot leaves the device alone.
      */
     fun liveSetSelected(index: Int, liveSet: LiveSet?) {
@@ -341,9 +359,9 @@ class DeviceRig(private val lib: Library, private val prefs: SharedPreferences, 
         queue.execute {
             for ((d, a) in actions) {
                 val p = plans[d.name]
-                val slot = owned[d.name]?.get(index)
+                val at = owned[d.name]?.get(index)
                 when {
-                    p != null && slot != null -> select(d, p.s.slotAddress(p.area, slot))
+                    p != null && at != null -> select(d, p.s.slotAddress(at.first, at.second))
                     a?.mode == "select" -> select(d, a.address)
                 }
             }
@@ -369,13 +387,13 @@ class DeviceRig(private val lib: Library, private val prefs: SharedPreferences, 
     /**
      * TEST (PROVISIONAL.md): does a slot written and selected at once play
      * what was just written? Writes [a] and [b] in turn into the last slot of
-     * the reserved area, selects it after each delay, reads the current sound
+     * the last reserved area, selects it after each delay, reads the current sound
      * back and compares names. One line per try.
      */
     fun writeSelectTest(d: ExternalSynth, a: ByteArray, b: ByteArray, delays: List<Int>): List<String> =
         queue.submit(Callable {
             val s = driver(d).sounds!!
-            val area = area(d)!!
+            val area = areas(d).last()
             val slot = s.slots
             val out = ArrayList<String>()
             for ((i, ms) in delays.withIndex()) {
@@ -411,13 +429,15 @@ class DeviceRig(private val lib: Library, private val prefs: SharedPreferences, 
             if (sent != null && sent.first == address && System.currentTimeMillis() - sent.second < 2000) return -1
             describe("${d.name} ${drv.describe(address)}")
             val s = drv.sounds ?: return -1
-            val area = area(d) ?: return -1
-            // Its slot in the reserved area; failing that, the same slot of the area it is on
-            // (the player pressing set n on another page still means live set n).
-            return (1..s.slots).firstOrNull { s.slotAddress(area, it) == address }?.minus(1)
-                ?: (1..s.slots).firstOrNull { s.slotAddress(area, it).filterKeys { k -> k != s.area.key } ==
-                    address.filterKeys { k -> k != s.area.key } }?.minus(1)
-                ?: -1
+            val all = areas(d).ifEmpty { return -1 }
+            // A slot of a reserved area: the live set that has it.
+            for ((k, area) in all.withIndex()) for (slot in 1..s.slots) {
+                if (s.slotAddress(area, slot) == address) return k * s.slots + slot - 1
+            }
+            // Anywhere else: the same slot of the first reserved area (the
+            // player pressing set n on another page still means live set n).
+            return (1..s.slots).firstOrNull { s.slotAddress(all[0], it).filterKeys { k -> k != s.area.key } ==
+                address.filterKeys { k -> k != s.area.key } }?.minus(1) ?: -1
         }
         return null
     }
@@ -451,8 +471,8 @@ class DeviceRig(private val lib: Library, private val prefs: SharedPreferences, 
     }
 
     /**
-     * The song's area on [d] as the app writes it, as a file the device loads
-     * itself (a CP-88's .X9P): slot n holds live set n's own sound under the
+     * The song's first area on [d] as the app writes it, as a file the device
+     * loads itself (a CP-88's .X9P): slot n holds live set n's own sound under the
      * live set's name, silence (named too) where the device follows the app,
      * the device's neutral sound otherwise -- also where the live set selects
      * a stored sound of the device's, which only the device has.
@@ -466,7 +486,7 @@ class DeviceRig(private val lib: Library, private val prefs: SharedPreferences, 
             val own = if (p?.mode == "own") p.sound?.let { lib.store.get(it) } else null
             (own ?: if (d.selectsLiveSets && p?.mode != "select") s.silent else null)?.let { sets[i + 1] = s.named(it, ls.name) }
         }
-        val area = area(d) ?: s.area.range.last
+        val area = areas(d).firstOrNull() ?: s.area.range.last
         return s.formats.firstNotNullOfOrNull { it.writeArea(area, sets) }
     }
 

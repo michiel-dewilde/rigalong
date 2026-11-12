@@ -563,7 +563,7 @@ def flow_cp88_sound_from_library(f):
         logcat_clear()
         f.tap("Save •")
         saves += 1
-        if not logcat_has(r"CP-88: page \d+, [1-9]\d* slot\(s\) written", timeout=5):
+        if not logcat_has(r"CP-88: page [\d+]+, [1-9]\d* slot\(s\) written", timeout=5):
             raise AssertionError("the sound was not written into the reserved page")
     finally:
         for _ in range(saves + (1 if imported else 0)):

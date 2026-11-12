@@ -366,9 +366,13 @@ Stated (2026-11-12)
   set**, the whole patch as the rig plays it, whatever the CP-88's part in it
   is: a sound of its own, one of its stored sounds, or nothing. As far as its
   characters allow.
-* S4.14 **One reserved page.** Everything a song gives the CP-88 is on that
-  page. No second page for the next song: a page is written fast enough when
-  the song opens.
+* S4.14 **No page for the next song**: a page is written fast enough when
+  the song opens. Everything a song gives the CP-88 is in its own slots,
+  live sets nine and up on the next page. Probably never more than sixteen
+  live sets in a song, but no limit that does not come from something.
+* S4.15 The CP-88's **current sound is for grabbing a sound and for hearing
+  one while a song is set up**. On the stage its sounds come from stored
+  Live Sets. (S4.11, said again.)
 
 Interpreted (built 2026-11-12)
 
@@ -385,9 +389,14 @@ Interpreted (built 2026-11-12)
   at the next start, re-plug or "Rewrite the reserved page"; every song now
   writes its page when it opens (the names differ), about 0.1 s for eight
   slots, while the CP-88 plays on from its current sound.
-* I4.23 A live set past the page's eighth slot still leaves the CP-88 where
-  it is (S4.11: reserved slots only), so there it shows the name of the last
-  live set that had a slot.
+* I4.23 The reserved pages are a first page and a number of pages from it
+  on (Setup; 39 and 40 for a new CP-88: sixteen live sets). Live set n is
+  set ((n - 1) mod 8) + 1 of page first + (n - 1) div 8, so the CP-88's own
+  page buttons reach them all. The one limit is the player's reserve: a live
+  set past it leaves the CP-88 where it is and the stage says so.
+* I4.24 When the CP-88 follows, every reserved slot the open song has no
+  live set for holds the silent sound (S4.12 for the whole reserve, not only
+  the song's own slots).
 
 * S4.10 A CP-88 patch is stored and hashed as the **byte-exact bulk dump**.
   cp-liveset's YAML is the view: what the editor shows and what import and
@@ -1123,4 +1132,4 @@ Risk
 | 2026-10-11 | Carried over from the prototype (20): six engines, MEASURE, test keyboard confirmed; MIDI monitor added; both orientations everywhere (replaces "landscape tablet UI") | Round 17 |
 | 2026-10-11 | Portrait stage view derived from the landscape layout (S15.4); the four project rules A20.1-A20.4 confirmed | Round 18 |
 | 2026-10-11 | The CP-88's page is kept silent where songs do not use it (S4.12, I4.19, I4.20) | Michiel, during the unattended session |
-| 2026-11-12 | The CP-88 shows the live set's name; a selected stored sound is copied into the page under it (S4.13, I4.21-I4.23). One reserved page, no next-song preload (S4.14; I5.3 and I5.5 dropped) | Michiel, after the review |
+| 2026-11-12 | The CP-88 shows the live set's name; a selected stored sound is copied into the page under it (S4.13, I4.21, I4.22). No next-song preload; live sets nine and up on the next reserved page, as many pages as the player reserves (S4.14, I4.23, I4.24; I5.3 and I5.5 dropped). The current sound is for setting up, not for the stage (S4.15) | Michiel, after the review |

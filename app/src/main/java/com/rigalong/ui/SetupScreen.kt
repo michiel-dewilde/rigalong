@@ -114,9 +114,17 @@ fun SetupScreen(player: SongPlayer, host: EngineHost, lib: Library) {
                 }
                 Stepper(stringResource(R.string.device_channel), d.channel, 1..16, dim) { put(d.copy(channel = it)) }
                 drv.sounds?.let { s ->
-                    val area = d.reservedAreas.firstOrNull() ?: s.area.range.last
-                    Stepper(stringResource(R.string.reserved_area, s.area.label), area, s.area.range, dim,
-                        note = stringResource(R.string.reserved_area_note)) { put(d.copy(reservedAreas = listOf(it))) }
+                    // The areas the app may write: so many, from this one on. A song's live
+                    // sets fill them in order, so their number is how many live sets have a slot.
+                    val range = s.area.range
+                    val reserved = d.reservedAreas.distinct().sorted()
+                    val first = reserved.firstOrNull() ?: (range.last - 1).coerceAtLeast(range.first)
+                    val count = reserved.size.coerceAtLeast(1)
+                    fun reserve(from: Int, n: Int) = (from until from + n).filter { it in range }
+                    Stepper(stringResource(R.string.reserved_area, s.area.label), first, range, dim,
+                        note = stringResource(R.string.reserved_area_note)) { put(d.copy(reservedAreas = reserve(it, count))) }
+                    Stepper(stringResource(R.string.reserved_count, s.area.label), count, 1..(range.last - first + 1), dim,
+                        note = stringResource(R.string.reserved_count_note, count * s.slots)) { put(d.copy(reservedAreas = reserve(first, it))) }
                     SetupToggle(stringResource(R.string.device_follows, s.area.label), d.selectsLiveSets, accent, dim) {
                         put(d.copy(selectsLiveSets = it))
                     }
