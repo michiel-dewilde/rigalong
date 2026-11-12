@@ -90,6 +90,7 @@ class MainActivity : androidx.activity.ComponentActivity() {
         EngineService.start(this)
         handler.removeCallbacks(backgroundPoller)
         rig.bringUp()
+        rig.askNotificationsOnce()
         handler.post(poller)
     }
 
@@ -145,6 +146,8 @@ class MainActivity : androidx.activity.ComponentActivity() {
             if (ok && permission == android.Manifest.permission.RECORD_AUDIO && requestCode == REQUEST_MEASURE) {
                 rig.openMicrophone()
             }
+            // The service has been running without its notification: put up again, it shows.
+            if (ok && permission == android.Manifest.permission.POST_NOTIFICATIONS && !rig.ended) EngineService.start(this)
         }
     }
 
@@ -173,5 +176,6 @@ class MainActivity : androidx.activity.ComponentActivity() {
         /** Permission requests: the measurement's opens the microphone when granted, the one for USB "Always" does not. */
         const val REQUEST_MEASURE = 1
         const val REQUEST_USB_ALWAYS = 2
+        const val REQUEST_NOTIFICATIONS = 3
     }
 }

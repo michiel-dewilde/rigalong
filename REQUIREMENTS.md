@@ -171,6 +171,13 @@ Interpreted
   visible; the dictated clock and the locked-devices declaration dropped.
 * S3.14 (2026-10-11) **Whether two ports share a device is decided by the
   environment**, not by the song. A song only names ports.
+* S3.15 (2026-11-12) **Direct USB is for any device, but chosen per device.**
+  For hardware RigAlong does not know, no permission dialog appears until
+  the player selects the direct route for that hardware. (With the CP-88
+  unplugged, the direct setting had moved on to the dock's own sound card
+  and raised a dialog for it.) Built: the direct modes apply to a device a
+  driver knows (the CP88/CP73) or one the player chose them for, in Setup
+  or by applying an environment; any other plays through Android.
 
 Interpreted
 

@@ -193,6 +193,14 @@ private:
     std::atomic<uint64_t> mShortReads{0};   // transfer not a multiple of 4
     std::atomic<int> mLastErrno{0};
 
+    // Reads that failed one after the other, on whichever thread reads (the
+    // reader's own, or the isochronous reap thread): at kMaxFailedReads the
+    // reader stops and says it is closed, which is what makes the route get
+    // rebuilt. A reader that kept trying looked open for 25 minutes on
+    // 2026-11-11 while another session held the interface.
+    static constexpr int kMaxFailedReads = 25;
+    int mFailedInARow = 0;
+
     // HOW LONG THIS ENDPOINT WENT WITH NO REQUEST OUTSTANDING, which is the
     // one thing the MIDI path has never measured about itself.
     //

@@ -305,6 +305,7 @@ void UsbMidiIn::loop() {
 
     uint8_t buf[512];
     const int len = mMaxPacket <= static_cast<int>(sizeof(buf)) ? mMaxPacket : static_cast<int>(sizeof(buf));
+    mFailedInARow = 0;
     while (mRunning.load(std::memory_order_acquire)) {
         usbdevfs_bulktransfer bt{};
         bt.ep = static_cast<unsigned>(mEp);
@@ -332,7 +333,9 @@ void UsbMidiIn::loop() {
         }
         if (n < 0) {
             const int e = errno;
-            if (e == ETIMEDOUT || e == EINTR) continue;
+            // A timeout is the endpoint answering that it has nothing: it works.
+            if (e == ETIMEDOUT) { mFailedInARow = 0; continue; }
+            if (e == EINTR) continue;
             if (e == ENODEV || e == ESHUTDOWN) {
                 LOGE("usb midi in: device gone");
                 break;
@@ -343,10 +346,18 @@ void UsbMidiIn::loop() {
             // goes missing now and then".
             mLastErrno.store(e, std::memory_order_relaxed);
             mErrors.fetch_add(1, std::memory_order_relaxed);
-            LOGE("usb midi in: read failed: %s (%d)", strerror(e), e);
+            // The first of a run is logged, and its end: one line per failure
+            // was 95 lines a second, and pushed the cause out of the log.
+            if (++mFailedInARow == 1) LOGE("usb midi in: read failed: %s (%d)", strerror(e), e);
+            if (mFailedInARow >= kMaxFailedReads) {
+                LOGE("usb midi in: %d reads failed in a row (%s): stopped, for the route to be rebuilt",
+                     mFailedInARow, strerror(e));
+                break;
+            }
             usleep(10 * 1000);   // do not spin on a persistent error
             continue;
         }
+        mFailedInARow = 0;
         if (n == 0) continue;
         consume(buf, n);
     }
@@ -386,7 +397,9 @@ void UsbMidiIn::consume(const uint8_t* buf, int n) {
 // queue that the synchronous path cannot have on a shared descriptor.
 bool UsbMidiIn::onReaped(usbdevfs_urb* u) {
     if (!mRunning.load(std::memory_order_acquire)) return true;
+    bool failed = false;
     if (u->status == 0) {
+        mFailedInARow = 0;
         if (u->actual_length > 0) {
             consume(static_cast<const uint8_t*>(u->buffer), u->actual_length);
         }
@@ -397,6 +410,7 @@ bool UsbMidiIn::onReaped(usbdevfs_urb* u) {
     } else if (u->status != -ENOENT && u->status != -ECONNRESET) {
         mLastErrno.store(-u->status, std::memory_order_relaxed);
         mErrors.fetch_add(1, std::memory_order_relaxed);
+        failed = true;
     }
     // Straight back out. An endpoint with a request always outstanding is the
     // whole point of this path.
@@ -404,6 +418,14 @@ bool UsbMidiIn::onReaped(usbdevfs_urb* u) {
     if (ioctl(mFd, USBDEVFS_SUBMITURB, u) < 0) {
         mLastErrno.store(errno, std::memory_order_relaxed);
         mErrors.fetch_add(1, std::memory_order_relaxed);
+        // A request that could not go back out is one fewer on the endpoint,
+        // for good: four of those and nothing reads any more.
+        failed = true;
+    }
+    if (failed && ++mFailedInARow >= kMaxFailedReads) {
+        LOGE("usb midi in: %d reads failed in a row (errno %d): stopped, for the route to be rebuilt",
+             mFailedInARow, mLastErrno.load(std::memory_order_relaxed));
+        mRunning.store(false, std::memory_order_release);
     }
     return true;
 }

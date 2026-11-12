@@ -378,6 +378,26 @@ class AudioRouter(private val context: Context, private val prefs: SharedPrefere
     @Volatile private var alsaAudioOn: String? = null
     /** Devices whose USB permission was refused: ALSA until the user chooses again. */
     private val deniedDevices = java.util.Collections.synchronizedSet(HashSet<String>())
+
+    /**
+     * The USB devices, by ALSA card name, that the player chose a direct route
+     * FOR. The direct modes are one setting, but they apply to a device only
+     * if RigAlong knows it (a driver in model/devices: the CP88/CP73) or the
+     * player chose them with that device in front of them. Anything else
+     * plays through Android, and so is never asked a USB permission for
+     * (Michiel, 2026-11-12: with the CP-88 unplugged, the setting had moved on
+     * to the dock's own sound card and raised a permission dialog for it).
+     */
+    private val directFor = java.util.Collections.synchronizedSet(HashSet<String>())
+
+    private fun directAllowed(card: String) = Devices.recognise(card) != null || card in directFor
+
+    /** The devices in use now are ones the player chose a direct route for: for each use whose mode is direct. */
+    private fun chooseDirectForDevicesInUse() {
+        if (audioMode.direct) resolveAudio()?.takeIf { it.usb != null }?.let { directFor += it.name }
+        if (midiMode.direct) resolveMidi()?.takeIf { it.usb != null }?.let { directFor += it.card }
+        prefs.edit().putStringSet("directFor", HashSet(directFor)).apply()
+    }
     @Volatile private var permissionPendingFor: String? = null
 
     private fun usbManager() = context.getSystemService(Context.USB_SERVICE) as UsbManager
@@ -390,6 +410,8 @@ class AudioRouter(private val context: Context, private val prefs: SharedPrefere
         midiMode = IoMode.parse(p.getString("midiMode", null))
         usbBufferMs = p.getInt("usbBufferMs", UsbBuffers.DEFAULT_MS)
             .takeIf { it in UsbBuffers.choicesMs } ?: UsbBuffers.DEFAULT_MS
+        directFor.clear()
+        directFor += p.getStringSet("directFor", emptySet())!!
     }
 
     private fun saveModePrefs() {
@@ -555,12 +577,12 @@ class AudioRouter(private val context: Context, private val prefs: SharedPrefere
         // so it does not fall back to ALSA when the device is not USB.
         val am = when {
             audioMode.off -> IoMode.NONE
-            a?.usb != null && a.usb.deviceName !in deniedDevices -> audioMode
+            a?.usb != null && a.usb.deviceName !in deniedDevices && (!audioMode.direct || directAllowed(a.name)) -> audioMode
             else -> IoMode.ALSA
         }
         val mm = when {
             midiMode.off -> IoMode.NONE
-            m?.usb != null && m.usb.deviceName !in deniedDevices -> midiMode
+            m?.usb != null && m.usb.deviceName !in deniedDevices && (!midiMode.direct || directAllowed(m.card)) -> midiMode
             else -> IoMode.ALSA
         }
         return ModeRule.normalize(am, mm, sameDevice(a, m))
@@ -582,7 +604,7 @@ class AudioRouter(private val context: Context, private val prefs: SharedPrefere
      * tried again as soon as the player touches it.
      */
     fun applyRouting(reason: String, fresh: Boolean = true) {
-        if (!::usbHandler.isInitialized) return
+        if (!::usbHandler.isInitialized || closed) return
         if (fresh) { directRetries = 0; alsaFallbackOn = false }
         if (routingBusy) { routingPending = true; return }
         routingBusy = true
@@ -594,7 +616,7 @@ class AudioRouter(private val context: Context, private val prefs: SharedPrefere
                 status("routing failed: ${e.message}")
             } finally {
                 routingBusy = false
-                if (routingPending) {
+                if (routingPending && !closed) {
                     routingPending = false
                     // Not fresh: this is the tail of a routing already asked
                     // for, and whoever asked has already cleared the state.
@@ -719,8 +741,11 @@ class AudioRouter(private val context: Context, private val prefs: SharedPrefere
         val audio = resolveAudio()
         val midi = resolveMidi()
         val (aMode, mMode) = effectiveModes(audio, midi)
-        android.util.Log.i("rigalong-ui", "route ($reason): audio=${audio?.name ?: "speaker"} " +
-            "${aMode.label}, midi=${midi?.name ?: "none"} ${mMode.label}, buffer=$usbBufferMs ms")
+        android.util.Log.i("rigalong-ui", "route ($reason): audio=${audio?.name ?: "speaker"}" +
+            "${if (chosenOutputName == null) " (auto)" else ""} " +
+            "${aMode.label}, midi=${midi?.name ?: "none"}${if (chosenMidiName == null) " (auto)" else ""} " +
+            "${mMode.label}, buffer=$usbBufferMs ms")
+        if (closed) return
 
         // 1. Permission.
         val direct = listOfNotNull(
@@ -735,6 +760,7 @@ class AudioRouter(private val context: Context, private val prefs: SharedPrefere
         }
 
         // 2. Stop both sinks.
+        if (closed) return
         val alsaWasOn = alsaAudioOn
         stopAudioSinks()
         NativeBridge.nativeCloseMidi()
@@ -769,6 +795,7 @@ class AudioRouter(private val context: Context, private val prefs: SharedPrefere
 
         // 4. Claim -- after the release has really happened.
         for ((key, ids) in want) {
+            if (closed) return
             val s = sessions[key] ?: continue
             val plan = s.plan ?: continue
             // Only the interfaces that CARRY SAMPLES are waited on. AudioControl
@@ -789,6 +816,7 @@ class AudioRouter(private val context: Context, private val prefs: SharedPrefere
         sessionPortNames = sessions.mapValues { it.value.midiPortNames }
 
         // 5. Audio, then MIDI.
+        if (closed) return
         if (aMode.direct && audio?.usb != null) {
             val s = sessions.getValue(audio.usb.deviceName)
             applyUsbHost()
@@ -1123,6 +1151,12 @@ class AudioRouter(private val context: Context, private val prefs: SharedPrefere
         audioMode = a
         midiMode = m
         deniedDevices.clear()
+        // Chosen with these devices in front of the player: theirs to be driven
+        // directly. Sent back to Android's path, a device is no longer one.
+        if (to == IoMode.ALSA) {
+            if (use == Use.AUDIO) resolveAudio()?.let { directFor -= it.name } else resolveMidi()?.let { directFor -= it.card }
+        }
+        chooseDirectForDevicesInUse()
         saveModePrefs()
         android.util.Log.i("rigalong-ui", "mode: audio=${a.label} midi=${m.label} (same device: $same)")
         if (a.direct || m.direct) onDirectChosen()
@@ -1381,19 +1415,43 @@ class AudioRouter(private val context: Context, private val prefs: SharedPrefere
     /** The owner is going away: no more USB broadcasts. */
     fun detach() { runCatching { context.unregisterReceiver(usbReceiver) } }
 
+    /** [shutdown] was asked for: a route in flight stops at its next step, and none starts. */
+    @Volatile private var closed = false
+
     /**
      * The instrument is closed: both uses down, and every direct-USB interface
      * back to the kernel, or the device would stay invisible to Android until
      * it was replugged.
+     *
+     * The sessions belong to the routing thread, so they are closed THERE,
+     * behind whatever route is in flight (which stops at its next step). They
+     * used to be closed from here under it: on 2026-11-12 a route died on a
+     * session that had just been taken away, and one that had been past its
+     * claims would have started audio on a rig that had ended. This waits for
+     * the routing thread, but not for ever: a route can be seconds into its
+     * wait for the kernel to let go of an interface, and the thread still does
+     * the closing when that returns.
      */
     fun shutdown() {
+        closed = true
+        started = false
+        // The sound off at once, whatever the routing thread is doing.
         NativeBridge.nativeCloseMidi()
         midiDevice?.close()
         midiDevice = null
         NativeBridge.nativeStop()
-        closeAllSessions()
+        val done = java.util.concurrent.CountDownLatch(1)
+        usbHandler.post {
+            // Again: a route that was in its last step has started them since.
+            NativeBridge.nativeCloseMidi()
+            NativeBridge.nativeStop()
+            closeAllSessions()
+            done.countDown()
+        }
         usbThread.quitSafely()
-        started = false
+        if (!done.await(3, java.util.concurrent.TimeUnit.SECONDS)) {
+            android.util.Log.w("rigalong-ui", "shutdown: the routing thread is still busy; it closes the USB sessions when it returns")
+        }
     }
 
     // ------------------------------------------------------------- for Setup
@@ -1425,6 +1483,8 @@ class AudioRouter(private val context: Context, private val prefs: SharedPrefere
         if (spec.bufferMs in UsbBuffers.choicesMs) usbBufferMs = spec.bufferMs
         prefs.edit().putString("chosenOutputName", chosenOutputName)
             .putString("chosenMidiName", chosenMidiName).apply()
+        // An environment is the player's own rig, saved: its devices are chosen.
+        chooseDirectForDevicesInUse()
         saveModePrefs()
         deniedDevices.clear()
         if (audioMode.direct || midiMode.direct) onDirectChosen()
@@ -1570,6 +1630,7 @@ class AudioRouter(private val context: Context, private val prefs: SharedPrefere
             prefs.edit().putInt("bufferBursts", bufferBursts).apply()
         }
         deniedDevices.clear()
+        chooseDirectForDevicesInUse()
         saveModePrefs()
         applyRouting("broadcast")
     }

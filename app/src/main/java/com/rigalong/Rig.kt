@@ -135,6 +135,23 @@ class Rig private constructor(private val app: Context) {
     private fun granted(permission: String) =
         app.checkSelfPermission(permission) == android.content.pm.PackageManager.PERMISSION_GRANTED
 
+    /**
+     * The notification is where the instrument's one Stop button is, and what
+     * says in the shade that RigAlong is holding the keyboard. On Android 13
+     * and later it only shows with a permission; asked once, the first time
+     * the app is in front. (It used to be asked together with the microphone,
+     * the first time Measure was used: until then there was no Stop.)
+     */
+    fun askNotificationsOnce() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return
+        if (granted(android.Manifest.permission.POST_NOTIFICATIONS)) return
+        if (prefs.getBoolean("notifications.asked", false)) return
+        val a = activity ?: return
+        prefs.edit().putBoolean("notifications.asked", true).apply()
+        android.widget.Toast.makeText(app, R.string.notification_why, android.widget.Toast.LENGTH_LONG).show()
+        a.requestPermissions(arrayOf(android.Manifest.permission.POST_NOTIFICATIONS), MainActivity.REQUEST_NOTIFICATIONS)
+    }
+
     /** MEASURE (S20.3): the input first, armed once it has settled. */
     private fun measureLatency() {
         // A capture stream that has just been opened delivers zeros for the

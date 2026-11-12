@@ -309,6 +309,12 @@ Every setlist and song, with its history.
     to the CP88/CP73, and "USB device" is the one to prefer. Only these
     ask Android for permission to use the device; with ALSA the app never
     does, and plugging a USB device in raises no dialog.
+  * A direct mode is **chosen per device**. It holds for a CP88/CP73 and
+    for any other device you chose it for while that device was the one
+    shown here. Another sound card that happens to be plugged in (a dock's,
+    a headset's) plays through Android and is never asked for, until you
+    choose a direct mode for it. For such a device Android asks again at
+    every replug: "Always" exists only for keyboards RigAlong knows.
 * **USB buffer**: 6, 7 (the default) or 8 ms of audio queued on the wire, in the direct modes.
   More is steadier: at rest 7 ms had about a third of the brief gaps 6 ms had
   (2026-10-14); each extra millisecond adds one to the latency.
@@ -396,8 +402,11 @@ Every setlist and song, with its history.
 
 1. Connect the keyboard's USB TO HOST port to the tablet with a USB A-B cable,
    through a USB-C adapter or a hub if needed.
-2. Start RigAlong. Out of the box it plays through Android (ALSA) and asks
-   for nothing.
+2. Start RigAlong. Out of the box it plays through Android (ALSA). The
+   first time, it asks to show a notification: RigAlong keeps playing when
+   it is not in front, and its notification is what says so and has the
+   **Stop** button, which closes the instrument and gives the keyboard back
+   to Android.
 3. In Setup, set audio and MIDI to **USB device**. RigAlong asks once for the
    microphone: Android offers "Always" for a USB audio device only to apps
    allowed to record (RigAlong records only when you measure latency). Then
