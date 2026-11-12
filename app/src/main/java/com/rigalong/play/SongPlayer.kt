@@ -848,15 +848,23 @@ class SongPlayer(private val lib: Library, private val host: EngineHost, private
 
     /**
      * Brings the CP-88 back in line whenever MIDI out to it BECOMES available
-     * (I13.3): after start-up, when the route took longer than the stage, and
-     * after a re-plug or a power cycle -- its page rewritten where it changed,
-     * the current live set selected again.
+     * (I13.3): after start-up, and after a re-plug or a power cycle -- its
+     * page rewritten, the current live set selected again.
+     *
+     * MIDI out that is ready before a song is open stays "not yet seen" until
+     * one is. It used to be taken as seen, so a start whose route was quicker
+     * than the stage (the usual one, now that plugging in no longer starts
+     * the app) wrote only what its own record said had changed, and selected
+     * a slot it had never looked at: on 2026-11-12 the record said "Silent",
+     * the CP-88's pages held Init Sound, and the piano played along.
      */
     private fun watchMidiOut() {
         val ready = runCatching { NativeBridge.nativeUsbMidiOutReady() }.getOrDefault(false)
-        if (ready && !midiOutWasReady && songIndex >= 0) {
-            // It may be another unit than before (the stage's spare, a rental):
-            // what this tablet wrote to the last one says nothing.
+        if (ready && !midiOutWasReady) {
+            if (songIndex < 0) return
+            // It may be another unit than before (the stage's spare, a rental),
+            // or the same one having lost what was written: what this tablet
+            // wrote last says nothing.
             devices.midiOutReady(liveSetObjects, liveSetIndex, nextLiveSets())
         }
         midiOutWasReady = ready

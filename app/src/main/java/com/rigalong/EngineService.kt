@@ -63,8 +63,20 @@ class EngineService : Service() {
      * The task was swiped away: the player closed the instrument. Android
      * does not promise the activity an onDestroy here, and the process may
      * live on behind this service -- so the end is said here.
+     *
+     * Android says this for EVERY task of the app, and [UsbAttach] has one of
+     * its own for the moment it exists. Taken for the instrument's, a
+     * keyboard plugged back in ended the rig it had come back to (seen on the
+     * tablet 2026-11-12, one replug in three: it depends on whether Android
+     * trims the task before the activity's own finish has removed it).
      */
     override fun onTaskRemoved(rootIntent: Intent?) {
+        val root = rootIntent?.component?.className
+        if (root == UsbAttach::class.java.name) {
+            android.util.Log.i("rigalong-ui", "task removed: $root, not the instrument's")
+            return
+        }
+        android.util.Log.i("rigalong-ui", "task removed: $root -- the instrument ends")
         Rig.running()?.end()
         releaseWakeLock()
         stopForeground(STOP_FOREGROUND_REMOVE)
