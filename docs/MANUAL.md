@@ -147,6 +147,16 @@ On the right is the song being edited:
   bar and the beat unit, so 6/8 counts eighths -- and the count-in's bars;
   and a **Lead sheet…** (a PDF). Synced effects and MIDI clock follow the
   tempo in quarter notes.
+  * **Groups** splits the bar for odd metres: "3+2" or "2+3" for 5/4, "3+3"
+    for 6/8, "3+3+2+2+2" for a bar of twelve eighths that swings between
+    6/8 and 3/4. They set the beats per bar too. The click then sounds three
+    tones: high on the first beat, a middle tone at each group's start, low
+    on the other beats. **Group starts only** sounds just the first beat
+    (high) and the group starts (low), the other beats silent.
+  * **First bar "1 . 2 ."**, beside the count-in's bars: the count-in starts
+    with a bar on the half notes, "1" and "2" on the middle tone, then
+    counts "1 2 3 4" high and low. On by default in 4/4; in a grouped metre
+    it sounds the group starts.
 * **Reverb…**: the room all of the song's sounds meet in (size, damping,
   width, mix), heard at once while you move it. A song that sets nothing gets
   the default room.
@@ -239,14 +249,21 @@ On the right is the song being edited:
   accident.
 
 **Save** stores the song (it reads "Save •" while there is something to
-save). Earlier versions are kept in the library. **Undo** above the song
+save). Earlier versions are kept in the library. Unsaved edits are not lost
+when you leave Songs, close the app or it stops: they are kept on the tablet
+and come back, and the tab reads **Songs · unsaved** meanwhile. **Back to
+saved** lets them go and opens the song as it was saved. **Undo** above the song
 takes back the last action whole: a save that moved a patch, three songs and
 two setlists is one Undo. The keys
 at the bottom play the current live set without a keyboard attached.
 
 ### Library
 
-Every setlist and song, with its history.
+Every setlist and song, with its history. Tabs at the top hold one kind
+each, with its count: **All songs** (and the setlists), **Engine sounds**
+(what the engines have installed: Surge XT patches, Dexed voices, SoundFont
+presets, sfizz instruments, with a chip per engine), **Patches** (library
+patches) and **Device sounds**. **Search** narrows the tab you are on.
 
 * Open a setlist on the stage, make a new one, or add any song to the
   setlist on stage.
