@@ -1220,33 +1220,22 @@ class SongPlayer(private val lib: Library, private val host: EngineHost, private
         }.getOrNull()?.takeIf { it.isNotEmpty() }
         if (preset.isNullOrEmpty()) return
         runCatching {
-            if (i != e.ordinal) {
-                // An added instance: by name, its own loader (AudioEngine::loadInstancePreset).
-                if (NativeBridge.nativeInstancePreset(i) == preset && program == null) return
-                val path = if (e == RackEngine.SFIZZ) host.instrumentPath(preset) else null
-                NativeBridge.nativeInstanceLoadPreset(i, preset, program ?: -1, path)
+            // The first sfizz goes through EngineContent, which keeps the
+            // choice for the next start and reads the samples' heads into the
+            // page cache before the keys need them.
+            if (i == e.ordinal && e == RackEngine.SFIZZ) {
+                if (host.currentInstrument() != preset) host.selectInstrument(preset)
                 return
             }
-            when (e) {
-                RackEngine.SFIZZ -> if (host.currentInstrument() != preset) host.selectInstrument(preset)
-                RackEngine.SETBFREE -> {
-                    val k = NativeBridge.nativeSetBfreePresetNames().indexOf(preset)
-                    if (k >= 0) NativeBridge.nativeSetBfreePreset(k, 0)
-                }
-                RackEngine.SURGE ->
-                    if (NativeBridge.nativeSurgeReady() && NativeBridge.nativeSurgeCurrentPatchName() != preset) {
-                        NativeBridge.nativeSurgeLoadPatchNamed(preset)
-                    }
-                RackEngine.DEXED -> if (NativeBridge.nativeDexedReady()) NativeBridge.nativeDexedSelectVoiceNamed(preset)
-                // The font and the preset in it, the latest asked for winning (AudioEngine::loadInstancePreset).
-                RackEngine.FLUID -> if (NativeBridge.nativeFluidReady()) {
-                    NativeBridge.nativeInstanceLoadPreset(i, preset, program ?: -1, null)
-                }
-                RackEngine.PLAITS -> {
-                    val k = NativeBridge.nativePlaitsEngineNames().indexOf(preset)
-                    if (k >= 0) NativeBridge.nativeSetPlaitsParam(1, k.toFloat())
-                }
-            }
+            // Every other instance, the first of its engine included: by name,
+            // through one loader (AudioEngine::loadInstancePreset). It remembers
+            // a preset asked for before its engine is up and loads it once the
+            // engine is (REVIEW S2, W7: the first Surge XT, Dexed and FluidSynth
+            // used to be skipped here while not ready, and played whatever the
+            // engine came up with).
+            if (NativeBridge.nativeInstancePreset(i) == preset && program == null) return
+            val path = if (e == RackEngine.SFIZZ) host.instrumentPath(preset) else null
+            NativeBridge.nativeInstanceLoadPreset(i, preset, program ?: -1, path)
         }.onFailure { Log.e("rigalong-ui", "preset $preset for instance $i (${e.key}): $it") }
     }
 

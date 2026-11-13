@@ -2338,6 +2338,9 @@ void AudioEngine::initFluidAsync(const std::vector<std::string>& dirs) {
                 // the bug FINDINGS 5b describes -- which this project has now
                 // had in two engines, one of them silently.
                 mFluid->applyRequestedSoundFont();
+                // And the preset in it that was asked for with it (REVIEW S2).
+                const int program = mFluidProgram[kRackFluid].load(std::memory_order_acquire) - 1;
+                if (program >= 0) mFluid->selectPreset(program);
             }
             mFluidBusy.store(false, std::memory_order_release);
         })) {
@@ -2819,8 +2822,10 @@ std::string AudioEngine::instancePreset(int i) const {
 void AudioEngine::loadInstancePreset(int i, const std::string& name, int program, const std::string& path) {
     rigalong::Node* n = instanceNode(i);
     if (n == nullptr || name.empty()) return;
-    // The first six keep their own loaders and flags, which the prototype's
-    // panels share; the rest load on their own background threads.
+    // The only way an instance gets a preset (REVIEW S2). The first of each
+    // engine keeps its own loader and flag, shared with the setup's engine
+    // panels; the rest load on their own background threads. Every loader
+    // remembers a request made before its engine is up and applies it then.
     switch (mInstanceType[i]) {
         case kRackSfizz: {
             auto* s = static_cast<rigalong::SfizzNode*>(n);
