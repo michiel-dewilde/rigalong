@@ -233,7 +233,8 @@ def flow_count_in(f):
     logcat_clear()
     f.tap("TAP", times=4)          # found once: four taps a beat apart, not a screen read apart
     f.tap("COUNT")
-    assert logcat_has(r"click: count-in, 4 beats"), "no count-in"
+    # 4/4 counts in with a "1 . 2 ." bar first (S12.9): eight beats then.
+    assert logcat_has(r"click: count-in, \d+ beats"), "no count-in"
 
 
 def type_text(text):
@@ -249,6 +250,27 @@ def to_songs():
         shell(f"input swipe {n.x} {n.y} {n.x} {n.y} 900")
         break
     time.sleep(1.0)
+
+
+def drop_draft():
+    """Songs: the open song's unsaved edits let go ("Back to saved"), so a flow
+    leaves no draft behind -- a draft outlives the screen and the app, and the
+    player may save it unawares (seen 2026-11-13 17:45). Not counted."""
+    to_songs()
+    for n in find_all("Back to saved"):
+        shell(f"input tap {n.x} {n.y}")
+        time.sleep(1.0)
+        break
+
+
+def tap_choice(f, engine):
+    """The button of what [engine]'s sound plays, in the open song: counted as one tap."""
+    end = find_all("Add a sound:")[0].y
+    row = [n for n in find_all(engine) if n.y < end and n.x < 900][-1]
+    choice = [n for n in screen() if abs(n.y - row.y) < 12 and 1200 < n.x < 1900][0]
+    shell(f"input tap {choice.x} {choice.y}")
+    f.taps += 1
+    time.sleep(1.2)
 
 
 def library_tab(name):
@@ -295,7 +317,7 @@ def flow_share_patch(f):
 def flow_reuse_patch(f):
     to_songs()
     f.tap("3. Surge XT and sfizz")
-    f.tap("(as loaded)")
+    tap_choice(f, "sfizz")             # whatever it plays now
     f.tap(PATCH)                       # heard at once, the picker stays open
     f.tap("Keep")
     f.tap("Save •")
@@ -653,7 +675,10 @@ def make_patch(engine, search, pick, name, param, at):
     s = Flow("setup", 99)
     to_songs()
     s.tap("3. Surge XT and sfizz")
-    if engine != "Surge XT":
+    # The engine added where the song has none (Michiel's song 3 has had a
+    # Dexed and a FluidSynth since 2026-11-13).
+    end = find_all("Add a sound:")[0].y
+    if not [n for n in find_all(engine) if n.y < end and n.x < 900]:
         s.tap("+ " + engine)
         time.sleep(1.5)
     end = find_all("Add a sound:")[0].y
@@ -670,7 +695,8 @@ def make_patch(engine, search, pick, name, param, at):
     s.tap(pick, pick="lowest")
     s.tap("Keep")
     time.sleep(1.5)
-    patch = [n for n in find_all("Patch…") if abs(n.y - row.y) < 12][0]
+    # "Patch… ●" where the sound has its own settings.
+    patch = [n for n in find_all("Patch…", exact=False) if abs(n.y - row.y) < 12][0]
     shell(f"input tap {patch.x} {patch.y}")
     time.sleep(1.2)
     s.slide(param, at)
@@ -741,6 +767,7 @@ def export_patch(f, engine, search, pick, name, param, at, ext, check):
             if saved:
                 undo_last(name)
             broadcast("RESCAN", "--es", "remove", fname)
+            drop_draft()               # song 3's edited sounds
         shell(f"rm -f /sdcard/Download/{fname}")
 
 
@@ -805,6 +832,12 @@ def main(argv):
     if "com.rigalong" not in focused_app():
         print("the app is not in front; start it first")
         return 2
+    # The flows edit songs and let the edits go: a draft of the player's own
+    # would go with them.
+    to_stage()
+    if find_all("Songs · unsaved"):
+        print("Songs has unsaved edits (Songs · unsaved): save them or go Back to saved first")
+        return 2
     want = set(argv) or {name for name, _, _ in FLOWS}
     failed = 0
     for name, budget, fn in FLOWS:
@@ -821,6 +854,7 @@ def main(argv):
             ok, why = False, str(e)
         failed += 0 if ok else 1
         print(f"  {name:<24} {'ok' if ok else 'FAILED'}  ({f.taps} taps){'  ' + why if why else ''}")
+    drop_draft()
     to_stage()
     print(f"{len(want)} flows, {failed} failed")
     return 1 if failed else 0
