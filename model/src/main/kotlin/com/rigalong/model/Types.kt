@@ -134,13 +134,23 @@ data class StageLayout(val columns: Int = 8, val cells: List<StageCell> = emptyL
  * [beatUnit] notes (6/8 at 120 is 120 eighths a minute); null is no tempo, the
  * metre still meant. [countInBars]: the count-in's length, where the song names
  * one.
+ *
+ * [groups] (S12.10): the bar as groups of its beat unit, adding up to
+ * [beatsPerBar] -- 3+2/4, 3+3/8, 3+3+2+2+2/8 -- or null for none.
+ * [groupStartsOnly]: the click sounds the first beat and the group starts
+ * only. [countInLead] (S12.9): the count-in starts with a bar of its group
+ * starts only ("1 . 2 ." in 4/4, as half notes); null is the default, on in
+ * 4/4.
  */
 @Serializable
-data class Tempo(val bpm: Double? = null, val beatsPerBar: Int = 4, val countInBars: Int? = null, val beatUnit: Int = 4) {
+data class Tempo(val bpm: Double? = null, val beatsPerBar: Int = 4, val countInBars: Int? = null, val beatUnit: Int = 4,
+                 val groups: List<Int>? = null, val groupStartsOnly: Boolean = false, val countInLead: Boolean? = null) {
     /** Quarter notes a minute, as the engines' synced parameters and MIDI clock count (I12.1). */
     val quarterBpm: Double? get() = bpm?.let { it * 4.0 / beatUnit.coerceAtLeast(1) }
-    /** "6/8". */
-    val metre: String get() = "$beatsPerBar/$beatUnit"
+    /** "6/8", "3+2/4". */
+    val metre: String get() = (barGroups?.joinToString("+") ?: "$beatsPerBar") + "/$beatUnit"
+    /** [groups], if they make up the bar: more than one, each at least one beat, adding up to [beatsPerBar]. */
+    val barGroups: List<Int>? get() = groups?.takeIf { g -> g.size > 1 && g.all { it >= 1 } && g.sum() == beatsPerBar }
 }
 
 @Serializable

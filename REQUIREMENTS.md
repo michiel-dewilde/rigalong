@@ -892,6 +892,17 @@ Stated (2026-10-12)
 * S12.8 Tempo affects speed only (synced delays and LFO rates, MIDI clock);
   nothing is synced to the position in the bar, and nothing is designed for
   that until something uses it.
+* S12.9 (Michiel, 2026-11-13) **The 4/4 count-in "1 . 2 . | 1 2 3 4"**: two
+  bars, the first clicking on the half notes only. An option beside the
+  count-in's bars, on by default in 4/4.
+* S12.10 (Michiel, 2026-11-13) **Grouped metres.** A metre can be written as
+  groups of its beat unit: 5/4 as 3+2/4 or 2+3/4, 6/8 as 3+3/8, and a mixed
+  bar such as "I want to be in America" (6/8 + 3/4) as eighths 3+3+2+2+2.
+  The click marks the start of each group with a tone of its own, pitched
+  between the bar's first beat and the other beats. A choice per metre:
+  every beat sounds (three tones: first, group start, beat), or only the
+  first beat and the group starts sound, the others silent -- and then with
+  the ordinary two tones (first high, group starts low).
 
 Interpreted
 
@@ -1145,4 +1156,5 @@ Risk
 | 2026-10-11 | Carried over from the prototype (20): six engines, MEASURE, test keyboard confirmed; MIDI monitor added; both orientations everywhere (replaces "landscape tablet UI") | Round 17 |
 | 2026-10-11 | Portrait stage view derived from the landscape layout (S15.4); the four project rules A20.1-A20.4 confirmed | Round 18 |
 | 2026-10-11 | The CP-88's page is kept silent where songs do not use it (S4.12, I4.19, I4.20) | Michiel, during the unattended session |
+| 2026-11-13 | The 4/4 count-in "1 . 2 ., 1 2 3 4" (S12.9); grouped metres and their click (S12.10) | Michiel |
 | 2026-11-12 | The CP-88 shows the live set's name; a selected stored sound is copied into the page under it (S4.13, I4.21, I4.22). No next-song preload; live sets nine and up on the next reserved page, as many pages as the player reserves (S4.14, I4.23, I4.24; I5.3 and I5.5 dropped). The current sound is for setting up, not for the stage (S4.15) | Michiel, after the review |

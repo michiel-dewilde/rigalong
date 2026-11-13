@@ -13,6 +13,13 @@
 // accumulated per frame, so a tempo change mid-run bends the next beat rather
 // than restarting the count, and the output is the same whatever the block size.
 //
+// What each beat of the bar plays is a PATTERN (Michiel, 2026-11-13): the bar's
+// first beat high, the start of each group of a grouped metre (3+2/4, 3+3/8,
+// 3+3+2+2+2/8) a tone between, the other beats low -- or silent, where only the
+// first beat and the group starts are to be heard. A run may begin with a LEAD
+// bar of its own pattern, such as the "1 . 2 ." half notes before "1 2 3 4" of a
+// 4/4 count-in. Without a pattern the bar is the first beat and plain beats.
+//
 // A count-in plays a fixed number of beats and stops on its own; continuous
 // runs until stop(). Either way the last click rings out -- stop() never cuts a
 // burst in half, which would be a click of its own. A run may sound only its
@@ -27,19 +34,47 @@ namespace rigalong {
 class Click {
 public:
     static constexpr double kAccentHz = 1568.0;   // G6
+    static constexpr double kGroupHz = 1318.5;    // E6: between the two
     static constexpr double kBeatHz = 1046.5;     // C6
     static constexpr double kAttackSeconds = 0.0005;
     static constexpr double kDecaySeconds = 0.012; // time constant
     static constexpr double kLengthSeconds = 0.06;
     static constexpr float kBeatLevel = 0.6f;     // relative to the accent
+    static constexpr float kGroupLevel = 0.8f;
+
+    // What one beat of a pattern plays.
+    static constexpr uint8_t kSilent = 0;
+    static constexpr uint8_t kBeat = 1;
+    static constexpr uint8_t kGroup = 2;
+    static constexpr uint8_t kFirst = 3;
+    // The longest bar and lead a pattern may have.
+    static constexpr int kMaxPattern = 64;
 
     // `beats` <= 0 runs until stop(); otherwise that many beats, then stops.
     // `soundBeats`: how many of the first beats are heard (< 0: all, 0: none);
     // `accentBeats`: within how many of the first beats the bar's first beat is
     // accented (< 0: all, 0: none -- every beat alike).
     void start(double bpm, int beatsPerBar, int beats, int soundBeats = -1, int accentBeats = -1) {
+        const int n = beatsPerBar < 1 ? 1 : (beatsPerBar > kMaxPattern ? kMaxPattern : beatsPerBar);
+        uint8_t bar[kMaxPattern];
+        for (int i = 0; i < n; ++i) bar[i] = i == 0 ? kFirst : kBeat;
+        start(bpm, bar, n, nullptr, 0, beats, soundBeats, accentBeats);
+    }
+
+    // The same with the bar's [pattern] (kFirst, kGroup, kBeat, kSilent per beat;
+    // 1 to kMaxPattern beats) and a [lead] bar played once first (0 beats: none).
+    // [beats], [soundBeats] and [accentBeats] count from the run's first beat,
+    // the lead's included. Outside [accentBeats] every beat that sounds is a
+    // plain beat.
+    void start(double bpm, const uint8_t* pattern, int patternBeats, const uint8_t* lead, int leadBeats,
+               int beats, int soundBeats = -1, int accentBeats = -1) {
+        const int n = patternBeats < 1 ? 1 : (patternBeats > kMaxPattern ? kMaxPattern : patternBeats);
+        const int l = leadBeats < 0 ? 0 : (leadBeats > kMaxPattern ? kMaxPattern : leadBeats);
+        for (int i = 0; i < n; ++i) mPendingBar[i].store(pattern ? pattern[i] : (i == 0 ? kFirst : kBeat), std::memory_order_relaxed);
+        for (int i = 0; i < l; ++i) mPendingLead[i].store(lead[i], std::memory_order_relaxed);
+        mPendingLeadBeats.store(l, std::memory_order_relaxed);
         mBpm.store(bpm, std::memory_order_relaxed);
-        mBeatsPerBar.store(beatsPerBar < 1 ? 1 : beatsPerBar, std::memory_order_relaxed);
+        mBeatsPerBar.store(n, std::memory_order_relaxed);
         mBeats.store(beats, std::memory_order_relaxed);
         mSoundBeats.store(soundBeats, std::memory_order_relaxed);
         mAccentBeats.store(accentBeats, std::memory_order_relaxed);
@@ -76,6 +111,9 @@ public:
             mNextBeat = 0;
             mLimit = mBeats.load(std::memory_order_relaxed);
             mBar = mBeatsPerBar.load(std::memory_order_relaxed);
+            mLeadBeats = mPendingLeadBeats.load(std::memory_order_relaxed);
+            for (int k = 0; k < mBar; ++k) mPattern[k] = mPendingBar[k].load(std::memory_order_relaxed);
+            for (int k = 0; k < mLeadBeats; ++k) mLead[k] = mPendingLead[k].load(std::memory_order_relaxed);
             mSound = mSoundBeats.load(std::memory_order_relaxed);
             mAccentLimit = mAccentBeats.load(std::memory_order_relaxed);
             mBeatsDone.store(0, std::memory_order_relaxed);
@@ -94,12 +132,16 @@ public:
 
         for (int i = 0; i < frames; ++i) {
             if (mActive && mPhase >= static_cast<double>(mNextBeat)) {
-                const bool heard = mSound < 0 || mNextBeat < mSound;
-                const bool accent = (mAccentLimit < 0 || mNextBeat < mAccentLimit) && mNextBeat % mBar == 0;
+                uint8_t what = mNextBeat < mLeadBeats ? mLead[mNextBeat]
+                    : mPattern[(mNextBeat - mLeadBeats) % mBar];
+                const bool accents = mAccentLimit < 0 || mNextBeat < mAccentLimit;
+                if (!accents && what != kSilent) what = kBeat;
+                const bool heard = (mSound < 0 || mNextBeat < mSound) && what != kSilent;
                 if (heard) {
-                    mStep = twoPi * (accent ? kAccentHz : kBeatHz) / sampleRate;
+                    const double hz = what == kFirst ? kAccentHz : what == kGroup ? kGroupHz : kBeatHz;
+                    mStep = twoPi * hz / sampleRate;
                     mOsc = 0.0;
-                    mEnv = accent ? 1.0 : kBeatLevel;
+                    mEnv = what == kFirst ? 1.0 : what == kGroup ? kGroupLevel : kBeatLevel;
                     mAge = 0;
                     mVoiceLeft = static_cast<int>(kLengthSeconds * sampleRate);
                 }
@@ -137,6 +179,9 @@ private:
     std::atomic<float> mGain{0.5f};
     std::atomic<bool> mRunning{false};
     std::atomic<int64_t> mBeatsDone{0};
+    std::atomic<uint8_t> mPendingBar[kMaxPattern] = {};
+    std::atomic<uint8_t> mPendingLead[kMaxPattern] = {};
+    std::atomic<int> mPendingLeadBeats{0};
 
     // render thread
     uint32_t mSeenStart = 0;
@@ -146,6 +191,9 @@ private:
     int64_t mNextBeat = 0;
     int mLimit = 0;
     int mBar = 4;
+    int mLeadBeats = 0;
+    uint8_t mPattern[kMaxPattern] = {kFirst, kBeat, kBeat, kBeat};
+    uint8_t mLead[kMaxPattern] = {};
     int mSound = -1;
     int mAccentLimit = -1;
     double mOsc = 0.0;

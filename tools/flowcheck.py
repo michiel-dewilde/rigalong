@@ -664,7 +664,10 @@ def make_patch(engine, search, pick, name, param, at):
     if search:                         # a short list is tapped as it is
         s.tap("Search")
         type_text(search)
-    s.tap(pick, pick="last")
+        hide_keyboard()                # it covers Keep
+        time.sleep(0.5)
+    # The row, not the line above the list that names what is being heard.
+    s.tap(pick, pick="lowest")
     s.tap("Keep")
     time.sleep(1.5)
     patch = [n for n in find_all("Patch…") if abs(n.y - row.y) < 12][0]

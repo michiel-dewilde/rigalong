@@ -174,3 +174,68 @@ TEST(click_silent_run_still_counts) {
     CHECK(c.running());
     CHECK(c.beatsRendered() >= 3);
 }
+
+// The tone of the burst at [at]: zero crossings over its first 10 ms.
+static double toneAt(const std::vector<float>& x, int at) {
+    int crossings = 0;
+    const int n = 441;
+    for (int i = at + 1; i < at + n && i < static_cast<int>(x.size()); ++i) {
+        if ((x[i - 1] <= 0.0f) != (x[i] <= 0.0f)) ++crossings;
+    }
+    return crossings / 2.0 / (n / kRate);
+}
+
+TEST(click_grouped_bar_marks_its_groups_between_first_and_beats) {
+    // 3+2/4: first, beat, beat, GROUP, beat.
+    Click c;
+    const uint8_t bar[] = {Click::kFirst, Click::kBeat, Click::kBeat, Click::kGroup, Click::kBeat};
+    c.start(120.0, bar, 5, nullptr, 0, 0);
+    std::vector<float> x = run(c, 22050 * 5 + 1000);   // bar two's first burst whole enough to measure
+    std::vector<int> on = onsets(x);
+    CHECK_EQ(on.size(), static_cast<size_t>(6));
+    const double first = toneAt(x, on[0]), beat = toneAt(x, on[1]), group = toneAt(x, on[3]);
+    CHECK(first > group && group > beat);
+    CHECK_NEAR(group, Click::kGroupHz, 60.0);
+    CHECK(peakFrom(x, on[3], 1000) > peakFrom(x, on[1], 1000));
+    // Bar two starts on the first tone again.
+    CHECK_NEAR(toneAt(x, on[5]), Click::kAccentHz, 60.0);
+}
+
+TEST(click_group_starts_only_leaves_the_other_beats_silent) {
+    // 3+3/8 heard as "1 . . 2 . .": the first high, the group start low.
+    Click c;
+    const uint8_t bar[] = {Click::kFirst, Click::kSilent, Click::kSilent, Click::kBeat, Click::kSilent, Click::kSilent};
+    c.start(240.0, bar, 6, nullptr, 0, 12);
+    std::vector<float> x = run(c, 11025 * 13);
+    std::vector<int> on = onsets(x);
+    CHECK_EQ(on.size(), static_cast<size_t>(4));
+    CHECK_NEAR(on[1] - on[0], 11025 * 3, 2);
+    CHECK_NEAR(toneAt(x, on[1]), Click::kBeatHz, 60.0);
+    CHECK(!c.running());
+}
+
+TEST(click_lead_bar_in_half_notes_then_the_count) {
+    // 4/4 count-in "1 . 2 . | 1 2 3 4": eight beats, six heard.
+    Click c;
+    const uint8_t lead[] = {Click::kFirst, Click::kSilent, Click::kBeat, Click::kSilent};
+    const uint8_t bar[] = {Click::kFirst, Click::kBeat, Click::kBeat, Click::kBeat};
+    c.start(120.0, bar, 4, lead, 4, 8);
+    std::vector<float> x = run(c, 22050 * 9);
+    std::vector<int> on = onsets(x);
+    CHECK_EQ(on.size(), static_cast<size_t>(6));
+    CHECK_NEAR(on[1] - on[0], 22050 * 2, 2);       // "2" on the half note
+    CHECK_NEAR(on[2] - on[0], 22050 * 4, 2);       // then bar two's "1"
+    CHECK_NEAR(toneAt(x, on[2]), Click::kAccentHz, 60.0);
+    CHECK_EQ(c.beatsRendered(), static_cast<int64_t>(8));
+    CHECK(!c.running());
+}
+
+TEST(click_without_accents_every_heard_beat_is_alike) {
+    Click c;
+    const uint8_t bar[] = {Click::kFirst, Click::kBeat, Click::kGroup, Click::kBeat};
+    c.start(120.0, bar, 4, nullptr, 0, 0, -1, 0);
+    std::vector<float> x = run(c, 22050 * 4);
+    std::vector<int> on = onsets(x);
+    CHECK_EQ(on.size(), static_cast<size_t>(4));
+    for (int i : on) CHECK_NEAR(toneAt(x, i), Click::kBeatHz, 60.0);
+}

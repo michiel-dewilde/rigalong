@@ -234,6 +234,13 @@ object NativeBridge {
      */
     external fun nativeClickStart(bpm: Double, beatsPerBar: Int, beats: Int, soundBeats: Int, accentBeats: Int,
                                   gain: Float, midi: Boolean): Long
+    /**
+     * The click with a pattern per beat of the bar (ClickPattern: 3 first, 2
+     * group start, 1 beat, 0 silent) and a lead bar played once first (empty:
+     * none); the rest as [nativeClickStart]. Returns the delay until it is heard (ns).
+     */
+    external fun nativeClickStartPattern(bpm: Double, bar: ByteArray, lead: ByteArray, beats: Int, soundBeats: Int,
+                                         accentBeats: Int, gain: Float, midi: Boolean): Long
     external fun nativeClickStop(midi: Boolean)
     external fun nativeClickRunning(): Boolean
     external fun nativeClickTempo(bpm: Double)

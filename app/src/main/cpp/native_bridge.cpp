@@ -1029,6 +1029,26 @@ Java_com_rigalong_NativeBridge_nativeClickStart(JNIEnv*, jobject, jdouble bpm, j
     return static_cast<jlong>(delay);
 }
 
+JNIEXPORT jlong JNICALL
+Java_com_rigalong_NativeBridge_nativeClickStartPattern(JNIEnv* env, jobject, jdouble bpm, jbyteArray bar,
+                                                       jbyteArray lead, jint beats, jint soundBeats,
+                                                       jint accentBeats, jfloat gain, jboolean midi) {
+    uint8_t barBytes[rigalong::Click::kMaxPattern];
+    uint8_t leadBytes[rigalong::Click::kMaxPattern];
+    jsize nb = env->GetArrayLength(bar);
+    jsize nl = env->GetArrayLength(lead);
+    if (nb > rigalong::Click::kMaxPattern) nb = rigalong::Click::kMaxPattern;
+    if (nl > rigalong::Click::kMaxPattern) nl = rigalong::Click::kMaxPattern;
+    env->GetByteArrayRegion(bar, 0, nb, reinterpret_cast<jbyte*>(barBytes));
+    if (nl > 0) env->GetByteArrayRegion(lead, 0, nl, reinterpret_cast<jbyte*>(leadBytes));
+    const int64_t delay = clickDelayNs();
+    rigalong::Click& c = engine().click();
+    c.setGain(gain);
+    c.start(bpm, barBytes, static_cast<int>(nb), leadBytes, static_cast<int>(nl), beats, soundBeats, accentBeats);
+    if (midi) midiClock().start(delay);
+    return static_cast<jlong>(delay);
+}
+
 JNIEXPORT void JNICALL
 Java_com_rigalong_NativeBridge_nativeClickStop(JNIEnv*, jobject, jboolean midi) {
     engine().click().stop();

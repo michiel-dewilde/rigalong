@@ -64,7 +64,10 @@ fun TempoFields(tempo: Tempo, countIn: Boolean, onChange: (Tempo) -> Unit) {
             BpmField(b) { onChange(tempo.copy(bpm = it)) }
             OutlinedButton(onClick = { tapper.tap()?.let { onChange(tempo.copy(bpm = it)) } }) { Text(stringResource(R.string.tap)) }
         }
-        NumberField(stringResource(R.string.beats_per_bar), tempo.beatsPerBar, 1..16) { onChange(tempo.copy(beatsPerBar = it)) }
+        NumberField(stringResource(R.string.beats_per_bar), tempo.beatsPerBar, 1..32) {
+            // Groups that no longer make up the bar go; they are typed again for the new one.
+            onChange(tempo.copy(beatsPerBar = it, groups = tempo.groups?.takeIf { g -> g.sum() == it }))
+        }
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text(stringResource(R.string.beat_unit), fontSize = 10.sp, color = Dim)
             for (u in listOf(2, 4, 8, 16)) {
@@ -74,8 +77,34 @@ fun TempoFields(tempo: Tempo, countIn: Boolean, onChange: (Tempo) -> Unit) {
                 }
             }
         }
-        if (countIn) NumberField(stringResource(R.string.count_in_bars), tempo.countInBars ?: 1, 1..8) {
-            onChange(tempo.copy(countInBars = it))
+        // Groups (S12.10): "3+2" for 5/4, "3+3+2+2+2" for 12/8; they set the beats per bar too.
+        var groupsText by remember(tempo.groups) { mutableStateOf(tempo.groups?.joinToString("+").orEmpty()) }
+        OutlinedTextField(value = groupsText, singleLine = true, label = { Text(stringResource(R.string.groups)) },
+            placeholder = { Text("3+2", color = Dim) },
+            onValueChange = { s ->
+                groupsText = s
+                val g = com.rigalong.model.ClickPattern.parseGroups(s)
+                when {
+                    g != null -> onChange(tempo.copy(groups = g, beatsPerBar = g.sum()))
+                    s.isBlank() -> onChange(tempo.copy(groups = null))
+                }
+            },
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Text, imeAction = ImeAction.Done),
+            modifier = Modifier.width(140.dp))
+        if (tempo.barGroups != null) Row(verticalAlignment = Alignment.CenterVertically) {
+            Checkbox(checked = tempo.groupStartsOnly, onCheckedChange = { onChange(tempo.copy(groupStartsOnly = it)) })
+            Text(stringResource(R.string.group_starts_only))
+        }
+        if (countIn) {
+            NumberField(stringResource(R.string.count_in_bars), tempo.countInBars ?: 1, 1..8) {
+                onChange(tempo.copy(countInBars = it))
+            }
+            // "1 . 2 ." first (S12.9): on by default in 4/4.
+            val leadOn = tempo.countInLead ?: (tempo.beatsPerBar == 4 && tempo.beatUnit == 4)
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Checkbox(checked = leadOn, onCheckedChange = { onChange(tempo.copy(countInLead = it)) })
+                Text(stringResource(R.string.count_in_lead))
+            }
         }
     }
 }

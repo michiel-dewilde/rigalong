@@ -138,6 +138,9 @@
     <string name="as_loaded">As loaded</string>
     <string name="keep">Keep</string>
     <string name="all_kinds">All</string>
+    <string name="groups">groups</string>
+    <string name="group_starts_only">group starts only</string>
+    <string name="count_in_lead">first bar “1 . 2 .”</string>
     <string name="save_as_library_sound">Save as library sound</string>
     <string name="engine_sounds">Engine sounds</string>
     <string name="engine_sounds_count">%1$d of %2$d installed for %3$s. Import adds more (SFZ, SoundFonts, DX7 banks, Surge XT patches).</string>

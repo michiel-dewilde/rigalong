@@ -374,11 +374,14 @@ class SongPlayer(private val lib: Library, private val host: EngineHost, private
         applyMidiClock()
     }
 
-    /** The count-in's beats: the song's bars (or the setup's), of the metre in force. */
+    /** The count-in's beats: its lead bar, if any, and the song's bars (or the setup's), of the metre in force. */
     private fun countInBeats(): Int {
         val t = tempo
-        return t.barBeats() * (t?.countInBars ?: countInBars).coerceAtLeast(1)
+        return leadBeats + t.barBeats() * (t?.countInBars ?: countInBars).coerceAtLeast(1)
     }
+
+    /** Beats of the lead bar of the run going on ("1 . 2 ." before a 4/4 count-in: S12.9), 0 for none. */
+    private var leadBeats = 0
 
     private fun Tempo?.barBeats() = (this?.beatsPerBar ?: 4).coerceAtLeast(1)
 
@@ -393,11 +396,16 @@ class SongPlayer(private val lib: Library, private val host: EngineHost, private
 
     private fun startClick(countIn: Boolean) {
         val b = bpm ?: return
+        val t = tempo ?: Tempo()
+        // The bar's pattern (grouped metres: S12.10), and the count-in's lead bar (S12.9).
+        val bar = com.rigalong.model.ClickPattern.bar(t)
+        val lead = if (countIn) com.rigalong.model.ClickPattern.lead(t) else IntArray(0)
+        leadBeats = lead.size
         val n = if (countIn) countInBeats() else 0
         fun beats(p: Presence) = when (p) { Presence.ON -> -1; Presence.COUNT_IN -> n; Presence.OFF -> 0 }
         val limit = if (countIn && !keepGoing) n else 0
-        val delay = NativeBridge.nativeClickStart(b, tempo.barBeats(), limit, beats(clickSound), beats(barCount),
-            clickLevel, midiClock)
+        val delay = NativeBridge.nativeClickStartPattern(b, ByteArray(bar.size) { bar[it].toByte() },
+            ByteArray(lead.size) { lead[it].toByte() }, limit, beats(clickSound), beats(barCount), clickLevel, midiClock)
         beatOrigin = System.nanoTime() + delay
         countInEnds = beatOrigin + (n * 60e9 / b).toLong()
         clickRunning = true
@@ -420,7 +428,11 @@ class SongPlayer(private val lib: Library, private val host: EngineHost, private
         if (!clickRunning || now < beatOrigin) return 0
         val counting = countingIn && now < countInEnds
         val shown = barCount == Presence.ON || (barCount == Presence.COUNT_IN && counting)
-        return if (shown) ((now - beatOrigin) / (60e9 / b)).toLong().mod(tempo.barBeats()) + 1 else 0
+        if (!shown) return 0
+        val beat = ((now - beatOrigin) / (60e9 / b)).toLong()
+        // The lead bar is counted as it is heard: "1 . 2 .".
+        if (beat < leadBeats) return com.rigalong.model.ClickPattern.leadCount(tempo ?: Tempo(), beat.toInt())
+        return (beat - leadBeats).mod(tempo.barBeats()) + 1
     }
 
     /** The count-in's end, and a count-in that stops when it ends: the beat stops with the last click heard. */
