@@ -22,6 +22,34 @@ class LibraryTest {
     private fun held(setlist: Digest) = lib.setlist(setlist)!!.songs.map { it.toRef().digest }
 
     @Test
+    fun theFirstSetlistPlaysSfizzWhereThereIsAnInstrument() {
+        lib.seedIfEmpty(listOf("Procol", "JIMMY"), surgePatch = "Keys/EP 1")
+        val songs = lib.songsOf(lib.setlists().single().id)
+        assertEquals(listOf("sfizz", "setBfree and sfizz", "Surge XT and sfizz"), songs.map { it.first!!.version.name })
+        val third = lib.rackSong(songs[2].second)!!
+        assertEquals("Keys/EP 1", third.instances.single { it.engine == RackEngine.SURGE }.slot.preset)
+        assertEquals("JIMMY", lib.rackSong(songs[1].second)!!.instances.single { it.engine == RackEngine.SETBFREE }.slot.preset)
+        // Seeded once: a library that has a setlist is left alone.
+        lib.seedIfEmpty(listOf("Procol"), RackEngine.DEXED to "X")
+        assertEquals(1, lib.setlists().size)
+    }
+
+    @Test
+    fun theFirstSetlistNeedsNoSamplesWhereThereIsNoInstrument() {
+        lib.seedIfEmpty(listOf("Procol"), RackEngine.DEXED to "Dexed_01/E.PIANO 1", "Keys/EP 1")
+        val songs = lib.songsOf(lib.setlists().single().id)
+        assertEquals(listOf("Dexed", "setBfree and Dexed", "Surge XT and Dexed"), songs.map { it.first!!.version.name })
+        for ((_, song) in songs) {
+            val r = lib.rackSong(song)!!
+            assertTrue(r.instances.none { it.engine == RackEngine.SFIZZ })
+            assertEquals("Dexed_01/E.PIANO 1", r.instances.single { it.engine == RackEngine.DEXED }.slot.preset)
+        }
+        val split = lib.rackSong(songs[1].second)!!.liveSets.single { it.name == "Split" }
+        assertEquals(59, split.parts["setbfree"]!!.keyHigh)
+        assertEquals(60, split.parts["dexed"]!!.keyLow)
+    }
+
+    @Test
     fun anEditMovesTheSetlistsThatHeldTheLatest() {
         val s = lib.saveSong(null, "Song", song(0.5))
         val sl = lib.saveSetlist(null, "Set", listOf(s))

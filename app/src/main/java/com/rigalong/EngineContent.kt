@@ -68,17 +68,69 @@ class EngineContent(private val context: Context, private val prefs: SharedPrefe
      * way through start-up. Until it finishes, the node renders silence and
      * everything else plays normally.
      *
-     * The content lives beside the instrument library rather than in the APK.
-     * Surge takes a filesystem path, so it cannot read out of an APK at all, and
-     * keeping it outside means the full 483 MB library can be swapped in without
-     * a rebuild. See tools/install_surge_data.sh.
+     * The content lives beside the instrument library, in a real directory:
+     * Surge takes a filesystem path, so it cannot read out of an APK. Its own
+     * factory set (641 patches, the wavetables) comes in the APK as one zip
+     * and is unpacked there the first time ([installSurgeFactory]); the full
+     * 483 MB library can still be put in its place with
+     * tools/install_surge_data.sh.
      */
     private fun startSurge() {
         val data = java.io.File(getExternalFilesDir(null), "surge-xt")
         // Writable and app-private: sst-plugininfra's homePath() THROWS if HOME
         // is unset, and Android makes no promise about it.
         val home = java.io.File(filesDir, "surge-home").apply { mkdirs() }
-        NativeBridge.nativeInitSurge(data.absolutePath, home.absolutePath)
+        if (!surgeFactoryDue(data)) {
+            NativeBridge.nativeInitSurge(data.absolutePath, home.absolutePath)
+            return
+        }
+        // The first start (or a newer set after an update): unpacked first, off
+        // the main thread -- some seconds -- and Surge brought up on what it finds.
+        Thread({
+            runCatching { installSurgeFactory(data) }
+                .onFailure { android.util.Log.e("rigalong-ui", "Surge XT's factory set was not unpacked: $it") }
+            NativeBridge.nativeInitSurge(data.absolutePath, home.absolutePath)
+        }, "surge-factory").start()
+    }
+
+    /** The APK's zip of Surge XT's factory set, by its length: what [SURGE_MARK] records as installed. */
+    private fun surgeFactoryVersion(): String? =
+        runCatching { assets.openFd(SURGE_ZIP).use { it.length.toString() } }.getOrNull()
+            ?: runCatching { assets.open(SURGE_ZIP).use { it.available().toString() } }.getOrNull()
+
+    /**
+     * Whether the factory set is to be unpacked: the APK has one, and the
+     * folder has none -- or has the one an earlier version of the app put
+     * there. A set somebody installed by hand (no mark) is never touched.
+     */
+    private fun surgeFactoryDue(data: java.io.File): Boolean {
+        val version = surgeFactoryVersion() ?: return false
+        val mark = java.io.File(data, SURGE_MARK)
+        return if (mark.exists()) mark.readText().trim() != version
+        else !java.io.File(data, "patches_factory").isDirectory
+    }
+
+    private fun installSurgeFactory(data: java.io.File) {
+        val version = surgeFactoryVersion() ?: return
+        val t0 = android.os.SystemClock.elapsedRealtime()
+        data.mkdirs()
+        val base = data.canonicalFile
+        var count = 0
+        java.util.zip.ZipInputStream(assets.open(SURGE_ZIP).buffered()).use { zip ->
+            while (true) {
+                val e = zip.nextEntry ?: break
+                val out = java.io.File(base, e.name).canonicalFile
+                // Only ever inside the folder, whatever a name says.
+                if (!out.path.startsWith(base.path + java.io.File.separator)) continue
+                if (e.isDirectory) { out.mkdirs(); continue }
+                out.parentFile?.mkdirs()
+                out.outputStream().use { zip.copyTo(it) }
+                count++
+            }
+        }
+        java.io.File(data, SURGE_MARK).writeText(version)
+        android.util.Log.i("rigalong-ui", "Surge XT's factory set unpacked: $count files in " +
+            "${android.os.SystemClock.elapsedRealtime() - t0} ms")
     }
 
     // -------------------------------------------------- sfizz's instruments
@@ -294,3 +346,8 @@ class EngineContent(private val context: Context, private val prefs: SharedPrefe
         return id
     }
 }
+
+/** Surge XT's factory set as the APK carries it (app/build.gradle.kts, packSurgeFactory). */
+private const val SURGE_ZIP = "surge-xt-core.zip"
+/** In Surge XT's folder: which zip (by its length) the app unpacked there. Absent: the folder is somebody's own. */
+private const val SURGE_MARK = ".rigalong-factory"

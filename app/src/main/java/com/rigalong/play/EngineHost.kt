@@ -23,6 +23,9 @@ interface EngineHost {
     fun routing(): Routing
     fun cycleAudioDevice()
     fun cycleMidiDevice()
+    /** A keyboard the app would rather drive directly over USB and has not asked about yet: its name; null when there is nothing to ask. */
+    fun directOffer(): String?
+    fun answerDirectOffer(use: Boolean)
     /** An IoMode name: ALSA, USB_INTERFACE, USB_DEVICE, NONE. */
     fun setAudioMode(mode: String)
     fun setMidiMode(mode: String)

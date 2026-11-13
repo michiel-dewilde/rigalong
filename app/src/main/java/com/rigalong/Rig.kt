@@ -106,11 +106,33 @@ class Rig private constructor(private val app: Context) {
         handler.postDelayed({
             if (ended) return@postDelayed
             runCatching {
-                library.seedIfEmpty(NativeBridge.nativeSetBfreePresetNames().toList())
+                library.seedIfEmpty(NativeBridge.nativeSetBfreePresetNames().toList(), firstKeys(), firstSurgePatch())
                 player.resume()
             }.onFailure { android.util.Log.e("rigalong-ui", "start: $it") }
         }, 2500)
     }
+
+    /**
+     * What the first setlist's keyboard sound is on (Library.seedIfEmpty): sfizz
+     * where an instrument is installed; where there is only the app's own test
+     * tone, Dexed on an electric piano of its built-in banks, which needs
+     * nothing installed.
+     */
+    private fun firstKeys(): Pair<com.rigalong.model.RackEngine, String?> {
+        if (content.library.any { it.id != "test-saw" }) return com.rigalong.model.RackEngine.SFIZZ to null
+        val voices = runCatching {
+            (0 until NativeBridge.nativeDexedVoiceCount()).map { NativeBridge.nativeDexedVoiceName(it) }
+        }.getOrDefault(emptyList())
+        val voice = voices.firstOrNull { it.substringAfter('/').startsWith("E.PIANO") }
+            ?: voices.firstOrNull { it.contains("PIANO", ignoreCase = true) } ?: voices.firstOrNull()
+        return com.rigalong.model.RackEngine.DEXED to voice
+    }
+
+    /** A patch of Surge XT's factory set for the first setlist, if Surge has it by then; else what Surge has. */
+    private fun firstSurgePatch(): String? = runCatching {
+        (0 until NativeBridge.nativeSurgePatchCount()).map { NativeBridge.nativeSurgePatchName(it) }
+            .firstOrNull { it == "Keys/EP 1" }
+    }.getOrNull()
 
     /**
      * The instrument is closed -- the activity finished, or Stop on the
@@ -266,6 +288,9 @@ class Rig private constructor(private val app: Context) {
         override fun availableDevices(): Set<String> = router.availableDevices()
         override fun cycleAudioDevice() = router.cycleOutput()
         override fun cycleMidiDevice() = router.cycleMidi()
+        override fun directOffer(): String? =
+            router.directOffer?.let { com.rigalong.model.devices.Devices.recognise(it)?.label ?: it }
+        override fun answerDirectOffer(use: Boolean) = router.answerDirectOffer(use)
         override fun setAudioMode(mode: String) = router.setMode(Use.AUDIO, IoMode.parse(mode))
         override fun setMidiMode(mode: String) = router.setMode(Use.MIDI, IoMode.parse(mode))
         override fun setUsbBufferMs(ms: Int) = router.setUsbBufferMs(ms)

@@ -105,6 +105,10 @@
     <string name="discard_changes">Discard them</string>
     <string name="setlist_named">Setlist: %1$s</string>
     <string name="notification_why">RigAlong keeps playing when it is not in front. Its notification says so, and has the Stop button.</string>
+    <string name="direct_offer_title">%1$s connected</string>
+    <string name="direct_offer_text">RigAlong can drive this keyboard directly over USB instead of through Android: the lowest latency, a steadier stream, and it is what lets RigAlong set the keyboard\'s own sounds for each song. Android will ask you to allow it, and once for the microphone (that is what lets it remember your answer). You can change this in Setup at any time.</string>
+    <string name="direct_offer_yes">Use direct USB</string>
+    <string name="direct_offer_no">Not now</string>
     <string name="usb_record_why">Android remembers a USB audio device ("Always") only for apps allowed to record. Allow the microphone, then choose Always: the CP88/CP73 then comes back without asking. RigAlong records only when you measure latency.</string>
     <string name="back_to_setlist">← Setlist</string>
     <string name="hear">Hear</string>

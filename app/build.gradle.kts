@@ -1,3 +1,6 @@
+import java.util.zip.ZipEntry
+import java.util.zip.ZipOutputStream
+
 import javax.inject.Inject
 
 plugins {
@@ -193,9 +196,66 @@ val unpackDx7Banks = tasks.register<UnpackDx7Banks>("unpackDx7Banks") {
     outputDir.set(layout.buildDirectory.dir("generated/dx7-assets"))
 }
 
+// ---------------------------------------------------- Surge XT's factory set
+//
+// Surge XT's own patches and wavetables (641 patches, 33 MB: wavetables,
+// patches_factory, fx_presets, modulator_presets) are Surge's, from the surge
+// submodule at its recorded revision, like the DX7 banks above. Surge reads
+// them from a real directory, so they travel in the APK as ONE zip asset and
+// the app unpacks it beside its other content the first time (EngineContent).
+// Without it Surge XT was one init patch until someone ran
+// tools/install_surge_data.sh over adb. The third-party sets (400 MB) stay
+// that script's business.
+//
+// A clone without the submodule builds an APK without the zip, and Surge XT is
+// its init patch again: correct, and said in the log.
+abstract class PackSurgeFactory : DefaultTask() {
+    @get:InputFiles
+    abstract val data: ConfigurableFileCollection
+
+    @get:OutputDirectory
+    abstract val outputDir: DirectoryProperty
+
+    @TaskAction
+    fun pack() {
+        val out = outputDir.get().asFile
+        out.deleteRecursively()
+        out.mkdirs()
+        val base = data.files.firstOrNull { it.isDirectory }
+        if (base == null) {
+            logger.lifecycle("Surge XT: no factory data -- run tools/init_deps.sh")
+            return
+        }
+        var count = 0
+        // The same bytes from the same tree: sorted, and without the files' own times.
+        ZipOutputStream(File(out, "surge-xt-core.zip").outputStream().buffered()).use { zip ->
+            for (dir in listOf("wavetables", "patches_factory", "fx_presets", "modulator_presets")) {
+                val top = File(base, dir)
+                if (!top.isDirectory) continue
+                for (f in top.walkTopDown().filter { it.isFile }.sortedBy { it.relativeTo(base).invariantSeparatorsPath }) {
+                    val e = ZipEntry(f.relativeTo(base).invariantSeparatorsPath)
+                    e.time = 0L
+                    zip.putNextEntry(e)
+                    f.inputStream().use { it.copyTo(zip) }
+                    zip.closeEntry()
+                    count++
+                }
+            }
+        }
+        logger.lifecycle("Surge XT: packed $count factory files")
+    }
+}
+
+val packSurgeFactory = tasks.register<PackSurgeFactory>("packSurgeFactory") {
+    description = "Pack Surge XT's factory patches and wavetables into one generated asset."
+    data.from(file("../third_party/surge/resources/data"))
+    outputDir.set(layout.buildDirectory.dir("generated/surge-assets"))
+}
+
 androidComponents {
     onVariants { variant ->
         variant.sources.assets?.addGeneratedSourceDirectory(unpackDx7Banks) { it.outputDir }
+        variant.sources.assets?.addGeneratedSourceDirectory(packSurgeFactory) { it.outputDir }
     }
 }
 

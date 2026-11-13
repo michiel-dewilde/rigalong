@@ -551,11 +551,51 @@ class AudioRouter(private val context: Context, private val prefs: SharedPrefere
      * only, so a device the player removed stays removed.
      */
     fun recogniseDevices() {
+        val cards = midiChoices().map { it.card }.filter { Devices.recognise(it) != null }.toSet()
+        if (cards.isEmpty()) return
         val seen = prefs.getStringSet("devices.seen", emptySet())!!
-        val now = midiChoices().map { it.card }.filter { Devices.recognise(it) != null && it !in seen }.toSet()
-        if (now.isEmpty()) return
-        for (card in now) onRecognised(card)
-        prefs.edit().putStringSet("devices.seen", seen + now).apply()
+        val now = cards - seen
+        if (now.isNotEmpty()) {
+            for (card in now) onRecognised(card)
+            prefs.edit().putStringSet("devices.seen", seen + now).apply()
+        }
+        offerDirect(cards)
+    }
+
+    /**
+     * A keyboard RigAlong has a USB audio profile for (the CP88/CP73), there
+     * while nothing is driven directly, and not asked about yet: its card
+     * name, for the app to offer the direct route -- once per keyboard. Out of
+     * the box the sound goes through Android, and for the CP-88 that path
+     * stopped after a quarter of an hour when it was measured; nothing told
+     * the player there was a better one. The offer is the app's own question:
+     * Android's permission dialogs come only after a yes.
+     */
+    @Volatile var directOffer: String? = null
+        private set
+
+    private fun offerDirect(cards: Set<String>) {
+        if (directOffer != null) return
+        val offered = prefs.getStringSet("direct.offered", emptySet())!!
+        val fresh = cards.filter { it !in offered && Devices.recognise(it)?.usbAudio != null }
+        if (fresh.isEmpty()) return
+        if (audioMode.direct || midiMode.direct) {
+            // Driven directly already (chosen in Setup): nothing to ask.
+            prefs.edit().putStringSet("direct.offered", offered + fresh).apply()
+            return
+        }
+        directOffer = fresh.first()
+    }
+
+    /** The player's answer to [directOffer]: the direct route for that keyboard's audio and MIDI, or as it is. Not asked again. */
+    fun answerDirectOffer(use: Boolean) {
+        val card = directOffer ?: return
+        directOffer = null
+        prefs.edit().putStringSet("direct.offered", prefs.getStringSet("direct.offered", emptySet())!! + card).apply()
+        android.util.Log.i("rigalong-ui", "direct USB offered for $card: ${if (use) "taken" else "not now"}")
+        if (!use) return
+        if (resolveAudio()?.name == card) setMode(Use.AUDIO, IoMode.USB_DEVICE)
+        if (resolveMidi()?.card == card && !midiMode.direct) setMode(Use.MIDI, IoMode.USB_DEVICE)
     }
 
     private fun resolveMidi(): MidiChoice? {

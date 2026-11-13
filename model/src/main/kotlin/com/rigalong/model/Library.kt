@@ -432,10 +432,20 @@ class Library(dir: File, private val author: String) {
         const val MAX_CHANGES = 30
     }
 
-    /** First run: a setlist with three songs, so the stage view has something to play (S14.2). */
-    fun seedIfEmpty(setBfreePresets: List<String>) {
+    /**
+     * First run: a setlist with three songs, so the stage view has something
+     * to play (S14.2) -- and something worth hearing. [keys] is the engine the
+     * songs' keyboard sound is on, with its preset: sfizz as loaded where a
+     * real instrument is installed; otherwise the caller gives an engine that
+     * needs no samples (Dexed and a voice of its built-in banks), because
+     * sfizz would be the test tone. [surgePatch] is a patch of Surge XT's
+     * factory set for its song, null for what Surge has.
+     */
+    fun seedIfEmpty(setBfreePresets: List<String>, keys: Pair<RackEngine, String?> = RackEngine.SFIZZ to null,
+                    surgePatch: String? = null) {
         if (setlists().isNotEmpty()) return
         val registration = setBfreePresets.firstOrNull { it.contains("JIMMY", true) } ?: setBfreePresets.firstOrNull()
+        if (keys.first != RackEngine.SFIZZ) return seedWithout(registration, keys.first, keys.second, surgePatch)
         val sfizz = saveSong(null, "sfizz", RackSong(
             instances = listOf(RackInstance(RackEngine.SFIZZ.key, RackEngine.SFIZZ, RackSlot(level = 0.8))),
             liveSets = listOf(RackLiveSet("sfizz", mapOf(RackEngine.SFIZZ.key to RackPart()))),
@@ -458,7 +468,7 @@ class Library(dir: File, private val author: String) {
         ))
         val surgeAndSfizz = saveSong(null, "Surge XT and sfizz", RackSong(
             instances = listOf(
-                RackInstance(RackEngine.SURGE.key, RackEngine.SURGE, RackSlot(level = 0.6)),
+                RackInstance(RackEngine.SURGE.key, RackEngine.SURGE, RackSlot(preset = surgePatch, level = 0.6)),
                 RackInstance(RackEngine.SFIZZ.key, RackEngine.SFIZZ, RackSlot(level = 0.8)),
             ),
             liveSets = listOf(
@@ -470,5 +480,40 @@ class Library(dir: File, private val author: String) {
             ),
         ))
         saveSetlist(null, "My set", listOf(sfizz, setBfreeAndSfizz, surgeAndSfizz))
+    }
+
+    /** The same three songs with [engine] (and its [preset]) where sfizz would be: no sampled instrument is installed. */
+    private fun seedWithout(registration: String?, engine: RackEngine, preset: String?, surgePatch: String?) {
+        val k = engine.key
+        val name = engine.label
+        fun keys() = RackInstance(k, engine, RackSlot(preset = preset, level = 0.8))
+        val alone = saveSong(null, name, RackSong(
+            instances = listOf(keys()),
+            liveSets = listOf(RackLiveSet(name, mapOf(k to RackPart()))),
+        ))
+        val withOrgan = saveSong(null, "setBfree and $name", RackSong(
+            instances = listOf(
+                RackInstance(RackEngine.SETBFREE.key, RackEngine.SETBFREE, RackSlot(preset = registration, level = 0.7)),
+                keys(),
+            ),
+            liveSets = listOf(
+                RackLiveSet("setBfree", mapOf(RackEngine.SETBFREE.key to RackPart(), k to RackPart(plays = false))),
+                RackLiveSet(name, mapOf(RackEngine.SETBFREE.key to RackPart(plays = false), k to RackPart())),
+                RackLiveSet("Split", mapOf(RackEngine.SETBFREE.key to RackPart(keyHigh = 59), k to RackPart(keyLow = 60))),
+                RackLiveSet("Layer", mapOf(RackEngine.SETBFREE.key to RackPart(level = 0.5), k to RackPart())),
+            ),
+        ))
+        val withSurge = saveSong(null, "Surge XT and $name", RackSong(
+            instances = listOf(
+                RackInstance(RackEngine.SURGE.key, RackEngine.SURGE, RackSlot(preset = surgePatch, level = 0.6)),
+                keys(),
+            ),
+            liveSets = listOf(
+                RackLiveSet("Surge XT", mapOf(RackEngine.SURGE.key to RackPart(), k to RackPart(plays = false))),
+                RackLiveSet("Surge XT and $name", mapOf(RackEngine.SURGE.key to RackPart(), k to RackPart())),
+                RackLiveSet("$name up an octave", mapOf(RackEngine.SURGE.key to RackPart(plays = false), k to RackPart(transpose = 12))),
+            ),
+        ))
+        saveSetlist(null, "My set", listOf(alone, withOrgan, withSurge))
     }
 }

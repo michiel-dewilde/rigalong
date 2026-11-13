@@ -58,12 +58,15 @@ fun AppUi(player: SongPlayer, lib: Library, host: EngineHost) {
     val songsEdit = remember { SongsEdit() }
     // The on-screen keys whenever there is no MIDI input to play from (S20.4), on every screen.
     var keys by remember { mutableStateOf(false) }
+    // A keyboard to be driven directly, if the player says so: asked once, on whatever screen.
+    var directOffer by remember { mutableStateOf<String?>(null) }
     LaunchedEffect(Unit) {
         var n = 0
         while (true) {
             health = runCatching { host.healthLine() }.getOrDefault("")
             player.diagnostics?.tick(host)
             if (n++ % 2 == 0) keys = runCatching { !host.routing().midiIn }.getOrDefault(true)
+            directOffer = runCatching { host.directOffer() }.getOrNull()
             delay(500)
         }
     }
@@ -82,6 +85,21 @@ fun AppUi(player: SongPlayer, lib: Library, host: EngineHost) {
         }
     }
     RigAlongTheme {
+        directOffer?.let { name ->
+            androidx.compose.material3.AlertDialog(onDismissRequest = {},
+                title = { androidx.compose.material3.Text(stringResource(R.string.direct_offer_title, name)) },
+                text = { androidx.compose.material3.Text(stringResource(R.string.direct_offer_text)) },
+                confirmButton = {
+                    androidx.compose.material3.Button(onClick = { host.answerDirectOffer(true); directOffer = null }) {
+                        androidx.compose.material3.Text(stringResource(R.string.direct_offer_yes))
+                    }
+                },
+                dismissButton = {
+                    androidx.compose.material3.TextButton(onClick = { host.answerDirectOffer(false); directOffer = null }) {
+                        androidx.compose.material3.Text(stringResource(R.string.direct_offer_no))
+                    }
+                })
+        }
         // Edge to edge is the rule at target SDK 36: keep clear of the status
         // and navigation bars, and of a display cutout, ourselves.
         Column(Modifier.fillMaxSize().safeDrawingPadding().padding(12.dp)) {
