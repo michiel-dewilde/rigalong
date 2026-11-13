@@ -142,6 +142,21 @@ class Library(dir: File, private val author: String) {
     /** The sound (the driver's stored form) entry [id] holds now. */
     fun deviceSound(id: Digest): ByteArray? = store.entry(id)?.version?.target?.let { store.get(it.digest) }
 
+    /**
+     * What a live set's own device sound is now: the latest version of the
+     * library sound it follows ([entry]), or its own copy ([copy]) when it
+     * follows none or the entry is gone.
+     */
+    fun deviceSoundNow(entry: Digest?, copy: Digest?): ByteArray? =
+        entry?.let { deviceSound(it) } ?: copy?.let { store.get(it) }
+
+    /** Whether a live set's device sound follows a library sound that is still there (a deleted entry has no target). */
+    fun followsDeviceSound(entry: Digest?): Boolean = entry != null && store.entry(entry)?.version?.target != null
+
+    /** The name a live set's device sound goes by: its library entry's, while it follows one. */
+    fun deviceSoundName(entry: Digest?, own: String?): String? =
+        if (followsDeviceSound(entry)) store.entry(entry!!)?.version?.name else own
+
     fun saveDeviceSound(entryId: Digest?, name: String, mediaType: String, sound: ByteArray): Digest = change("device sound", name) {
         val target = Ref(store.put(sound), mediaType)
         if (entryId == null) create(name, target, author, now())

@@ -138,6 +138,7 @@
     <string name="as_loaded">As loaded</string>
     <string name="keep">Keep</string>
     <string name="all_kinds">All</string>
+    <string name="save_as_library_sound">Save as library sound</string>
     <string name="engine_sounds">Engine sounds</string>
     <string name="engine_sounds_count">%1$d of %2$d installed for %3$s. Import adds more (SFZ, SoundFonts, DX7 banks, Surge XT patches).</string>
     <string name="patches_note">A patch is a sound of a song saved under a name, to use it in other songs: Patch…, then “Save as library patch…”.</string>

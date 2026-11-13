@@ -119,6 +119,37 @@ class LibraryTest {
     }
 
     @Test
+    fun aLiveSetsDeviceSoundIsItsOwnUntilItFollowsALibrarySound() {
+        val type = Cp88.MEDIA_TYPE
+        val a = Cp88.rename(Cp88.SILENT, "Mine")
+        val b = Cp88.rename(Cp88.SILENT, "Edited")
+        fun songWith(part: RackDevicePart) = RackSong(
+            instances = listOf(RackInstance("sfizz", RackEngine.SFIZZ, RackSlot())),
+            liveSets = listOf(RackLiveSet("Main", mapOf("sfizz" to RackPart()), mapOf("CP-88" to part))))
+        // Anonymous: the live set's own copy, no library entry.
+        val own = lib.store.put(a)
+        val anon = songWith(RackDevicePart("yamaha.cp88", "own", sound = own, soundName = "Mine"))
+        val back = RackSong.fromObjects(lib.store, anon.toObjects(lib.store))!!.liveSets[0].devices["CP-88"]!!
+        assertEquals(null, back.soundEntry)
+        kotlin.test.assertContentEquals(a, lib.deviceSoundNow(back.soundEntry, back.sound))
+        assertTrue(lib.deviceSounds(type).isEmpty())
+        // Promoted: linked, and the link survives the song's objects.
+        val entry = lib.saveDeviceSound(null, "Mine", type, a)
+        val linked = songWith(RackDevicePart("yamaha.cp88", "own", sound = own, soundName = "Mine", soundEntry = entry))
+        val part = RackSong.fromObjects(lib.store, linked.toObjects(lib.store))!!.liveSets[0].devices["CP-88"]!!
+        assertEquals(entry, part.soundEntry)
+        // Renamed and edited in the library: the song follows both.
+        lib.rename(entry, "My nifty piano")
+        lib.saveDeviceSound(entry, "My nifty piano", type, b)
+        assertEquals("My nifty piano", lib.deviceSoundName(part.soundEntry, part.soundName))
+        kotlin.test.assertContentEquals(b, lib.deviceSoundNow(part.soundEntry, part.sound))
+        // Gone from the library: the song's own copy plays on.
+        lib.deleteEntry(entry)
+        kotlin.test.assertContentEquals(a, lib.deviceSoundNow(part.soundEntry, part.sound))
+        assertEquals("Mine", lib.deviceSoundName(part.soundEntry, part.soundName))
+    }
+
+    @Test
     fun deviceSoundsFromAFileAreOneChangeAndKeptOnce() {
         val type = Cp88.MEDIA_TYPE
         val sounds = listOf(

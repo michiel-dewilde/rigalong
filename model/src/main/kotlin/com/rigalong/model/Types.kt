@@ -183,6 +183,14 @@ data class DeviceAction(
     val address: Map<String, Int> = emptyMap(),
     /** own: the sound. */
     val sound: RefJ? = null,
+    /**
+     * own: the library's device sound [sound] comes from, a weak link
+     * ("sha256:<entry>"), set when the player picks or saves one. A linked
+     * sound follows the entry: its latest version and name are what is
+     * written and shown, [sound] being the copy for when the entry is gone.
+     * Null: the live set's own, anonymous sound (Michiel, 2026-11-13).
+     */
+    val soundEntry: String? = null,
 )
 
 @Serializable

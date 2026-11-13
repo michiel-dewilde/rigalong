@@ -144,6 +144,8 @@ data class RackDevicePart(
     val address: Map<String, Int> = emptyMap(),
     val sound: Digest? = null,           // mode own: the sound object
     val soundName: String? = null,
+    /** mode own: the library sound it follows (see [DeviceAction.soundEntry]); null: the live set's own. */
+    val soundEntry: Digest? = null,
 )
 
 data class RackLiveSet(
@@ -330,7 +332,8 @@ data class RackSong(
             val devices = ls.devices.mapNotNull { (name, d) ->
                 when (d.mode) {
                     "select" -> name to DeviceAction(d.kind, "select", address = d.address)
-                    "own" -> d.sound?.let { name to DeviceAction(d.kind, "own", sound = RefJ.of(it, soundType(d.kind))) }
+                    "own" -> d.sound?.let { name to DeviceAction(d.kind, "own", sound = RefJ.of(it, soundType(d.kind)),
+                        soundEntry = d.soundEntry?.toString()) }
                     else -> null
                 }
             }.toMap()
@@ -393,7 +396,8 @@ data class RackSong(
                 val devices = ls.devices.mapValues { (_, a) ->
                     val d = a.sound?.toRef()?.digest
                     RackDevicePart(a.kind, a.mode, a.address, d,
-                        d?.let { store.get(it) }?.let { Devices.driver(a.kind)?.sounds?.name(it) })
+                        d?.let { store.get(it) }?.let { Devices.driver(a.kind)?.sounds?.name(it) },
+                        a.soundEntry?.let { Digest.parse(it) })
                 }
                 RackLiveSet(ls.name, parts, devices, ls.tempo)
             }

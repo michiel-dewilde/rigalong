@@ -204,10 +204,14 @@ On the right is the song being edited:
   A device whose own sounds the app can hold (a CP88/CP73) also has:
   * **Own sound**: the song carries a sound of its own for the device. Set the
     sound up on the device, then press "Import current sound" (unsaved edits
-    and the panel's knobs are included; it is kept in the library's device
-    sounds too), or take one from **From library…**. **YAML…** (the
-    device's text form) edits this song's copy of it as text (see Device
-    sounds below). When the song is opened, its sounds are written into the
+    and the panel's knobs are included). That sound belongs to this live set
+    only; **Save as library sound** puts it in the library's device sounds,
+    under its name, to use in other songs. **From library…** takes one from
+    there. A live set with a library sound **follows** it, marked "library":
+    rename or edit it in the Library and every song that uses it plays and
+    shows the new version. **YAML…** (the device's text form) edits it as
+    text for this live set: the edited sound is the live set's own again,
+    and the library keeps its version. When the song is opened, its sounds are written into the
     device's reserved area (see Setup): live set 1 in its first slot, and so
     on -- for a CP88/CP73, set 1 of the reserved page.
 

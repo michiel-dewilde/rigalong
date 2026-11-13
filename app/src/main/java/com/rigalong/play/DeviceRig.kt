@@ -161,7 +161,8 @@ class DeviceRig(private val lib: Library, private val prefs: SharedPreferences, 
         val wants = HashMap<Int, Want>()
         for ((i, ls) in liveSets.withIndex()) {
             val a = ls.devices[d.name]
-            val own = if (a?.mode == "own") a.sound?.toRef()?.digest?.let { lib.store.get(it) } else null
+            // A linked sound is the library's latest (a rename or an edit there is followed); else the live set's own.
+            val own = if (a?.mode == "own") lib.deviceSoundNow(a.soundEntry?.let { Digest.parse(it) }, a.sound?.toRef()?.digest) else null
             when {
                 own != null -> wants[i] = Want(ls.name, own, null, own = true)
                 // A stored sound in a reserved area is the app's own writing: not copied onto itself.
@@ -504,7 +505,7 @@ class DeviceRig(private val lib: Library, private val prefs: SharedPreferences, 
         val sets = HashMap<Int, ByteArray>()
         for ((i, ls) in song.liveSets.take(s.slots).withIndex()) {
             val p = ls.devices[d.name]
-            val own = if (p?.mode == "own") p.sound?.let { lib.store.get(it) } else null
+            val own = if (p?.mode == "own") lib.deviceSoundNow(p.soundEntry, p.sound) else null
             (own ?: if (d.selectsLiveSets && p?.mode != "select") s.silent else null)?.let { sets[i + 1] = s.named(it, ls.name) }
         }
         val area = areas(d).firstOrNull() ?: s.area.range.last

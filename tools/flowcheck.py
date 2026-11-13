@@ -251,6 +251,16 @@ def to_songs():
     time.sleep(1.0)
 
 
+def library_tab(name):
+    """The Library's tab [name] ("Patches", "Device sounds"...), which reads "<name>  <count>" (not counted)."""
+    for t in screen():
+        if t.text and (t.text == name or t.text.startswith(name + "  ")):
+            shell(f"input tap {t.x} {t.y}")
+            time.sleep(1.0)
+            return
+    raise AssertionError(f"no Library tab {name!r}")
+
+
 def to_library():
     """The Library screen: from the stage, where it opens on a long press (not counted)."""
     to_stage()
@@ -303,10 +313,12 @@ def flow_update_everywhere(f):
     f.tap("Save")
     # Both songs on the new version (checked in the Library, not counted).
     to_library()
-    details = find_all("Details")
+    # The Library shows a kind at a time: the patches.
+    library_tab("Patches")
+    details = [d for d in find_all("Details") if d.x > 1000]
     if not details:
         raise AssertionError("no Details")
-    n = details[-1]                    # the patches list comes last
+    n = details[-1]
     shell(f"input tap {n.x} {n.y}")
     time.sleep(1.0)
     if len(find_all("latest version")) != 2:
@@ -537,6 +549,7 @@ def import_device_file(f, fname, count, seen):
     try:
         f.see(f"{count} Yamaha CP88/CP73 sounds in the file", exact=False, timeout=8)
         # It may be in the library already (a page read back before a write keeps its sounds there).
+        library_tab("Device sounds")
         if not see_scrolling(seen):
             raise AssertionError(f"expected to see {seen!r}")
     finally:
@@ -607,6 +620,7 @@ def flow_cp88_yaml_edit(f):
     saves = 1 if imported else 0
     try:
         # The YAML… of Test 7-6's own row.
+        library_tab("Device sounds")
         see_scrolling("Test 7-6")
         row = find_all("Test 7-6")[0]
         button = min(find_all("YAML…"), key=lambda n: abs(n.y - row.y))
@@ -681,6 +695,7 @@ def export_patch(f, engine, search, pick, name, param, at, ext, check):
         make_patch(engine, search, pick, name, param, at)
         saved = True
         to_library()
+        library_tab("Patches")
         if not see_scrolling(name):
             raise AssertionError(f"no patch {name!r} in the Library")
         row = find_all(name)[0]

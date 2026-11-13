@@ -77,21 +77,35 @@ fun DevicePartRow(d: ExternalSynth, part: RackDevicePart?, player: SongPlayer, l
             }
             "own" -> {
                 val s = drv.sounds!!
-                Text(p.soundName?.ifEmpty { stringResource(R.string.unnamed) } ?: stringResource(R.string.no_sound_yet),
-                    modifier = Modifier.padding(horizontal = 8.dp))
+                // A library sound by its entry's current name, marked as one; else the live set's own.
+                val shown = lib.deviceSoundName(p.soundEntry, p.soundName)
+                val follows = lib.followsDeviceSound(p.soundEntry)
+                Text((shown?.ifEmpty { stringResource(R.string.unnamed) } ?: stringResource(R.string.no_sound_yet)) +
+                    if (follows) "  · " + stringResource(R.string.library_tag) else "",
+                    color = if (follows) Accent else Color.Unspecified, modifier = Modifier.padding(horizontal = 8.dp))
                 OutlinedButton(onClick = {
                     importing = reading
                     Thread {
                         val r = runCatching { player.devices.importCurrent(d) }
                         android.os.Handler(android.os.Looper.getMainLooper()).post {
                             r.onSuccess { (digest, n) ->
-                                // Kept in the library too, to use again in another song.
-                                lib.store.get(digest)?.let { lib.saveDeviceSound(null, n.ifBlank { d.name }, s.mediaType, it) }
-                                onPart(p.copy(mode = "own", sound = digest, soundName = n)); importing = ""
+                                // This live set's own, anonymous: into the library only when the player says so.
+                                onPart(p.copy(mode = "own", sound = digest, soundName = n, soundEntry = null)); importing = ""
                             }.onFailure { importing = it.message ?: "failed" }
                         }
                     }.start()
                 }) { Text(stringResource(R.string.import_current_sound)) }
+                // The live set's own sound into the library, under its name, to use in other songs: then followed.
+                val ownCopy = p.sound
+                if (ownCopy != null && !follows) {
+                    TextButton(onClick = {
+                        val bytes = lib.store.get(ownCopy) ?: return@TextButton
+                        val name = p.soundName?.ifBlank { null } ?: s.name(bytes).trim().ifEmpty { d.name }
+                        val id = lib.saveDeviceSound(null, name, s.mediaType, bytes)
+                        onPart(p.copy(soundEntry = id, soundName = name))
+                        importing = ""
+                    }) { Text(stringResource(R.string.save_as_library_sound)) }
+                }
                 // One the library has: from the device's files, or used in another song.
                 TextButton(onClick = { picking = true }) { Text(stringResource(R.string.from_library)) }
                 // Its settings as text; the edit is this song's, the library keeps its own.
@@ -114,7 +128,8 @@ fun DevicePartRow(d: ExternalSynth, part: RackDevicePart?, player: SongPlayer, l
                 else LazyColumn(Modifier.heightIn(max = 420.dp)) {
                     items(sounds) { e ->
                         Text(e.version.name, modifier = Modifier.fillMaxWidth().clickable {
-                            onPart(p.copy(mode = "own", sound = e.version.target!!.digest, soundName = e.version.name))
+                            // Linked: it follows the library sound from now on.
+                            onPart(p.copy(mode = "own", sound = e.version.target!!.digest, soundName = e.version.name, soundEntry = e.id))
                             picking = false
                         }.padding(vertical = 10.dp))
                     }
@@ -123,11 +138,12 @@ fun DevicePartRow(d: ExternalSynth, part: RackDevicePart?, player: SongPlayer, l
     }
     val format = s?.formats?.firstOrNull { it.editable }
     if (editing && s != null && format != null) {
-        val sound = remember(p.sound) { p.sound?.let { lib.store.get(it) } }
+        val sound = remember(p.sound, p.soundEntry) { lib.deviceSoundNow(p.soundEntry, p.sound) }
         if (sound == null) editing = false
-        else DeviceSoundEditor(d.name, p.soundName ?: "", sound, drv, format,
+        else DeviceSoundEditor(d.name, lib.deviceSoundName(p.soundEntry, p.soundName) ?: "", sound, drv, format,
             play = { player.devices.audition(d, it) }, onDismiss = { editing = false }, onSave = { edited ->
-                onPart(p.copy(mode = "own", sound = lib.store.put(edited), soundName = s.name(edited).trim()))
+                // Edited here, it is this live set's own again; the library keeps its own.
+                onPart(p.copy(mode = "own", sound = lib.store.put(edited), soundName = s.name(edited).trim(), soundEntry = null))
             })
     }
 }
