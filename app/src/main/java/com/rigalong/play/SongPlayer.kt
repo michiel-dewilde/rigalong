@@ -347,6 +347,11 @@ class SongPlayer(private val lib: Library, private val host: EngineHost, private
     var clickLevel by mutableStateOf(prefs.getFloat("click.level", 0.5f))
     /** MIDI clock out to the keyboard (I12.2), for its tempo-synced effects. */
     var midiClock by mutableStateOf(prefs.getBoolean("click.midiClock", false))
+    /**
+     * Where the click goes besides the main mix (S12.4): a key of
+     * [EngineHost.clickOutputs], or null for the main mix (the default).
+     */
+    var clickOutput by mutableStateOf(prefs.getString("click.output", null))
     /** The metronome runs: the beat blinks. */
     var clickRunning by mutableStateOf(false); private set
     /** A count-in is under way (until [countInEnds]). */
@@ -370,8 +375,10 @@ class SongPlayer(private val lib: Library, private val host: EngineHost, private
     fun saveClickSettings() {
         prefs.edit().putString("click.sound", clickSound.name).putString("click.barCount", barCount.name)
             .putBoolean("click.keepGoing", keepGoing).putInt("click.countInBars", countInBars)
-            .putFloat("click.level", clickLevel).putBoolean("click.midiClock", midiClock).apply()
+            .putFloat("click.level", clickLevel).putBoolean("click.midiClock", midiClock)
+            .putString("click.output", clickOutput).apply()
         applyMidiClock()
+        host.setClickOutput(clickOutput)
     }
 
     /** The count-in's beats: its lead bar, if any, and the song's bars (or the setup's), of the metre in force. */

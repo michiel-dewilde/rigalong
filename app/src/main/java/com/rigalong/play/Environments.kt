@@ -45,6 +45,7 @@ object Environments {
             countInBars = player.countInBars,
             clickLevel = player.clickLevel.toDouble(),
             midiClockPort = KEYS.takeIf { player.midiClock },
+            clickOutput = player.clickOutput,
             doNotDisturb = host.stageDnd(),
             masterDb = host.masterDb().toDouble(),
         )
@@ -77,6 +78,7 @@ object Environments {
         player.countInBars = env.countInBars ?: 1
         player.clickLevel = env.clickLevel.toFloat()
         player.midiClock = env.midiClockPort != null
+        player.clickOutput = env.clickOutput
         player.saveClickSettings()
         host.setStageDnd(env.doNotDisturb)
         env.masterDb?.let { host.setMasterDb(it.toFloat()) }

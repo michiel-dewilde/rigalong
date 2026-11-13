@@ -90,8 +90,17 @@ public:
     void prepareGraph();
 
     MidiInput& midi() { return mMidi; }
-    // The metronome (I12.2), mixed into the main out before the master volume.
+    // The metronome (I12.2), mixed into the main out before the master volume --
+    // or, where the setup sends it elsewhere (S12.4), on an output of its own.
     rigalong::Click& click() { return mClick; }
+    // The click on an Android output device of its own (its AAudio device id),
+    // or back in the main mix (-1). A stream of its own, on its own clock: the
+    // click is its own island (S12.4). Returns the device the stream got, or -1
+    // (the main mix: asked for, or the device could not be opened).
+    int32_t setClickOutput(int32_t deviceId);
+    // How long until a click rendered now is heard: the own output's latency
+    // while the click has one, else -1 (the main out's figures apply).
+    int64_t clickOutputLatencyNs();
     // The song's tempo for tempo-synced parameters (I12.1); 0 or less = none (120).
     void setTempo(double bpm) {
         mTempo.store(bpm > 0.0 ? bpm : 120.0, std::memory_order_relaxed);
@@ -613,6 +622,15 @@ private:
     // The master gain, ramped. Render thread only. See SmoothedGain.
     rigalong::SmoothedGain mMasterRamp;
     rigalong::Click mClick;
+    // The click's own output (setClickOutput), or null. [mClickOwn]: its
+    // callback renders the click and the main mix does not. [mClickBusy] keeps
+    // the two from rendering the click at once while it changes over.
+    void* mClickStream = nullptr;
+    std::atomic<bool> mClickOwn{false};
+    std::atomic<bool> mClickBusy{false};
+    std::atomic<int32_t> mClickRate{48000};
+    std::mutex mClickStreamLock;
+    void renderClickGuarded(float* stereo, int frames, double rate);
     std::atomic<double> mTempo{120.0};
 
     std::atomic<int32_t> mPreferredRate{0};

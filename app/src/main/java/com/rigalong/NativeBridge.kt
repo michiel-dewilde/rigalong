@@ -242,6 +242,11 @@ object NativeBridge {
     external fun nativeClickStartPattern(bpm: Double, bar: ByteArray, lead: ByteArray, beats: Int, soundBeats: Int,
                                          accentBeats: Int, gain: Float, midi: Boolean): Long
     external fun nativeClickStop(midi: Boolean)
+    /**
+     * The click on an Android output device of its own ([android.media.AudioDeviceInfo.getId]),
+     * or back in the main mix (-1) (S12.4). Returns the device it plays on, -1 for the main mix.
+     */
+    external fun nativeClickOutput(deviceId: Int): Int
     external fun nativeClickRunning(): Boolean
     external fun nativeClickTempo(bpm: Double)
     /** The song's tempo for tempo-synced delays and LFOs (I12.1); 0 = none (they assume 120). */

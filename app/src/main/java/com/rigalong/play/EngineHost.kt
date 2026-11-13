@@ -26,6 +26,12 @@ interface EngineHost {
     /** A keyboard the app would rather drive directly over USB and has not asked about yet: its name; null when there is nothing to ask. */
     fun directOffer(): String?
     fun answerDirectOffer(use: Boolean)
+    /** Where the click can go besides the main mix (S12.4): key to label, the ones connected now. */
+    fun clickOutputs(): List<Pair<String, String>>
+    /** The click to the output of [key] (from [clickOutputs]), or the main mix (null); kept while the device is away. */
+    fun setClickOutput(key: String?)
+    /** The click plays on an output of its own now (false: in the main mix). */
+    fun clickOnOwnOutput(): Boolean
     /** An IoMode name: ALSA, USB_INTERFACE, USB_DEVICE, NONE. */
     fun setAudioMode(mode: String)
     fun setMidiMode(mode: String)

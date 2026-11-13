@@ -42,8 +42,10 @@ class Rig private constructor(private val app: Context) {
     val content = EngineContent(app, prefs)
     val status = AudioStatus(app, router, content)
     val library = Library(java.io.File(app.filesDir, "library"), Build.MODEL)
+    private val clickOutputs = ClickOutputs(app)
     val host: EngineHost = Host()
     val player = SongPlayer(library, host, prefs)
+    init { clickOutputs.use(player.clickOutput) }
     private val hooks = TestHooks(app, router, content, player, measure = ::measureLatency, setMasterDb = ::setMasterDb)
     private val handler = Handler(Looper.getMainLooper())
 
@@ -151,6 +153,7 @@ class Rig private constructor(private val app: Context) {
             player.devices.release()
             player.devices.settle()
         }
+        clickOutputs.close()
         router.detach()
         router.shutdown()
         EngineService.stop(app)
@@ -291,6 +294,9 @@ class Rig private constructor(private val app: Context) {
         override fun directOffer(): String? =
             router.directOffer?.let { com.rigalong.model.devices.Devices.recognise(it)?.label ?: it }
         override fun answerDirectOffer(use: Boolean) = router.answerDirectOffer(use)
+        override fun clickOutputs() = this@Rig.clickOutputs.outputs().map { it.key to it.label }
+        override fun setClickOutput(key: String?) = this@Rig.clickOutputs.use(key)
+        override fun clickOnOwnOutput() = this@Rig.clickOutputs.playingOn >= 0
         override fun setAudioMode(mode: String) = router.setMode(Use.AUDIO, IoMode.parse(mode))
         override fun setMidiMode(mode: String) = router.setMode(Use.MIDI, IoMode.parse(mode))
         override fun setUsbBufferMs(ms: Int) = router.setUsbBufferMs(ms)

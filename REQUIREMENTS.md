@@ -916,6 +916,15 @@ Interpreted
 * I12.2 The click is an **audio click to an output port** chosen in the
   environment, and/or **MIDI clock** out to a MIDI port, and/or a **visual
   beat** on the stage view.
+* I12.4 (2026-11-13) The audio click goes into the **main mix by default**
+  (Michiel: "great for rehearsals"), or, chosen in the setup, to an
+  **Android output of its own** -- the tablet's speaker, headphones, a
+  Bluetooth headset, a USB audio device -- on a stream of its own clock, and
+  then not into the main mix. The choice is kept by kind (and a USB
+  device's name), not by Android's device id; while that device is away the
+  click is in the main mix, and it moves back when the device returns. The
+  visual beat and MIDI clock follow the latency of the output the click is
+  on.
 * I12.3 Tap tempo is a stage-view button and can be mapped to a footswitch or
   MIDI. A tapped tempo holds for the session, and is saved into the song
   only on request.

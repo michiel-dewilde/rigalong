@@ -169,7 +169,7 @@ fun SetupScreen(player: SongPlayer, host: EngineHost, lib: Library) {
             Spacer(Modifier.height(6.dp))
             Text(stringResource(R.string.metronome), fontWeight = FontWeight.SemiBold)
             // The same options as the stage's tempo dialog.
-            ClickOptions(player)
+            ClickOptions(player, host)
             SetupToggle(stringResource(R.string.midi_clock), player.midiClock, accent, dim) {
                 player.midiClock = it; player.saveClickSettings()
             }

@@ -390,9 +390,13 @@ patches) and **Device sounds**. **Search** narrows the tab you are on.
     always, during a count-in only, or never;
   * **After a count-in**: keep going (blinking, with whatever is "always") or
     stop; the count-in's bars where a song names none;
-  * whether it is heard in the main out, and how loud. With the CP88/CP73 as
-    the only output, the audience hears it too; otherwise the beat is on the
-    screen only;
+  * how loud, and where it **goes to**: the **Main mix** (the default; with
+    the CP88/CP73 as the only output, the audience hears it too), or an
+    output of its own -- the tablet's speaker, headphones, a Bluetooth
+    headset, a USB audio device -- and then only there. While that output is
+    not connected the click is in the main mix, and it moves back when the
+    output returns. Bluetooth is late (a fifth of a second is usual); the
+    count-in starts that much later, and the beat on the screen waits for it;
   * **MIDI clock** out to the keyboard: 24 ticks a beat at the song's tempo,
     with a Start at the click's first beat, for gear that follows MIDI clock.
     Direct USB modes.

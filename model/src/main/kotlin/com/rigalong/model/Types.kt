@@ -335,6 +335,8 @@ data class Environment(
     val clickLevel: Double = 0.5,
     /** The MIDI port that MIDI clock goes out to, or null (I12.2). */
     val midiClockPort: String? = null,
+    /** Where the click goes besides the main mix (S12.4): "speaker", "headphones", "bluetooth", "usb:<name>"; null: the main mix. */
+    val clickOutput: String? = null,
     /** Share of the stage screen given to the lead sheet, 0-1. */
     val sheetShare: Double = 0.6,
     /** The page-turner keys turn lead-sheet pages (else live sets). */

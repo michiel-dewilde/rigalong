@@ -39,6 +39,7 @@ inline double nowSeconds() {
 }  // namespace
 
 AudioEngine::~AudioEngine() {
+    setClickOutput(-1);
     stop();
     // The sfizz loader holds a raw pointer to a node the graph owns, so it must
     // not outlive this object. The Surge loader is detached and cannot be
@@ -1112,7 +1113,8 @@ void AudioEngine::renderBlockIntoRing(int frames) {
         }
         // The click goes in before the master: on the CP-88 alone it reaches
         // the audience (R12.1), and the room's volume is the one that governs.
-        mClick.render(mScratch.data(), chunk, currentRate());
+        // Unless it has an output of its own (S12.4).
+        if (!mClickOwn.load(std::memory_order_acquire)) renderClickGuarded(mScratch.data(), chunk, currentRate());
         mMasterRamp.applyInterleavedStereo(mScratch.data(), chunk, master);
         float peak = 0.0f;
         for (int i = 0; i < chunk * 2; ++i) {
@@ -1357,6 +1359,95 @@ void AudioEngine::renderRescueLoop() {
             lastLog = now;
         }
     }
+}
+
+void AudioEngine::renderClickGuarded(float* stereo, int frames, double rate) {
+    // Only while the click changes between the main mix and its own output can
+    // both want it; the one that loses skips a block.
+    if (mClickBusy.exchange(true, std::memory_order_acquire)) return;
+    mClick.render(stereo, frames, rate);
+    mClickBusy.store(false, std::memory_order_release);
+}
+
+int32_t AudioEngine::setClickOutput(int32_t deviceId) {
+    std::lock_guard<std::mutex> lock(mClickStreamLock);
+    // Back to the main mix first, then the old stream closed: the click goes
+    // on there without a gap while the new device opens.
+    mClickOwn.store(false, std::memory_order_release);
+    if (mClickStream) {
+        auto* old = static_cast<AAudioStream*>(mClickStream);
+        AAudioStream_requestStop(old);
+        AAudioStream_close(old);
+        mClickStream = nullptr;
+    }
+    if (deviceId < 0) return -1;
+    AAudioStreamBuilder* b = nullptr;
+    if (AAudio_createStreamBuilder(&b) != AAUDIO_OK) return -1;
+    AAudioStreamBuilder_setDeviceId(b, deviceId);
+    AAudioStreamBuilder_setDirection(b, AAUDIO_DIRECTION_OUTPUT);
+    AAudioStreamBuilder_setPerformanceMode(b, AAUDIO_PERFORMANCE_MODE_LOW_LATENCY);
+    AAudioStreamBuilder_setSharingMode(b, AAUDIO_SHARING_MODE_SHARED);
+    AAudioStreamBuilder_setFormat(b, AAUDIO_FORMAT_PCM_FLOAT);
+    AAudioStreamBuilder_setChannelCount(b, 2);
+    AAudioStreamBuilder_setUsage(b, AAUDIO_USAGE_MEDIA);
+    AAudioStreamBuilder_setDataCallback(
+            b, [](AAudioStream*, void* self, void* audio, int32_t n) -> aaudio_data_callback_result_t {
+                auto* e = static_cast<AudioEngine*>(self);
+                auto* out = static_cast<float*>(audio);
+                std::memset(out, 0, static_cast<size_t>(n) * 2 * sizeof(float));
+                if (e->mClickOwn.load(std::memory_order_acquire)) {
+                    e->renderClickGuarded(out, n, e->mClickRate.load(std::memory_order_relaxed));
+                }
+                return AAUDIO_CALLBACK_RESULT_CONTINUE;
+            }, this);
+    // The device gone (Bluetooth out of range, a cable pulled): the click falls
+    // back into the main mix; the app opens it again when the device returns.
+    AAudioStreamBuilder_setErrorCallback(
+            b, [](AAudioStream*, void* self, aaudio_result_t error) {
+                auto* e = static_cast<AudioEngine*>(self);
+                e->mClickOwn.store(false, std::memory_order_release);
+                LOGE("click output: %s; the click is in the main mix", AAudio_convertResultToText(error));
+            }, this);
+    AAudioStream* st = nullptr;
+    const aaudio_result_t r = AAudioStreamBuilder_openStream(b, &st);
+    AAudioStreamBuilder_delete(b);
+    if (r != AAUDIO_OK) {
+        LOGE("click output: device %d would not open (%s)", deviceId, AAudio_convertResultToText(r));
+        if (st) AAudioStream_close(st);
+        return -1;
+    }
+    mClickRate.store(AAudioStream_getSampleRate(st), std::memory_order_relaxed);
+    if (AAudioStream_requestStart(st) != AAUDIO_OK) {
+        LOGE("click output: device %d would not start", deviceId);
+        AAudioStream_close(st);
+        return -1;
+    }
+    mClickStream = st;
+    mClickOwn.store(true, std::memory_order_release);
+    const int32_t got = AAudioStream_getDeviceId(st);
+    LOGI("click output: device %d (asked %d), %d Hz, burst %d", got, deviceId,
+         AAudioStream_getSampleRate(st), AAudioStream_getFramesPerBurst(st));
+    return got;
+}
+
+int64_t AudioEngine::clickOutputLatencyNs() {
+    std::lock_guard<std::mutex> lock(mClickStreamLock);
+    if (!mClickStream || !mClickOwn.load(std::memory_order_acquire)) return -1;
+    auto* st = static_cast<AAudioStream*>(mClickStream);
+    const double rate = AAudioStream_getSampleRate(st);
+    if (rate <= 0) return -1;
+    int64_t pos = 0, at = 0;
+    if (AAudioStream_getTimestamp(st, CLOCK_MONOTONIC, &pos, &at) == AAUDIO_OK) {
+        // When the frame written last is heard, less now.
+        const int64_t written = AAudioStream_getFramesWritten(st);
+        timespec ts{};
+        clock_gettime(CLOCK_MONOTONIC, &ts);
+        const int64_t now = static_cast<int64_t>(ts.tv_sec) * 1000000000LL + ts.tv_nsec;
+        const int64_t heard = at + static_cast<int64_t>((written - pos) * 1e9 / rate);
+        if (heard > now) return heard - now;
+    }
+    // No timestamp yet: the buffer's length.
+    return static_cast<int64_t>(AAudioStream_getBufferSizeInFrames(st) * 1e9 / rate);
 }
 
 bool AudioEngine::borrowFifoThread(Borrowed& b, const char* what) {

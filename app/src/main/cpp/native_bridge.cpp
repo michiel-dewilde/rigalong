@@ -36,6 +36,9 @@ MidiClock& midiClock() {
 // queued packets and the ring, which latencyMs already sums; through Android,
 // the stream's latency plus the ring's reserve ahead of it.
 int64_t clickDelayNs() {
+    // On an output of its own (S12.4) that output's latency is what counts.
+    const int64_t own = engine().clickOutputLatencyNs();
+    if (own >= 0) return own;
     const AudioEngine::Stats s = engine().stats();
     const float ms = s.usbActive ? s.latencyMs : s.latencyMs + s.ringFillMs;
     return static_cast<int64_t>(std::max(0.0f, ms) * 1e6f);
@@ -1027,6 +1030,11 @@ Java_com_rigalong_NativeBridge_nativeClickStart(JNIEnv*, jobject, jdouble bpm, j
     c.start(bpm, beatsPerBar, beats, soundBeats, accentBeats);
     if (midi) midiClock().start(delay);
     return static_cast<jlong>(delay);
+}
+
+JNIEXPORT jint JNICALL
+Java_com_rigalong_NativeBridge_nativeClickOutput(JNIEnv*, jobject, jint deviceId) {
+    return engine().setClickOutput(deviceId);
 }
 
 JNIEXPORT jlong JNICALL

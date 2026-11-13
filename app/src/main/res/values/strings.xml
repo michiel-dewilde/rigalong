@@ -83,6 +83,10 @@
     <string name="count_in_bars_note">where the song names none</string>
     <string name="click_volume">Click volume</string>
     <string name="click_goes_to_main">The click goes into the main out: with the keyboard as the only output, the audience hears it too. The bar count shows the beat\'s number and accents beat one; without it every beat is alike. Running, the beat always blinks.</string>
+    <string name="click_goes_elsewhere">The click plays only on that output, not in the main out. While it is not connected the click goes into the main out, and moves back when it returns. The bar count shows the beat\'s number and accents beat one; without it every beat is alike. Running, the beat always blinks.</string>
+    <string name="click_goes_to">Goes to</string>
+    <string name="click_main_mix">Main mix</string>
+    <string name="click_output_away">%1$s (not connected)</string>
 
     <!-- engines -->
     <string name="engine_sfizz">sfizz</string>

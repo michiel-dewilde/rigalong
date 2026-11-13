@@ -131,7 +131,7 @@ private fun BpmField(bpm: Double, onValue: (Double) -> Unit) {
  */
 @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 @Composable
-fun ClickOptions(player: SongPlayer) {
+fun ClickOptions(player: SongPlayer, host: com.rigalong.play.EngineHost) {
     @Composable
     fun Choice(label: Int, value: SongPlayer.Presence, onValue: (SongPlayer.Presence) -> Unit) {
         androidx.compose.foundation.layout.FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -167,7 +167,24 @@ fun ClickOptions(player: SongPlayer) {
                 onValueChange = { player.clickLevel = it }, onValueChangeFinished = player::saveClickSettings,
                 modifier = Modifier.weight(1f))
         }
-        Text(stringResource(R.string.click_goes_to_main), color = Dim, fontSize = 12.sp)
+        // Where it goes (S12.4): the main mix, or an output of its own.
+        val outputs = remember(player.clickOutput) { host.clickOutputs() }
+        androidx.compose.foundation.layout.FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text(stringResource(R.string.click_goes_to), modifier = Modifier.width(120.dp).padding(top = 14.dp))
+            FilterChip(selected = player.clickOutput == null,
+                onClick = { player.clickOutput = null; player.saveClickSettings() },
+                label = { Text(stringResource(R.string.click_main_mix)) })
+            for ((key, label) in outputs) {
+                FilterChip(selected = player.clickOutput == key,
+                    onClick = { player.clickOutput = key; player.saveClickSettings() },
+                    label = { Text(label) })
+            }
+            val away = player.clickOutput?.takeIf { k -> outputs.none { it.first == k } }
+            if (away != null) FilterChip(selected = true, onClick = {},
+                label = { Text(stringResource(R.string.click_output_away, clickOutputName(away))) })
+        }
+        Text(stringResource(if (player.clickOutput == null) R.string.click_goes_to_main else R.string.click_goes_elsewhere),
+            color = Dim, fontSize = 12.sp)
     }
 }
 
@@ -218,4 +235,13 @@ fun TempoDialog(player: SongPlayer, onDismiss: () -> Unit) {
                 }
             }
         })
+}
+
+/** A click output's key as a name ("bluetooth" -> "Bluetooth"), for one that is not connected. */
+private fun clickOutputName(key: String): String = when {
+    key == "speaker" -> "Tablet speaker"
+    key == "headphones" -> "Headphones"
+    key == "bluetooth" -> "Bluetooth"
+    key.startsWith("usb:") -> "USB: " + key.removePrefix("usb:")
+    else -> key
 }
