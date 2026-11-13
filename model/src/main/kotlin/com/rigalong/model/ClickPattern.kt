@@ -32,8 +32,9 @@ object ClickPattern {
     }
 
     /**
-     * The count-in's lead bar of [t], or none: its group starts only, the
-     * first high and the others low -- in 4/4 "1 . 2 ." on the half notes.
+     * The count-in's lead bar of [t], or none: its group starts only, all on
+     * the middle tone, the others silent -- in 4/4 "1 . 2 ." on the half
+     * notes; the count's own bars then have the high and low tones (Michiel).
      * A metre without groups is taken in halves where it has an even number
      * of beats (4/4 as 2+2), else as one group. On by default in 4/4 only.
      */
@@ -43,7 +44,7 @@ object ClickPattern {
         if (!on) return IntArray(0)
         val groups = t.barGroups ?: if (n % 2 == 0 && n >= 4) listOf(n / 2, n / 2) else listOf(n)
         val starts = starts(groups)
-        return IntArray(n) { i -> if (i == 0) FIRST else if (i in starts) BEAT else SILENT }
+        return IntArray(n) { i -> if (i == 0 || i in starts) GROUP else SILENT }
     }
 
     /** The number to show on beat [beat] of the lead (0-based): its group's ("1", "2"), as counted aloud. */

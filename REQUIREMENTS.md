@@ -894,7 +894,9 @@ Stated (2026-10-12)
   that until something uses it.
 * S12.9 (Michiel, 2026-11-13) **The 4/4 count-in "1 . 2 . | 1 2 3 4"**: two
   bars, the first clicking on the half notes only. An option beside the
-  count-in's bars, on by default in 4/4.
+  count-in's bars, on by default in 4/4. The first bar's "1" and "2" sound
+  the middle tone (that of S12.10's group starts); the bar after it has the
+  ordinary high and low tones (Michiel, 2026-11-13).
 * S12.10 (Michiel, 2026-11-13) **Grouped metres.** A metre can be written as
   groups of its beat unit: 5/4 as 3+2/4 or 2+3/4, 6/8 as 3+3/8, and a mixed
   bar such as "I want to be in America" (6/8 + 3/4) as eighths 3+3+2+2+2.

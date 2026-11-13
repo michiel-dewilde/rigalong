@@ -45,7 +45,8 @@ class ClickPatternTest {
 
     @Test
     fun theFourFourCountInLeadsWithHalfNotes() {
-        assertContentEquals(intArrayOf(FIRST, SILENT, BEAT, SILENT), ClickPattern.lead(Tempo()))
+        // "1" and "2" on the middle tone; the bar after has the high and low.
+        assertContentEquals(intArrayOf(GROUP, SILENT, GROUP, SILENT), ClickPattern.lead(Tempo()))
         assertEquals(listOf(1, 1, 2, 2), (0..3).map { ClickPattern.leadCount(Tempo(), it) })
         // Off where asked, and by default in other metres.
         assertEquals(0, ClickPattern.lead(Tempo(countInLead = false)).size)
@@ -53,7 +54,7 @@ class ClickPatternTest {
         assertEquals(0, ClickPattern.lead(Tempo(beatsPerBar = 6, beatUnit = 8)).size)
         // Asked for in 3+2/4: "1 . . 2 .".
         val t = Tempo(beatsPerBar = 5, groups = listOf(3, 2), countInLead = true)
-        assertContentEquals(intArrayOf(FIRST, SILENT, SILENT, BEAT, SILENT), ClickPattern.lead(t))
+        assertContentEquals(intArrayOf(GROUP, SILENT, SILENT, GROUP, SILENT), ClickPattern.lead(t))
     }
 
     @Test

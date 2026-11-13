@@ -217,7 +217,8 @@ TEST(click_group_starts_only_leaves_the_other_beats_silent) {
 TEST(click_lead_bar_in_half_notes_then_the_count) {
     // 4/4 count-in "1 . 2 . | 1 2 3 4": eight beats, six heard.
     Click c;
-    const uint8_t lead[] = {Click::kFirst, Click::kSilent, Click::kBeat, Click::kSilent};
+    // The lead's "1" and "2" on the middle tone, the count's bar high and low.
+    const uint8_t lead[] = {Click::kGroup, Click::kSilent, Click::kGroup, Click::kSilent};
     const uint8_t bar[] = {Click::kFirst, Click::kBeat, Click::kBeat, Click::kBeat};
     c.start(120.0, bar, 4, lead, 4, 8);
     std::vector<float> x = run(c, 22050 * 9);
@@ -225,7 +226,10 @@ TEST(click_lead_bar_in_half_notes_then_the_count) {
     CHECK_EQ(on.size(), static_cast<size_t>(6));
     CHECK_NEAR(on[1] - on[0], 22050 * 2, 2);       // "2" on the half note
     CHECK_NEAR(on[2] - on[0], 22050 * 4, 2);       // then bar two's "1"
+    CHECK_NEAR(toneAt(x, on[0]), Click::kGroupHz, 60.0);
+    CHECK_NEAR(toneAt(x, on[1]), Click::kGroupHz, 60.0);
     CHECK_NEAR(toneAt(x, on[2]), Click::kAccentHz, 60.0);
+    CHECK_NEAR(toneAt(x, on[3]), Click::kBeatHz, 60.0);
     CHECK_EQ(c.beatsRendered(), static_cast<int64_t>(8));
     CHECK(!c.running());
 }
