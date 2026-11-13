@@ -737,7 +737,7 @@ def flow_export_dexed_patch(f):
 
 def flow_export_fluid_patch(f):
     # Every preset of every font is a row: the font's name narrows the list to its own.
-    export_patch(f, "FluidSynth", "v2.sf3", "0:000 FM Bells 1", "FlowFluid", "Transpose", 0.66, "sf3",
+    export_patch(f, "FluidSynth", "sf3", "0:000 FM Bells 1", "FlowFluid", "Transpose", 0.66, "sf3",
                  check_soundfont("FlowFluid"))
 
 

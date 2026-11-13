@@ -166,6 +166,8 @@
     <string name="device_channel">MIDI channel</string>
     <string name="reserved_area">First reserved %1$s</string>
     <string name="reserved_area_note">the open song\'s sounds are written from here on, one per live set, each under its live set\'s name</string>
+    <string name="device_home">Home %1$s</string>
+    <string name="device_home_note">its own sound again when RigAlong leaves the stage or closes</string>
     <string name="reserved_count">Reserved %1$ss</string>
     <string name="reserved_count_note">room for %1$d live sets; whatever these hold is overwritten</string>
     <string name="device_follows">Its own selections choose the song\'s live sets. Its reserved %1$s then gets a silent sound, named after the live set, wherever a live set does not give it one, so it never mixes in sounds of its own.</string>

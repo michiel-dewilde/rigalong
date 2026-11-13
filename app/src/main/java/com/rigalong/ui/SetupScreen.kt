@@ -125,6 +125,14 @@ fun SetupScreen(player: SongPlayer, host: EngineHost, lib: Library) {
                         note = stringResource(R.string.reserved_area_note)) { put(d.copy(reservedAreas = reserve(it, count))) }
                     Stepper(stringResource(R.string.reserved_count, s.area.label), count, 1..(range.last - first + 1), dim,
                         note = stringResource(R.string.reserved_count_note, count * s.slots)) { put(d.copy(reservedAreas = reserve(first, it))) }
+                    // Where it goes when RigAlong lets go of it: off the stage, and on exit.
+                    val home = player.devices.home(d)
+                    drv.address.filter { !it.optional }.forEachIndexed { k, f ->
+                        Stepper(stringResource(R.string.device_home, f.label), home[f.key] ?: f.range.first, f.range, dim,
+                            note = if (k == 0) stringResource(R.string.device_home_note) else "") {
+                            put(d.copy(home = home + (f.key to it)))
+                        }
+                    }
                     SetupToggle(stringResource(R.string.device_follows, s.area.label), d.selectsLiveSets, accent, dim) {
                         put(d.copy(selectsLiveSets = it))
                     }

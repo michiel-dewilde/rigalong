@@ -368,6 +368,27 @@ class DeviceRig(private val lib: Library, private val prefs: SharedPreferences, 
         }
     }
 
+    /** Where [d] goes when the app lets go of it: its home (Setup), or its driver's first stored sound. */
+    fun home(d: ExternalSynth): Map<String, Int> =
+        d.home.ifEmpty { driver(d).address.filter { !it.optional }.associate { it.key to it.range.first } }
+
+    /**
+     * The app lets go of the devices it gives sounds to: each goes to its
+     * home, a sound of its own, and is an ordinary instrument again (Michiel,
+     * 2026-11-13: off the stage and on exit the CP-88 returns to normal). The
+     * reserved areas keep what was written; the next live set selected takes
+     * the device back.
+     */
+    fun release() {
+        val all = devices.toList()
+        queue.execute {
+            for (d in all) {
+                if (driver(d).sounds == null || areas(d).isEmpty()) continue
+                select(d, home(d))
+            }
+        }
+    }
+
     private fun select(d: ExternalSynth, address: Map<String, Int>) {
         val drv = driver(d)
         val ok = send(drv.select(address, d.channel))

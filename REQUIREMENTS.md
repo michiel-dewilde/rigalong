@@ -381,6 +381,12 @@ Stated (2026-11-12)
   one while a song is set up**. On the stage its sounds come from stored
   Live Sets. (S4.11, said again.)
 
+* S4.16 (2026-11-13) **When the stage view is left, or the app is exited,
+  the CP-88 returns to normal**: to a home Live Set chosen in Setup (1:1 by
+  default). Off the stage RigAlong's own sounds are silent too; it sounds on
+  the stage, and in Songs while a live set is heard. The app going to the
+  background is not leaving the stage.
+
 Interpreted (built 2026-11-12)
 
 * I4.21 Every slot the app writes carries its live set's name (15 characters

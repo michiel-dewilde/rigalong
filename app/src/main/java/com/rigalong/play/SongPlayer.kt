@@ -166,6 +166,7 @@ class SongPlayer(private val lib: Library, private val host: EngineHost, private
         }
         devices.writeSong(liveSets)
         if (liveSets.isNotEmpty()) selectLiveSet(liveSet.coerceIn(0, liveSets.size - 1))
+        parkIfSilent()
     }
 
     fun selectLiveSet(index: Int) {
@@ -174,8 +175,9 @@ class SongPlayer(private val lib: Library, private val host: EngineHost, private
         val changes = sw.select(index)
         pendingLiveSet = index
         apply(changes)
-        // The external devices: each does what this live set says (DeviceRig).
-        devices.liveSetSelected(index, liveSetObjects.getOrNull(index))
+        // The external devices: each does what this live set says (DeviceRig) --
+        // while the rig sounds; off the stage they are left on their own sounds.
+        if (sounding()) devices.liveSetSelected(index, liveSetObjects.getOrNull(index))
         liveSetIndex = index
         Log.i(TAG, "live set ${index + 1} '${liveSetNames[index]}': ${changes.size} changes: " +
                 changes.joinToString("; ") { c -> when (c) {
@@ -192,6 +194,7 @@ class SongPlayer(private val lib: Library, private val host: EngineHost, private
             .let { all -> all.firstOrNull { playing[it.id] == true } ?: all.firstOrNull() }?.id
         refreshSetBfree()
         applyControls()
+        parkIfSilent()
     }
 
     private var pendingLiveSet = -1
@@ -668,8 +671,56 @@ class SongPlayer(private val lib: Library, private val host: EngineHost, private
     /** Set by the UI: a Back gesture goes to the stage instead of leaving the app. */
     var backToStage: (() -> Unit)? = null
 
-    /** Whether the stage view is what is showing: page-turner keys act only there. */
+    /**
+     * Whether the stage view is what is showing: page-turner keys act only
+     * there, and it is where the rig sounds ([sounding]). Set by the UI when
+     * the screen changes -- not by the app going to the background, which
+     * leaves the instrument playing as it was.
+     */
     @Volatile var onStage = true
+        set(v) {
+            if (field == v) return
+            field = v
+            if (!sounding()) park()
+            // Back on the stage: its song on the keys again (Hear, if it is on, is stopped by the UI next).
+            else if (parked && heard == null && songs.getOrNull(songIndex) != null) selectSong(songIndex, liveSetIndex.coerceAtLeast(0))
+        }
+
+    /**
+     * The rig sounds on the stage, and in Songs while a live set of the song
+     * being edited is heard. Everywhere else the app is silent and the
+     * devices it gives sounds to are on their own (Michiel, 2026-11-13): a
+     * CP-88 is a piano again in Library and Setup, and after the app is
+     * closed.
+     */
+    private fun sounding() = onStage || heard != null
+
+    /** Silent, the devices let go of: see [sounding]. The song stays on the engine, ready. */
+    private var parked = false
+    private val main = android.os.Handler(android.os.Looper.getMainLooper())
+    private val releaser = Runnable { if (parked) devices.release() }
+
+    private fun park() {
+        for (i in 0 until runCatching { NativeBridge.nativeInstanceCount() }.getOrDefault(0)) setWireAt(i, midi = false)
+        for ((id, i) in onEngine) playing[id] = midiOn[i]
+        if (parked) return
+        parked = true
+        // A moment later, and not at all if a song is heard meanwhile: saving
+        // a song that is being heard passes through here on its way back.
+        main.removeCallbacks(releaser)
+        main.postDelayed(releaser, 250)
+        note("off the stage: silent, the devices back on their own sounds")
+    }
+
+    /** After anything that puts a song or a live set on the engine: silent again if the rig is not to sound. */
+    private fun parkIfSilent() {
+        if (sounding()) {
+            parked = false
+            main.removeCallbacks(releaser)
+        } else {
+            park()
+        }
+    }
 
     /**
      * TEST (PROVISIONAL.md): a device's own-sound path end to end, without the
@@ -889,7 +940,8 @@ class SongPlayer(private val lib: Library, private val host: EngineHost, private
             val followed = devices.followed(msb, lsb, pc) { lastSelection = it }
             when {
                 followed == null -> lastSelection = "PC ${pc + 1} (bank $msb/$lsb, ch ${(v ushr 24) + 1})"
-                followed in liveSetNames.indices -> selectLiveSet(followed)
+                // Off the stage the device is its own again: its buttons choose its sounds, not the app's live sets.
+                followed in liveSetNames.indices -> if (sounding()) selectLiveSet(followed)
             }
         }
     }

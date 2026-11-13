@@ -123,6 +123,12 @@ class Rig private constructor(private val app: Context) {
         if (current === this) current = null
         handler.removeCallbacksAndMessages(null)
         hooks.unregister()
+        // While MIDI out is still there: the devices back on their own sounds,
+        // so a CP-88 is a piano again when the instrument is closed.
+        runCatching {
+            player.devices.release()
+            player.devices.settle()
+        }
         router.detach()
         router.shutdown()
         EngineService.stop(app)

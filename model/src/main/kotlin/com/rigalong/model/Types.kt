@@ -270,6 +270,12 @@ data class ExternalSynth(
     /** Its own selections in the reserved area select the app's live sets, the area kept silent elsewhere (S4.12). */
     val selectsLiveSets: Boolean = false,
     val midnam: RefJ? = null,
+    /**
+     * Its own sound for when the app lets go of it (off the stage, on exit):
+     * the address of one of its stored sounds, in the driver's fields. Empty:
+     * the driver's first (a CP-88's 1:1).
+     */
+    val home: Map<String, Int> = emptyMap(),
 )
 
 @Serializable

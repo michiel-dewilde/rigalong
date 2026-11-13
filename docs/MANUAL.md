@@ -341,6 +341,8 @@ Every setlist and song, with its history.
     default, room for sixteen live sets; reserve more for a song with more).
     Whatever these pages hold is overwritten when a song opens (a page
     takes about a tenth of a second);
+  * its **home**: the sound of its own it goes back to when RigAlong lets
+    go of it (for a CP88/CP73 a Live Set, 1:1 by default);
   * whether its **own selections choose the app's live sets**; **Rewrite
     the reserved page** reads the stored sounds the song copies and writes
     it all again.
@@ -409,6 +411,17 @@ Every setlist and song, with its history.
     to an issue. It never leaves the tablet otherwise.
 
 ---
+
+## Where RigAlong sounds
+
+RigAlong plays on the **Stage**, and in **Songs** while a live set is being
+heard (Hear, or the list of what a sound plays). In Library and Setup, and
+in Songs otherwise, it is silent, and a keyboard it gives sounds to is on
+its own home sound: a CP88/CP73 is a piano again, and its Live Set buttons
+choose its own sounds. Back on the Stage the song is on the keys as it was.
+Closing RigAlong (the notification's Stop, or its task swiped away) gives
+the keyboard back the same way. Putting RigAlong in the background is not
+leaving the stage: it keeps playing.
 
 ## Connecting a CP88/CP73
 
