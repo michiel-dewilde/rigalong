@@ -38,6 +38,8 @@ What you play from.
 
 * **Song**: its name, what comes next, and ◀ ▶ to move through the setlist.
   Tap the name for the whole setlist, and a song in it to go straight there.
+  "Loading…" under the name means the song's sounds are still coming in:
+  the keys may not play them yet.
 * **Live sets**: the large buttons. A live set is one state of the song, such
   as "Verse", "Chorus" or "Solo". **Hold** a live set button to edit it: the
   song opens in Songs at that live set. **Hold** a sound's name above its
@@ -46,12 +48,16 @@ What you play from.
   you pick "Whole song" at the top. Switching never cuts a note: a key you are
   holding keeps sounding until you release it, even if the new live set no
   longer uses that sound, and tails ring out naturally.
-* **Levels**: one fader per sound the song uses (two sfizz instances, two faders). A drag moves a fader from
-  where it is (it never jumps when you start to slide); a tap sets it where
-  you tap. Drawbars go to the nearest of their nine steps. "Store in this
-  live set" (hold it) makes what you hear the live set's own: the levels, and
-  whatever you moved on the stage or with a knob since you selected it (the
-  drawbars, a filter). A value moved back to the song's stops being its own.
+* **Levels**: one fader per sound the live set plays. The song's other
+  sounds are a tap away: "+3 silent" beside "Levels" shows them all,
+  "playing only" folds them again. A drag moves a fader from where it is (it
+  never jumps when you start to slide); a tap sets it where you tap.
+  Drawbars go to the nearest of their nine steps. "Store in this live set"
+  (hold it) makes what you hear the live set's own: the levels, and whatever
+  you moved on the stage or with a knob since you selected it (the drawbars,
+  a filter). A value moved back to the song's stops being its own. The stage
+  then says "Stored in" and the live set's name for a few seconds, with
+  **Undo** beside it.
 * **Master**: the overall volume, at the right. It belongs to the room, not
   to the song, so no live set changes it. Hold its label to return to 0 dB.
 * **setBfree**: when the song uses setBfree, its nine drawbars, Leslie (stop /

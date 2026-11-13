@@ -151,6 +151,7 @@ class SongPlayer(private val lib: Library, private val host: EngineHost, private
         // A preset loading in the background resets its engine when it lands:
         // then the song's values go on again ([settle]).
         settling = onEngine.values.any { busy(it) }
+        loading = settling
         sheetPage = 0
         sheetPages = 0
         sheetFile = s.leadSheet?.toRef()?.digest?.let { java.io.File(lib.store.root, "blobs/sha256/${it.hex}") }
@@ -202,6 +203,8 @@ class SongPlayer(private val lib: Library, private val host: EngineHost, private
     // ------------------------------------------- a live set's own sound values
 
     private var settling = false
+    /** The song's presets are still coming in: the keys may play nothing yet, or the last sound. For the stage to say. */
+    var loading by mutableStateOf(false); private set
 
     /** Every "<instance>.<parameter>" a live set of the stage song gives a value of its own. */
     private fun liveSetKeys(): Set<String> = rack?.liveSets.orEmpty()
@@ -228,6 +231,7 @@ class SongPlayer(private val lib: Library, private val host: EngineHost, private
     private fun settle() {
         if (!settling || onEngine.values.any { busy(it) }) return
         settling = false
+        loading = false
         for (inst in rack?.instances.orEmpty()) {
             val i = onEngine[inst.id] ?: continue
             for ((name, v) in inst.slot.params) setParamAt(i, name, v.toFloat())
@@ -474,7 +478,31 @@ class SongPlayer(private val lib: Library, private val host: EngineHost, private
         lib.saveSong(id, name, r)
         reload()
         note("stored into live set ${i + 1}: the levels" + if (stored.isEmpty()) "" else " and $stored")
+        // Said on the stage for a while, with a way back.
+        storedChange = lib.lastChange()
+        this.stored = ls.name
+        main.removeCallbacks(forgetStored)
+        main.postDelayed(forgetStored, 10000)
     }
+
+    /** The live set "Store in this live set" last stored into, while the stage still says so and offers to take it back. */
+    var stored by mutableStateOf<String?>(null); private set
+    private var storedChange: Library.ChangeSet? = null
+    private val forgetStored = Runnable { stored = null }
+
+    /** Takes the last store back, if it is still the library's last change: the song as it was before it. */
+    fun undoStore() {
+        if (stored == null) return
+        stored = null
+        main.removeCallbacks(forgetStored)
+        if (storedChange == null || lib.lastChange() != storedChange) return
+        lib.undo()
+        reload()
+        note("the store into the live set taken back")
+    }
+
+    /** The stage shows every sound of the song, not only those the live set plays (P6: one tap away). */
+    var stageAllSounds by mutableStateOf(false)
 
     /** Sound parameters moved on the stage since the live set was selected: "<instance>.<parameter>" -> the value before. */
     private val touched = LinkedHashMap<String, Double>()

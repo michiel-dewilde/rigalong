@@ -140,8 +140,10 @@ private fun StageControls(player: SongPlayer, host: EngineHost, modifier: Modifi
                 val next = player.songNames.getOrNull(player.songIndex + 1)
                 val sel = (if (player.lastSelection.isEmpty()) "" else stringResource(R.string.from_keys, player.lastSelection)) +
                     player.devices.status.let { if (it.isEmpty()) "" else "   ·   $it" }
-                Text((if (next != null) stringResource(R.string.next_song, next) else stringResource(R.string.last_song)) + sel,
-                    color = Dim, fontSize = (15f * s).sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                // While the song's presets are still coming in, that is said first: the keys may not play it yet.
+                Text((if (player.loading) stringResource(R.string.loading) + "   ·   " else "") +
+                    (if (next != null) stringResource(R.string.next_song, next) else stringResource(R.string.last_song)) + sel,
+                    color = if (player.loading) Warn else Dim, fontSize = (15f * s).sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
             if (!narrow) {
                 TempoBox(player, s)
@@ -183,7 +185,24 @@ private fun StageControls(player: SongPlayer, host: EngineHost, modifier: Modifi
     }
     val levelsHeader = @Composable {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Text(stringResource(R.string.levels), color = Dim, fontSize = (14f * s).sp, modifier = Modifier.weight(1f))
+            Text(stringResource(R.string.levels), color = Dim, fontSize = (14f * s).sp)
+            // The sounds this live set does not play are one tap away.
+            val all = player.rack?.instances.orEmpty()
+            val silent = all.count { player.playing[it.id] != true }
+            if (silent > 0 && silent < all.size) {
+                Text(if (player.stageAllSounds) stringResource(R.string.playing_only) else stringResource(R.string.silent_more, silent),
+                    color = Accent, fontSize = (14f * s).sp,
+                    modifier = Modifier.padding(start = d(10f)).clickable { player.stageAllSounds = !player.stageAllSounds }
+                        .padding(horizontal = d(10f), vertical = d(8f)))
+            }
+            Spacer(Modifier.weight(1f))
+            // What Store did, for a few seconds, with the way back.
+            player.stored?.let { into ->
+                Text(stringResource(R.string.stored_in, into), color = Accent, fontSize = (14f * s).sp, maxLines = 1,
+                    overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(end = d(8f)))
+                Tab(stringResource(R.string.undo), false, scale = s) { player.undoStore() }
+                Spacer(Modifier.width(d(8f)))
+            }
             Tab(stringResource(R.string.store_levels), false, longPressOnly = true, scale = s) { player.storeInLiveSet() }
         }
         Spacer(Modifier.height(d(6f)))
@@ -218,11 +237,21 @@ private fun StageControls(player: SongPlayer, host: EngineHost, modifier: Modifi
 
 /** What [StagePanels] needs to put every panel in one row (dp), the drawbars squeezed. */
 private fun stagePanelsMinWidth(player: SongPlayer, s: Float): Float {
-    val sounds = player.rack?.instances.orEmpty()
+    val sounds = stageSounds(player)
     val organ = sounds.any { it.engine == RackEngine.SETBFREE }
     val count = sounds.size + (if (organ) 1 else 0) + 1
     return sounds.size * LEVEL_MIN * s + (if (organ) organSqueezed(s) else 0f) + MASTER_MIN * s +
         16f * s * (count - 1)
+}
+
+/**
+ * The sounds the stage has faders for: those the live set plays, or all of
+ * the song's when asked for -- and all when it plays none.
+ */
+private fun stageSounds(player: SongPlayer): List<com.rigalong.model.RackInstance> {
+    val all = player.rack?.instances.orEmpty()
+    if (player.stageAllSounds) return all
+    return all.filter { player.playing[it.id] == true }.ifEmpty { all }
 }
 
 private const val LEVEL_MIN = 110f
@@ -255,7 +284,7 @@ private class StagePanel(val minW: Float, val prefW: Float, val squeezeW: Float 
 @Composable
 private fun StagePanels(player: SongPlayer, host: EngineHost, s: Float, modifier: Modifier) {
     val rackNow = player.rack
-    val sounds = rackNow?.instances.orEmpty()
+    val sounds = stageSounds(player)
     val gap = 16f * s
     val pad = 10f * s
     val panels = ArrayList<StagePanel>()

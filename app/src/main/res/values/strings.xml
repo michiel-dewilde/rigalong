@@ -24,6 +24,10 @@
     <string name="levels">Levels</string>
     <string name="master">Master</string>
     <string name="store_levels">Store in this live set (hold)</string>
+    <string name="stored_in">Stored in “%1$s”</string>
+    <string name="undo">Undo</string>
+    <string name="silent_more">+%1$d silent</string>
+    <string name="playing_only">playing only</string>
     <string name="engine_playing">playing</string>
     <string name="engine_silent">silent</string>
     <string name="leslie_stop">Stop</string>

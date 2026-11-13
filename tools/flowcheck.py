@@ -220,7 +220,10 @@ def flow_quick_edit_live_set(f):
 
 
 def flow_quick_edit_patch(f):
-    # One long press on a sound's name above its fader: its patch.
+    # One long press on a sound's name above its fader: its patch. The stage has
+    # faders for what the live set plays, so on the live set that plays sfizz.
+    broadcast("STAGE", "--ei liveset 2")
+    time.sleep(1.0)
     f.tap("sfizz", long=True, pick="lowest")
     f.see("sfizz: patch")
     f.tap("Done")
@@ -402,6 +405,15 @@ def flow_use_in_whole_song(f):
         undo_last()
 
 
+def show_all_sounds():
+    """On the stage: every sound of the song, not only those the live set plays."""
+    for n in screen():
+        if n.text and n.text.startswith("+") and n.text.endswith(" silent"):
+            shell(f"input tap {n.x} {n.y}")
+            time.sleep(0.8)
+            return
+
+
 def flow_sound_for_live_set(f):
     # A different preset in one live set: a sound of its own, loaded with the song.
     f.tap("setBfree", long=True, pick="lowest-left")
@@ -419,6 +431,8 @@ def flow_sound_for_live_set(f):
     f.tap("Save •")
     to_stage()
     try:
+        # The stage shows the sounds the live set plays; the others are one tap away (not counted).
+        show_all_sounds()
         if not (wait_for("setBfree 1") and wait_for("setBfree 2")):
             raise AssertionError("the stage does not show the new sound")
         if not stage_switch(2, r"live set 2 'sfizz'"):
