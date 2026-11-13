@@ -48,6 +48,8 @@ import com.rigalong.R
 import com.rigalong.model.Digest
 import com.rigalong.model.Library
 import com.rigalong.model.RackSong
+import com.rigalong.model.getTyped
+import com.rigalong.model.putTyped
 import kotlinx.coroutines.delay
 import com.rigalong.play.SongPlayer
 import com.rigalong.play.EngineHost
@@ -56,7 +58,10 @@ import com.rigalong.play.EngineHost
 
 /**
  * The song open in Songs, kept above the screens: switching to the stage and
- * back finds it as it was, unsaved edits and all ("Songs •" says there are some).
+ * back finds it as it was, unsaved edits and all ("Songs · unsaved" says
+ * there are some). Kept on disk too while it has unsaved edits ([persist],
+ * [restore]): closing the app or a crash loses nothing (Michiel, 2026-11-13);
+ * "Back to saved" lets the edits go.
  */
 class SongsEdit {
     var selected by mutableStateOf<Digest?>(null)
@@ -70,6 +75,49 @@ class SongsEdit {
     /** The setlist the Songs panel shows, chosen there; null: the one on stage. */
     var setlist by mutableStateOf<Digest?>(null)
     val unsaved: Boolean get() = editing?.let { (id, song) -> id == null || song != original || editName != originalName } ?: false
+
+    /**
+     * Writes the open song to [Library.draftFile] while it has unsaved edits,
+     * and removes the file when it has none. The song goes into the store as
+     * objects (content-addressed, unreferenced until saved); the file holds
+     * their digests and what the editor needs around them. Off the main thread.
+     */
+    fun persist(lib: Library) {
+        val ed = editing
+        if (ed == null || !unsaved) { lib.draftFile.delete(); return }
+        val j = org.json.JSONObject()
+        j.put("entry", ed.first?.hex ?: org.json.JSONObject.NULL)
+        j.put("song", lib.store.putTyped(ed.second.toObjects(lib.store)).hex)
+        j.put("name", editName)
+        original?.let { j.put("original", lib.store.putTyped(it.toObjects(lib.store)).hex) }
+        j.put("originalName", originalName)
+        j.put("newIntoSetlist", newIntoSetlist)
+        setlist?.let { j.put("setlist", it.hex) }
+        val tmp = java.io.File(lib.draftFile.path + ".tmp")
+        tmp.writeText(j.toString())
+        tmp.renameTo(lib.draftFile)
+    }
+
+    /** The song that had unsaved edits when the app last stopped, open again as it was. */
+    fun restore(lib: Library) {
+        val f = lib.draftFile
+        if (!f.exists()) return
+        runCatching {
+            val j = org.json.JSONObject(f.readText())
+            fun rack(key: String) = j.optString(key).takeIf { it.isNotEmpty() }?.let { hex ->
+                lib.rackSong(lib.store.getTyped<com.rigalong.model.Song>(Digest(hex)))
+            }
+            val song = rack("song") ?: return
+            val entry = if (j.isNull("entry")) null else Digest(j.getString("entry")).takeIf { lib.store.entry(it) != null }
+            editing = entry to song
+            selected = entry
+            editName = j.optString("name")
+            original = if (entry == null) null else rack("original")
+            originalName = j.optString("originalName")
+            newIntoSetlist = j.optBoolean("newIntoSetlist", true)
+            setlist = j.optString("setlist").takeIf { it.isNotEmpty() }?.let { Digest(it) }?.takeIf { lib.store.entry(it) != null }
+        }.onFailure { android.util.Log.w("rigalong-ui", "the unsaved song could not be read back: $it") }
+    }
 }
 
 @Composable
@@ -175,6 +223,8 @@ internal fun SongsScreen(player: SongPlayer, lib: Library, host: EngineHost, st:
                     }
                     SongEditor(ed.second, editName, host, player, lib, focus?.takeIf { it.song == ed.first },
                         unsaved = ed.first == null || ed.second != original || editName != originalName,
+                        // The saved song back, the edits let go (only for a song that has been saved).
+                        onBackToSaved = ed.first?.takeIf { st.unsaved }?.let { id -> { open(id); player.reload() } },
                         hearing = player.heard?.takeIf { it.first == ed.first }?.second,
                         onHear = { i -> player.hear(ed.first, ed.second, i) },
                         onName = { editName = it },

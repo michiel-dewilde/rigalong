@@ -11,6 +11,8 @@
     <!-- top bar -->
     <string name="tab_stage">Stage</string>
     <string name="tab_songs">Songs</string>
+    <string name="tab_songs_unsaved">Songs · unsaved</string>
+    <string name="back_to_saved">Back to saved</string>
     <string name="tab_library">Library</string>
     <string name="tab_setup">Setup</string>
     <string name="hold_to_edit">hold to edit</string>
@@ -135,6 +137,12 @@
     <string name="import_current_sound">Import current sound</string>
     <string name="as_loaded">As loaded</string>
     <string name="keep">Keep</string>
+    <string name="all_kinds">All</string>
+    <string name="engine_sounds">Engine sounds</string>
+    <string name="engine_sounds_count">%1$d of %2$d installed for %3$s. Import adds more (SFZ, SoundFonts, DX7 banks, Surge XT patches).</string>
+    <string name="patches_note">A patch is a sound of a song saved under a name, to use it in other songs: Patch…, then “Save as library patch…”.</string>
+    <string name="none_of_this_kind">None yet.</string>
+    <string name="nothing_found">Nothing by that name.</string>
     <string name="play_a_key">play…</string>
     <string name="play_note">Play a note</string>
     <string name="tap_to_hear">Tap one to hear it</string>

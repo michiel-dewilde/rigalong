@@ -7,6 +7,8 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -70,6 +72,11 @@ fun LibraryScreen(player: SongPlayer, lib: Library, host: EngineHost, onOpened: 
     val last = remember(revision) { lib.lastChange() }
     var exportIds by remember { mutableStateOf<List<Digest>>(emptyList()) }
     var detail by remember { mutableStateOf<Digest?>(null) }
+    // The right-hand panel shows one kind at a time, searched within (Michiel, 2026-11-13:
+    // one list of everything did not scale, and the patches were out of sight below it).
+    var kind by remember { mutableStateOf(LibraryKind.SONGS) }
+    var search by remember { mutableStateOf("") }
+    var engine by remember { mutableStateOf<String?>(null) }
 
     val exporter = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/x-tar")) { uri ->
         if (uri != null) message = runCatching { exportTo(context, lib.store, exportIds, uri) }
@@ -151,11 +158,77 @@ fun LibraryScreen(player: SongPlayer, lib: Library, host: EngineHost, onOpened: 
             }
         }, second = { m ->
             Column(m.background(Panel, RoundedCornerShape(10.dp)).padding(10.dp)) {
-                // One list for the panel, its sections one after the other: a library with
-                // many device sounds or patches can still reach every one of them.
-                LazyColumn(Modifier.weight(1f)) {
-                    item { Text(stringResource(R.string.all_songs), fontWeight = FontWeight.SemiBold) }
-                    items(songs) { s ->
+                // The kinds, each with how many it has; one shown at a time.
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.horizontalScroll(rememberScrollState())) {
+                    for ((k, label, n) in listOf(
+                        Triple(LibraryKind.SONGS, R.string.all_songs, songs.size),
+                        Triple(LibraryKind.ENGINE_SOUNDS, R.string.engine_sounds, -1),
+                        Triple(LibraryKind.PATCHES, R.string.patches, patches.size),
+                        Triple(LibraryKind.DEVICE_SOUNDS, R.string.device_sounds, deviceSounds.size))) {
+                        val text = stringResource(label) + if (n >= 0) "  $n" else ""
+                        if (kind == k) Button(onClick = {}) { Text(text) }
+                        else OutlinedButton(onClick = { kind = k; engine = null }) { Text(text) }
+                    }
+                }
+                OutlinedTextField(value = search, onValueChange = { search = it }, singleLine = true,
+                    label = { Text(stringResource(R.string.search)) }, modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp))
+                fun hit(name: String) = search.isBlank() || name.contains(search.trim(), ignoreCase = true)
+                // Patches by engine: a chip for each engine that has some.
+                if (kind == LibraryKind.PATCHES) {
+                    val engines = patches.map { it.second.engine }.distinct().sorted()
+                    if (engines.size > 1) Row(horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        modifier = Modifier.horizontalScroll(rememberScrollState())) {
+                        for (e in listOf<String?>(null) + engines) {
+                            val label = e?.let { k -> com.rigalong.model.RackEngine.entries.firstOrNull { it.key == k }?.label ?: k }
+                                ?: stringResource(R.string.all_kinds)
+                            if (engine == e) Button(onClick = {}) { Text(label) }
+                            else OutlinedButton(onClick = { engine = e }) { Text(label) }
+                        }
+                    }
+                }
+                // What the engines have installed, an engine at a time: Surge XT's patches,
+                // Dexed's voices, the SoundFonts' presets, sfizz's instruments...
+                if (kind == LibraryKind.ENGINE_SOUNDS) {
+                    val engineNow = com.rigalong.model.RackEngine.entries.firstOrNull { it.key == engine }
+                        ?: com.rigalong.model.RackEngine.SURGE
+                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.horizontalScroll(rememberScrollState())) {
+                        for (e in com.rigalong.model.RackEngine.entries) {
+                            if (e == engineNow) Button(onClick = {}) { Text(e.label) }
+                            else OutlinedButton(onClick = { engine = e.key }) { Text(e.label) }
+                        }
+                    }
+                    val content by androidx.compose.runtime.produceState<List<PresetChoice>?>(null, engineNow, revision) {
+                        value = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) { presetChoices(engineNow, host) }
+                    }
+                    val all = content
+                    val shown = all.orEmpty().filter { hit(it.label) || hit(it.from) }
+                    Text(when {
+                        all == null -> stringResource(R.string.loading)
+                        else -> stringResource(R.string.engine_sounds_count, shown.size, all.size, engineNow.label)
+                    }, color = Dim, fontSize = 12.sp, modifier = Modifier.padding(vertical = 4.dp))
+                    LazyColumn(Modifier.weight(1f)) {
+                        items(shown) { c ->
+                            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp)) {
+                                Text(c.label, modifier = Modifier.weight(1f))
+                                if (c.from.isNotEmpty()) Text(c.from, color = Dim, fontSize = 12.sp)
+                            }
+                        }
+                    }
+                }
+                val shownSongs = if (kind == LibraryKind.SONGS) songs.filter { hit(it.entry.version.name) } else emptyList()
+                val shownPatches = if (kind == LibraryKind.PATCHES)
+                    patches.filter { (e, p) -> (engine == null || p.engine == engine) && hit(e.version.name) } else emptyList()
+                val shownSounds = if (kind == LibraryKind.DEVICE_SOUNDS) deviceSounds.filter { hit(it.version.name) } else emptyList()
+                if (kind != LibraryKind.ENGINE_SOUNDS && shownSongs.isEmpty() && shownPatches.isEmpty() && shownSounds.isEmpty()) {
+                    Text(stringResource(if (search.isBlank()) R.string.none_of_this_kind else R.string.nothing_found),
+                        color = Dim, fontSize = 13.sp, modifier = Modifier.padding(vertical = 12.dp))
+                    // Patches are the library's own: a sound of a song, saved under a name to share it.
+                    if (kind == LibraryKind.PATCHES && search.isBlank()) Text(stringResource(R.string.patches_note),
+                        color = Dim, fontSize = 13.sp)
+                }
+                if (kind != LibraryKind.ENGINE_SOUNDS) LazyColumn(Modifier.weight(1f)) {
+                    items(shownSongs) { s ->
                         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()
                             .padding(vertical = 4.dp)) {
                             Text(s.entry.version.name, modifier = Modifier.weight(1f))
@@ -173,9 +246,8 @@ fun LibraryScreen(player: SongPlayer, lib: Library, host: EngineHost, onOpened: 
                     }
                     // External devices' own sounds (model/devices), by driver: from the device or its
                     // files; heard on it, saved as its files, edited as text where its driver can.
-                    if (deviceSounds.isNotEmpty()) {
-                        item { Text(stringResource(R.string.device_sounds), fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(top = 8.dp)) }
-                        for ((drv, entries) in deviceSounds.groupBy { com.rigalong.model.devices.Devices.forSounds(it.version.target?.type ?: "") }) {
+                    if (shownSounds.isNotEmpty()) {
+                        for ((drv, entries) in shownSounds.groupBy { com.rigalong.model.devices.Devices.forSounds(it.version.target?.type ?: "") }) {
                             if (drv == null) continue
                             val sounds = drv.sounds!!
                             item { Text(stringResource(R.string.device_sounds_of, drv.label), color = Dim, fontSize = 12.sp) }
@@ -203,9 +275,8 @@ fun LibraryScreen(player: SongPlayer, lib: Library, host: EngineHost, onOpened: 
                         }
                     }
                     // Library patches, shared between songs (M9).
-                    if (patches.isNotEmpty()) {
-                        item { Text(stringResource(R.string.patches), fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(top = 8.dp)) }
-                        items(patches) { (e, p) ->
+                    if (shownPatches.isNotEmpty()) {
+                        items(shownPatches) { (e, p) ->
                             Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
                                 Text(e.version.name, modifier = Modifier.weight(1f))
                                 Text(p.engine, color = Dim, fontSize = 12.sp)
@@ -259,6 +330,9 @@ fun LibraryScreen(player: SongPlayer, lib: Library, host: EngineHost, onOpened: 
  * setlists that use a song (and whether they hold its latest version, with
  * the update as a choice), versions that diverged on import, and delete.
  */
+/** What the Library's right-hand panel shows. */
+private enum class LibraryKind { SONGS, ENGINE_SOUNDS, PATCHES, DEVICE_SOUNDS }
+
 @OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
 private fun EntryDialog(id: Digest, lib: Library, player: SongPlayer, onChanged: () -> Unit, onDismiss: () -> Unit) {

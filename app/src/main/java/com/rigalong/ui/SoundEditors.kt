@@ -2,6 +2,7 @@ package com.rigalong.ui
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
@@ -453,8 +454,13 @@ internal fun fxLabel(type: String) = when (type) {
 /** One thing a sound can play: what goes into its slot, and how it reads in the list. */
 internal class PresetChoice(val preset: String, val program: Int?, val label: String, val from: String = "")
 
-/** One row of the picker: how it reads, and what the slot becomes if it is kept. */
-private class PickRow(val label: String, val tag: String, val library: Boolean, val slot: (RackSlot) -> RackSlot)
+/**
+ * One row of the picker: how it reads, the group it is browsed under (the
+ * library, a Surge XT folder, a Dexed bank, a SoundFont), and what the slot
+ * becomes if it is kept.
+ */
+private class PickRow(val label: String, val tag: String, val library: Boolean, val group: String,
+                      val slot: (RackSlot) -> RackSlot)
 
 /**
  * What a sound plays, chosen BY EAR: a tap puts a preset on the engine at
@@ -474,13 +480,21 @@ internal fun PresetPicker(e: RackEngine, slot: RackSlot, host: EngineHost, lib: 
         value = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) { presetChoices(e, host) }
     }
     val rows = remember(shared, choices) {
-        shared.map { (entry, patch) -> PickRow(entry.version.name, libraryTag, true) { it.withPatch(patch, entry.id) } } +
-            choices.orEmpty().map { c -> PickRow(c.label, c.from, false) { it.copy(preset = c.preset, program = c.program) } }
+        shared.map { (entry, patch) -> PickRow(entry.version.name, libraryTag, true, libraryTag) { it.withPatch(patch, entry.id) } } +
+            choices.orEmpty().map { c ->
+                // Surge XT's folders and Dexed's banks are the part of the name before the slash; a font is its own group.
+                val group = c.from.ifEmpty { c.label.substringBefore('/', "") }
+                PickRow(c.label, c.from, false, group) { it.copy(preset = c.preset, program = c.program) }
+            }
     }
+    // Browsed by group, searched within it (Michiel, 2026-11-13): "All" searches everything.
+    val groups = remember(rows) { rows.map { it.group }.filter { it.isNotEmpty() }.distinct() }
+    var group by remember { mutableStateOf<String?>(null) }
     var filter by remember { mutableStateOf("") }
     var picked by remember { mutableStateOf<PickRow?>(null) }
-    val shown = remember(rows, filter) {
-        rows.filter { filter.isEmpty() || it.label.contains(filter, true) || it.tag.contains(filter, true) }
+    val shown = remember(rows, filter, group) {
+        rows.filter { (group == null || it.group == group) &&
+            (filter.isEmpty() || it.label.contains(filter, true) || it.tag.contains(filter, true)) }
     }
     val list = androidx.compose.foundation.lazy.rememberLazyListState()
     val scope = androidx.compose.runtime.rememberCoroutineScope()
@@ -505,6 +519,14 @@ internal fun PresetPicker(e: RackEngine, slot: RackSlot, host: EngineHost, lib: 
         title = { Text(stringResource(R.string.patch_of, engineLabel(e))) },
         text = {
             Column(Modifier.height(460.dp)) {
+                if (groups.size > 1) Row(horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    modifier = Modifier.horizontalScroll(androidx.compose.foundation.rememberScrollState())) {
+                    for (g in listOf<String?>(null) + groups) {
+                        val label = g ?: stringResource(R.string.all_kinds)
+                        if (group == g) Button(onClick = {}) { Text(label, maxLines = 1) }
+                        else OutlinedButton(onClick = { group = g; scope.launch { list.scrollToItem(0) } }) { Text(label, maxLines = 1) }
+                    }
+                }
                 OutlinedTextField(value = filter, onValueChange = { filter = it }, singleLine = true,
                     label = { Text(stringResource(R.string.search)) }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Text))
                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -537,7 +559,7 @@ internal fun PresetPicker(e: RackEngine, slot: RackSlot, host: EngineHost, lib: 
 }
 
 /** Installed content an engine can play: what goes into the slot, and how it reads. */
-private fun presetChoices(e: RackEngine, host: EngineHost): List<PresetChoice> = runCatching {
+internal fun presetChoices(e: RackEngine, host: EngineHost): List<PresetChoice> = runCatching {
     fun plain(names: List<String>) = names.map { PresetChoice(it, null, it) }
     when (e) {
         RackEngine.SFIZZ -> host.instruments().map { (id, label) -> PresetChoice(id, null, label) }

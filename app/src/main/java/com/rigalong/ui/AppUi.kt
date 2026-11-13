@@ -40,6 +40,7 @@ import androidx.compose.ui.unit.sp
 import com.rigalong.R
 import com.rigalong.model.Library
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.withContext
 import com.rigalong.play.SongPlayer
 import com.rigalong.play.EngineHost
 
@@ -54,8 +55,12 @@ import com.rigalong.play.EngineHost
 fun AppUi(player: SongPlayer, lib: Library, host: EngineHost) {
     var screen by remember { mutableIntStateOf(0) }
     var health by remember { mutableStateOf("") }
-    // The song open in Songs outlives the screen: leaving it never drops unsaved edits.
-    val songsEdit = remember { SongsEdit() }
+    // The song open in Songs outlives the screen -- and the app: unsaved edits are kept on disk.
+    val songsEdit = remember { SongsEdit().also { it.restore(lib) } }
+    LaunchedEffect(songsEdit.editing, songsEdit.editName) {
+        delay(400)
+        withContext(kotlinx.coroutines.Dispatchers.IO) { runCatching { songsEdit.persist(lib) } }
+    }
     // The on-screen keys whenever there is no MIDI input to play from (S20.4), on every screen.
     var keys by remember { mutableStateOf(false) }
     // A keyboard to be driven directly, if the player says so: asked once, on whatever screen.
@@ -129,7 +134,7 @@ private fun TopBar(player: SongPlayer, health: String, screen: Int, songsUnsaved
     val locked = screen == 0
     val tabs: @Composable () -> Unit = {
         Tab(stringResource(R.string.tab_stage), screen == 0) { onScreen(0) }
-        Tab(stringResource(R.string.tab_songs) + if (songsUnsaved) " •" else "", screen == 1, locked) { onScreen(1) }
+        Tab(if (songsUnsaved) stringResource(R.string.tab_songs_unsaved) else stringResource(R.string.tab_songs), screen == 1, locked) { onScreen(1) }
         Tab(stringResource(R.string.tab_library), screen == 2, locked) { onScreen(2) }
         Tab(stringResource(R.string.tab_setup), screen == 3, locked) { onScreen(3) }
     }

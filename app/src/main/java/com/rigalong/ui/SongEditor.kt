@@ -59,7 +59,7 @@ import com.rigalong.play.EngineHost
 @Composable
 internal fun SongEditor(song: RackSong, name: String, host: EngineHost, player: SongPlayer, lib: Library,
                        focus: SongPlayer.EditRequest?, unsaved: Boolean, hearing: Int?, onHear: (Int) -> Unit,
-                       onName: (String) -> Unit,
+                       onName: (String) -> Unit, onBackToSaved: (() -> Unit)? = null,
                        onChange: (RackSong) -> Unit, onSave: () -> Unit, onSaveCopy: () -> Unit) {
     // Instance ids: which sound's preset list, patch or effect is open.
     var picker by remember { mutableStateOf<String?>(null) }
@@ -90,6 +90,10 @@ internal fun SongEditor(song: RackSong, name: String, host: EngineHost, player: 
             }
             // The song as it is now, as a new song of its own (in no setlist), which is then open.
             OutlinedButton(onClick = onSaveCopy) { Text(stringResource(R.string.save_as_copy)) }
+            // The unsaved edits let go: the song as it was last saved.
+            onBackToSaved?.let { back ->
+                OutlinedButton(onClick = back) { Text(stringResource(R.string.back_to_saved), color = Warn) }
+            }
             // A device's song sounds as its own file (a CP-88 page as .X9P), for its USB stick.
             for (d in player.devices.withSounds()) if (song.liveSets.any { it.devices[d.name]?.mode == "own" }) {
                 DeviceAreaFileButton(song, name, d, player)

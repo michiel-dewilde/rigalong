@@ -17,6 +17,9 @@ import java.time.Instant
 class Library(dir: File, private val author: String) {
     val store = Store(dir)
 
+    /** Where the song open in Songs is kept while it has unsaved edits, so closing the app loses nothing. */
+    val draftFile = File(dir, "draft.json")
+
     private fun now() = Instant.now().toString()
 
     // ------------------------------------------------------------ change sets

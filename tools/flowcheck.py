@@ -244,8 +244,8 @@ def type_text(text):
 def to_songs():
     """The Songs screen: from the stage, where it opens on a long press (not counted)."""
     to_stage()
-    # "Songs •" while the open song has unsaved edits, which now outlive the screen.
-    for n in find_all("Songs") + find_all("Songs •"):
+    # "Songs · unsaved" while the open song has unsaved edits, which outlive the screen and the app.
+    for n in find_all("Songs") + find_all("Songs · unsaved"):
         shell(f"input swipe {n.x} {n.y} {n.x} {n.y} 900")
         break
     time.sleep(1.0)
