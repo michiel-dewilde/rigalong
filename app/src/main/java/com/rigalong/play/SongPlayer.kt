@@ -26,8 +26,14 @@ import com.rigalong.model.getTyped
  *
  * Remembers setlist, song and live set in preferences on every move, so a
  * restart comes back where it was (S13.2).
+ *
+ * Its parts (REVIEW S3): the calls into the engine ([engines]), the tempo
+ * and click ([metronome]), the lead sheet ([sheet]), the switching
+ * controllers ([switches]), MIDI learn ([midiLearn]) and the external
+ * devices ([devices]). What is left here is which song and live set are on,
+ * and what follows from that.
  */
-class SongPlayer(private val lib: Library, private val host: EngineHost, private val prefs: SharedPreferences) {
+class SongPlayer(private val lib: Library, host: EngineHost, private val prefs: SharedPreferences) {
 
     var setlistId by mutableStateOf<Digest?>(null); private set
     var setlistName by mutableStateOf(""); private set
@@ -46,21 +52,29 @@ class SongPlayer(private val lib: Library, private val host: EngineHost, private
     /** The stage's song and live set, to come back to after [hear]. */
     private var stageSong = -1
     private var stageLiveSet = 0
-    /** Instance levels as they are now, by instance id, for the stage faders. */
-    val levels = androidx.compose.runtime.mutableStateMapOf<String, Float>()
-    val playing = androidx.compose.runtime.mutableStateMapOf<String, Boolean>()
 
+    /** The calls into the engine: instances, presets, parameters, effects, wires. */
+    val engines = EngineRack(host) { note(it) }
+    /** The tempo in force and the metronome. */
+    val metronome = Metronome(prefs, host)
+    /** The song's lead sheet on the stage. */
+    val sheet = LeadSheet(prefs, lib.store)
+    /** The footswitches' controllers. */
+    val switches = SwitchControllers(prefs)
+    /** MIDI learn for the editors. */
+    val midiLearn = MidiLearn { note(it) }
     /** The external devices and what the songs do to them (model/devices). */
     val devices = DeviceRig(lib, prefs) { note(it) }
+
     /** The live sets of the song on stage, as stored. */
     private var liveSetObjects: List<LiveSet> = emptyList()
 
     private var songs: List<Song> = emptyList()
+    private var songEntries: List<Digest?> = emptyList()
     private var switcher: LiveSetSwitcher? = null
-    // Per ENGINE instance (AudioEngine::kMaxInstances).
-    private val midiOn = BooleanArray(MAX_INSTANCES) { true }
-    private val audioOn = BooleanArray(MAX_INSTANCES) { true }
-    private val gain = FloatArray(MAX_INSTANCES) { 1f }
+
+    /** The library entry of the stage's song, or null (a removed one). */
+    val songEntry: Digest? get() = songEntries.getOrNull(songIndex)
 
     fun resume() {
         // The last session's setlist, if the library still has it; else the first one, from the top.
@@ -107,7 +121,7 @@ class SongPlayer(private val lib: Library, private val host: EngineHost, private
         if (liveSet !in draft.liveSets.indices) return
         if (heard == null) {
             stageSong = songIndex; stageLiveSet = liveSetIndex
-            sessionBpm.keys.removeAll { it.startsWith("edit/") }
+            metronome.forgetEditorTempos(EDITOR_TEMPOS)
         }
         heard = entry to liveSet
         play(draft.toObjects(lib.store), draft, null, liveSet)
@@ -128,7 +142,7 @@ class SongPlayer(private val lib: Library, private val host: EngineHost, private
         // The same song again (a reload after saving): tapped tempos hold for
         // the session (I12.3) and a running click goes on. Another song stops it.
         val sameSong = index != null && index == songIndex
-        if (index != songIndex && clickRunning) stopClick()
+        if (index != songIndex && metronome.clickRunning) metronome.stopClick()
         if (index != null) songIndex = index
         song = s
         rack = r
@@ -141,21 +155,14 @@ class SongPlayer(private val lib: Library, private val host: EngineHost, private
                 ": instances ${rack?.instances?.map { it.id }}, live sets ${liveSets.map { it.name }}")
         // The tempo before the engines: a synced effect is created at the song's
         // tempo, instead of gliding to it from the last song's over seconds.
-        if (!sameSong) {
-            if (index != null) sessionBpm.clear()
-            if (!clickRunning) beatOrigin = System.nanoTime()
-            tapper = TapTempo()
-        }
+        if (!sameSong) metronome.newSong(forgetTapped = index != null)
         updateTempo(liveSet)
-        setUpEngines()
+        engines.setUp(rack)
         // A preset loading in the background resets its engine when it lands:
         // then the song's values go on again ([settle]).
-        settling = onEngine.values.any { busy(it) }
+        settling = engines.anyBusy()
         loading = settling
-        sheetPage = 0
-        sheetPages = 0
-        sheetFile = s.leadSheet?.toRef()?.digest?.let { java.io.File(lib.store.root, "blobs/sha256/${it.hex}") }
-            ?.takeIf { it.exists() }
+        sheet.open(s.leadSheet?.toRef()?.digest)
         liveSetObjects = liveSets
         // The first song on a MIDI out that was up before it: this is where
         // the devices are brought in line, in the one pass that writes the
@@ -174,7 +181,6 @@ class SongPlayer(private val lib: Library, private val host: EngineHost, private
         val sw = switcher ?: return
         if (index !in liveSetNames.indices) return
         val changes = sw.select(index)
-        pendingLiveSet = index
         apply(changes)
         // The external devices: each does what this live set says (DeviceRig) --
         // while the rig sounds; off the stage they are left on their own sounds.
@@ -192,13 +198,33 @@ class SongPlayer(private val lib: Library, private val host: EngineHost, private
         touched.clear()
         // The stage's setBfree is the one playing here, its drawbars as this live set has them.
         setBfreeId = rack?.instances.orEmpty().filter { it.engine == RackEngine.SETBFREE }
-            .let { all -> all.firstOrNull { playing[it.id] == true } ?: all.firstOrNull() }?.id
+            .let { all -> all.firstOrNull { engines.playing[it.id] == true } ?: all.firstOrNull() }?.id
         refreshSetBfree()
         applyControls()
         parkIfSilent()
     }
 
-    private var pendingLiveSet = -1
+    fun nextLiveSet() { if (liveSetIndex + 1 < liveSetNames.size) selectLiveSet(liveSetIndex + 1) }
+    fun previousLiveSet() { if (liveSetIndex > 0) selectLiveSet(liveSetIndex - 1) }
+
+    /** A live set's changes onto the engine; the devices follow in [selectLiveSet]. */
+    private fun apply(changes: List<Change>) {
+        for (c in changes) when (c) {
+            is Change.Param -> engines.applyParam(c.key, c.value.toFloat())
+            is Change.WireSet -> engines.applyWire(c)
+            // External devices: DeviceRig.liveSetSelected, after the changes.
+            is Change.Device -> Unit
+            // On-select MIDI (I6.7): to the keyboard's MIDI out, in the direct modes.
+            is Change.Send -> {
+                val bytes = runCatching { ByteArray(c.hex.length / 2) { c.hex.substring(it * 2, it * 2 + 2).toInt(16).toByte() } }
+                    .getOrNull()
+                val r = bytes?.let { runCatching { NativeBridge.nativeUsbMidiSend(it) }.getOrDefault(-1) } ?: -1
+                if (r < 0) note("on-select MIDI ${c.hex} not sent ($r): no MIDI out in this mode")
+            }
+            is Change.Enable -> Unit   // not in the rack slice yet
+        }
+        engines.showWires()
+    }
 
     // ------------------------------------------- a live set's own sound values
 
@@ -218,247 +244,61 @@ class SongPlayer(private val lib: Library, private val host: EngineHost, private
 
     /** The song's values back where a live set had its own, so they do not stay on into the next song. */
     private fun restoreSongValues() {
-        for (k in liveSetKeys()) songValue(k)?.let { applyParam(k, it.toFloat()) }
+        for (k in liveSetKeys()) songValue(k)?.let { engines.applyParam(k, it.toFloat()) }
     }
-
-    private fun busy(i: Int) = runCatching { NativeBridge.nativeInstanceBusy(i) }.getOrDefault(false)
 
     /**
      * Once the presets that loaded in the background have landed: the patches'
-     * values on again, and the live set's values over them. Called from
-     * [pollSelections].
+     * values on again, and the live set's values over them. Polled.
      */
     private fun settle() {
-        if (!settling || onEngine.values.any { busy(it) }) return
+        if (!settling || engines.anyBusy()) return
         settling = false
         loading = false
-        for (inst in rack?.instances.orEmpty()) {
-            val i = onEngine[inst.id] ?: continue
-            for ((name, v) in inst.slot.params) setParamAt(i, name, v.toFloat())
-        }
+        engines.applyPatchValues(rack)
         val sw = switcher ?: return
         val ls = liveSetIndex.takeIf { it in liveSetNames.indices } ?: return
-        for (k in liveSetKeys()) sw.storedValue(ls, k)?.let { applyParam(k, it.toFloat()); sw.noteValue(k, it) }
+        for (k in liveSetKeys()) sw.storedValue(ls, k)?.let { engines.applyParam(k, it.toFloat()); sw.noteValue(k, it) }
         refreshSetBfree()
         note("presets landed: the song's values and live set ${ls + 1}'s own on again")
     }
 
-    // ------------------------------------------------------------ the CP-88
-
     // ------------------------------------------------------------------ tempo
 
-    /**
-     * The tempo and metre in force (S12.1, S12.5): the current live set's own
-     * if it has one, else the song's -- with what was tapped or typed on the
-     * stage for that one this session (I12.3). Null: neither has one.
-     */
-    var tempo by mutableStateOf<Tempo?>(null); private set
-    /** [tempo]'s BPM, in its beat unit; null is no tempo. */
-    val bpm: Double? get() = tempo?.bpm
-    /** When beat one of the visual beat fell, System.nanoTime(). */
-    var beatOrigin by mutableStateOf(0L); private set
-    /** The tempo in force was tapped or typed this session, not as stored: it can be saved, or let go. */
-    var bpmTapped by mutableStateOf(false); private set
-    private var tapper = TapTempo()
-    private var songEntries: List<Digest?> = emptyList()
-    /**
-     * Tempos tapped or typed this session, by where they belong ([tempoKey]):
-     * the song's, or one live set's own. A key with null is "no tempo". The
-     * stage song's hold until another song opens; the editor's song has its own.
-     */
-    private val sessionBpm = HashMap<String, Double?>()
-
-    /** Where live set [ls]'s tempo comes from: its own, or the song's. */
+    /** Where live set [ls]'s tempo comes from: its own, or the song's; the editor's song apart from the stage's. */
     private fun tempoKey(ls: Int): String =
-        (if (heard != null) "edit/" else "song/") + (if (rack?.liveSets?.getOrNull(ls)?.tempo != null) "ls$ls" else "song")
+        (if (heard != null) EDITOR_TEMPOS else "song/") + (if (rack?.liveSets?.getOrNull(ls)?.tempo != null) "ls$ls" else "song")
 
     /** The tempo as stored for live set [ls]: its own, or the song's. */
     private fun storedTempo(ls: Int): Tempo? = rack?.liveSets?.getOrNull(ls)?.tempo ?: rack?.tempo
 
-    /** Works out [tempo] for live set [ls] and gives it to the click, the engines and MIDI clock. */
-    private fun updateTempo(ls: Int = liveSetIndex) {
-        val key = tempoKey(ls)
-        val stored = storedTempo(ls)
-        val b = if (key in sessionBpm) sessionBpm[key] else stored?.bpm
-        val t = if (b == null && stored == null) null else (stored ?: Tempo()).copy(bpm = b)
-        retempo(t)
-        bpmTapped = key in sessionBpm
-        applyMidiClock()
-    }
-
-    /** One tap; four or more taps less than 2 s apart set the tempo ([TapTempo]). */
-    fun tap() {
-        val now = System.nanoTime()
-        tapper.tap()?.let {
-            sessionBpm[tempoKey(liveSetIndex)] = it
-            updateTempo()
-        }
-        // The visual beat falls on the tap, unless the click is counting: then
-        // it stays with what is heard.
-        if (!clickRunning) beatOrigin = now
-    }
-
-    /** A tempo typed on the stage, or null for none: holds for the session like a tapped one. */
-    fun typeTempo(newBpm: Double?) {
-        sessionBpm[tempoKey(liveSetIndex)] = newBpm?.coerceIn(20.0, 400.0)
-        if (newBpm == null && clickRunning) stopClick()
-        updateTempo()
-    }
+    private fun updateTempo(ls: Int) = metronome.follow(tempoKey(ls), storedTempo(ls))
 
     /** The tempo in force is the current live set's own, not the song's. */
     fun tempoIsLiveSets(): Boolean = rack?.liveSets?.getOrNull(liveSetIndex)?.tempo != null
 
-    /** Back to the stored tempo, letting go of what was tapped or typed. */
-    fun revertTempo() {
-        sessionBpm.remove(tempoKey(liveSetIndex))
-        updateTempo()
-    }
-
-    /** A new tempo; while the click runs, the visual beat bends with it instead of jumping. */
-    private fun retempo(newTempo: Tempo?) {
-        val old = bpm
-        val newBpm = newTempo?.bpm
-        if (clickRunning && old != null && newBpm != null) {
-            val now = System.nanoTime()
-            val beats = (now - beatOrigin) / (60e9 / old)
-            beatOrigin = now - (beats * 60e9 / newBpm).toLong()
-            NativeBridge.nativeClickTempo(newBpm)
-        }
-        tempo = newTempo
-    }
-
-    // ------------------------------------------------------------------ click
-
     /**
-     * The metronome (S12.6). Running, it blinks on every beat; the **click** is
-     * heard and the **bar count** (the beat's number, beat one accented) shown
-     * always, during a count-in only, or never; after a count-in it keeps
-     * going or stops. These are setup settings (the environment's); the stage
-     * has Play, Count-in and Stop.
+     * Writes the tempo tapped or typed (or "no tempo") where it belongs (I12.3):
+     * into the current live set's own tempo if it has one, else the song's -- a
+     * new version of the song's entry.
      */
-    enum class Presence { ON, COUNT_IN, OFF }
-
-    var clickSound by mutableStateOf(presence("click.sound") ?: legacyClick().first)
-    var barCount by mutableStateOf(presence("click.barCount") ?: Presence.ON)
-    var keepGoing by mutableStateOf(if (prefs.contains("click.keepGoing")) prefs.getBoolean("click.keepGoing", false)
-        else legacyClick().second)
-    /** The count-in's length in bars, where the song names none. */
-    var countInBars by mutableIntStateOf(prefs.getInt("click.countInBars", 1))
-    var clickLevel by mutableStateOf(prefs.getFloat("click.level", 0.5f))
-    /** MIDI clock out to the keyboard (I12.2), for its tempo-synced effects. */
-    var midiClock by mutableStateOf(prefs.getBoolean("click.midiClock", false))
-    /**
-     * Where the click goes besides the main mix (S12.4): a key of
-     * [EngineHost.clickOutputs], or null for the main mix (the default).
-     */
-    var clickOutput by mutableStateOf(prefs.getString("click.output", null))
-    /** The metronome runs: the beat blinks. */
-    var clickRunning by mutableStateOf(false); private set
-    /** A count-in is under way (until [countInEnds]). */
-    var countingIn by mutableStateOf(false); private set
-    private var countInEnds = 0L
-
-    private fun presence(key: String) = prefs.getString(key, null)?.let { runCatching { Presence.valueOf(it) }.getOrNull() }
-
-    /** The click and keep-going as the settings before S12.6 had them (click.mode, click.continuous, click.audio). */
-    private fun legacyClick(): Pair<Presence, Boolean> {
-        val mode = prefs.getString("click.mode", null)
-            ?: if (prefs.getBoolean("click.continuous", false)) "CONTINUOUS" else "COUNT_IN"
-        val sound = when {
-            !prefs.getBoolean("click.audio", true) -> Presence.OFF
-            mode == "CONTINUOUS" -> Presence.ON
-            else -> Presence.COUNT_IN
-        }
-        return sound to (mode != "COUNT_IN")
+    fun saveTempo() {
+        if (heard != null) return
+        val id = songEntry ?: return
+        val r = rack ?: return
+        val name = songNames.getOrNull(songIndex) ?: return
+        val i = liveSetIndex
+        val b = metronome.bpm
+        fun with(t: Tempo?) = (t ?: Tempo()).copy(bpm = b).takeIf { it.bpm != null || it != Tempo() }
+        val own = r.liveSets.getOrNull(i)?.tempo
+        val saved = if (own != null) r.copy(liveSets = r.liveSets.toMutableList().also { it[i] = it[i].copy(tempo = with(own) ?: Tempo()) })
+            else r.copy(tempo = with(r.tempo))
+        lib.saveSong(id, name, saved)
+        metronome.tappedSaved()
+        reload()
     }
 
-    fun saveClickSettings() {
-        prefs.edit().putString("click.sound", clickSound.name).putString("click.barCount", barCount.name)
-            .putBoolean("click.keepGoing", keepGoing).putInt("click.countInBars", countInBars)
-            .putFloat("click.level", clickLevel).putBoolean("click.midiClock", midiClock)
-            .putString("click.output", clickOutput).apply()
-        applyMidiClock()
-        host.setClickOutput(clickOutput)
-    }
-
-    /** The count-in's beats: its lead bar, if any, and the song's bars (or the setup's), of the metre in force. */
-    private fun countInBeats(): Int {
-        val t = tempo
-        return leadBeats + t.barBeats() * (t?.countInBars ?: countInBars).coerceAtLeast(1)
-    }
-
-    /** Beats of the lead bar of the run going on ("1 . 2 ." before a 4/4 count-in: S12.9), 0 for none. */
-    private var leadBeats = 0
-
-    private fun Tempo?.barBeats() = (this?.beatsPerBar ?: 4).coerceAtLeast(1)
-
-    /** Play: the metronome from beat one, no count-in. Needs a tempo. */
-    fun playClick() = startClick(countIn = false)
-
-    /** Count-in: the song's bars counted in, then on or stopped as the setup says. Needs a tempo. */
-    fun countIn() = startClick(countIn = true)
-
-    /** Play or stop, for a footswitch. */
-    fun toggleClick() = if (clickRunning) stopClick() else playClick()
-
-    private fun startClick(countIn: Boolean) {
-        val b = bpm ?: return
-        val t = tempo ?: Tempo()
-        // The bar's pattern (grouped metres: S12.10), and the count-in's lead bar (S12.9).
-        val bar = com.rigalong.model.ClickPattern.bar(t)
-        val lead = if (countIn) com.rigalong.model.ClickPattern.lead(t) else IntArray(0)
-        leadBeats = lead.size
-        val n = if (countIn) countInBeats() else 0
-        fun beats(p: Presence) = when (p) { Presence.ON -> -1; Presence.COUNT_IN -> n; Presence.OFF -> 0 }
-        val limit = if (countIn && !keepGoing) n else 0
-        val delay = NativeBridge.nativeClickStartPattern(b, ByteArray(bar.size) { bar[it].toByte() },
-            ByteArray(lead.size) { lead[it].toByte() }, limit, beats(clickSound), beats(barCount), clickLevel, midiClock)
-        beatOrigin = System.nanoTime() + delay
-        countInEnds = beatOrigin + (n * 60e9 / b).toLong()
-        clickRunning = true
-        countingIn = countIn
-        Log.i(TAG, "click: ${if (countIn) "count-in, $n beats" else "play"} at $b BPM (${tempo?.metre}), " +
-            "click ${clickSound.name.lowercase()}, bar count ${barCount.name.lowercase()}, " +
-            "then ${if (keepGoing || !countIn) "on" else "stop"}; heard in ${delay / 1_000_000} ms")
-    }
-
-    fun stopClick() {
-        NativeBridge.nativeClickStop(midiClock)
-        clickRunning = false
-        countingIn = false
-        Log.i(TAG, "click stopped; MIDI clock ${NativeBridge.nativeMidiClockTicks()} ticks sent")
-    }
-
-    /** The beat's number in the bar to show now, 1-based, or 0: not running, or no bar count now. */
-    fun clickBeat(now: Long): Int {
-        val b = bpm ?: return 0
-        if (!clickRunning || now < beatOrigin) return 0
-        val counting = countingIn && now < countInEnds
-        val shown = barCount == Presence.ON || (barCount == Presence.COUNT_IN && counting)
-        if (!shown) return 0
-        val beat = ((now - beatOrigin) / (60e9 / b)).toLong()
-        // The lead bar is counted as it is heard: "1 . 2 .".
-        if (beat < leadBeats) return com.rigalong.model.ClickPattern.leadCount(tempo ?: Tempo(), beat.toInt())
-        return (beat - leadBeats).mod(tempo.barBeats()) + 1
-    }
-
-    /** The count-in's end, and a count-in that stops when it ends: the beat stops with the last click heard. */
-    private fun followClick() {
-        if (!clickRunning) return
-        val now = System.nanoTime()
-        if (countingIn && now >= countInEnds) {
-            countingIn = false
-            if (!keepGoing) { clickRunning = false; return }
-        }
-        if (!countingIn && !NativeBridge.nativeClickRunning()) clickRunning = false
-    }
-
-    /** The tempo goes to the engines (I12.1) and, when it is on, out as MIDI clock -- both in quarter notes. */
-    private fun applyMidiClock() {
-        val q = tempo?.quarterBpm
-        runCatching { NativeBridge.nativeSetTempo(q ?: 0.0) }
-        runCatching { NativeBridge.nativeMidiClock(if (midiClock) q ?: 0.0 else 0.0) }
-    }
+    // ------------------------------------------------- store in this live set
 
     /**
      * What sounds now becomes the current live set's own (I6.9): its levels,
@@ -468,13 +308,13 @@ class SongPlayer(private val lib: Library, private val host: EngineHost, private
      * Saved as a new version of the song.
      */
     fun storeInLiveSet() {
-        val id = songEntries.getOrNull(songIndex) ?: return
+        val id = songEntry ?: return
         var r = rack ?: return
         val i = liveSetIndex.takeIf { it in r.liveSets.indices } ?: return
         val ls = r.liveSets[i]
         val parts = ls.parts.toMutableMap()
         for (inst in r.instances) {
-            val v = levels[inst.id] ?: continue
+            val v = engines.levels[inst.id] ?: continue
             parts[inst.id] = (parts[inst.id] ?: com.rigalong.model.RackPart(plays = false)).copy(level = v.toDouble())
         }
         r = r.copy(liveSets = r.liveSets.toMutableList().also { it[i] = ls.copy(parts = parts) })
@@ -530,12 +370,10 @@ class SongPlayer(private val lib: Library, private val host: EngineHost, private
         if (key !in touched && before != null) touched[key] = before
     }
 
-    /** The engine's value of "<instance>.<parameter>" now. */
-    private fun engineValue(key: String): Double? {
-        val dot = key.indexOf('.')
-        val node = onEngine[key.substring(0, dot)]?.let { nodeOf(it) } ?: return null
-        val p = paramIndex(node, key.substring(dot + 1)) ?: return null
-        return NativeBridge.nativeGetNodeParam(node, p).toDouble()
+    /** A stage fader moved. */
+    fun setLevel(id: String, v: Float) {
+        engines.setLevel(id, v)
+        rack?.instance(id)?.let { switcher?.noteValue(it.levelKey, v.toDouble()) }
     }
 
     // --------------------------------------------------------- mapped controls
@@ -545,46 +383,22 @@ class SongPlayer(private val lib: Library, private val host: EngineHost, private
     /** Their values when the maps were set: what a first move started from. */
     private val controlStart = HashMap<String, Double>()
 
-    /**
-     * The controls of the sounds playing in this live set onto the engine
-     * (AudioEngine::setControlMaps): a knob moves its parameter on the render
-     * thread, picking up first. A sound not playing here leaves its knob free
-     * for another's.
-     */
+    /** The controls of the sounds playing in this live set onto the engine ([EngineRack.mapControls]). */
     private fun applyControls() {
-        val r = rack
-        val ls = r?.liveSets?.getOrNull(liveSetIndex)
-        val keys = ArrayList<String>()
-        val ccs = ArrayList<Int>(); val nodes = ArrayList<Int>(); val params = ArrayList<Int>()
-        val mins = ArrayList<Float>(); val maxs = ArrayList<Float>(); val ints = ArrayList<Boolean>()
+        val maps = engines.mapControls(rack, rack?.liveSets?.getOrNull(liveSetIndex))
+        controlKeys = maps.map { it.first }
         controlStart.clear()
-        if (r != null && ls != null) for (inst in r.instances) {
-            if (ls.parts[inst.id]?.plays != true) continue
-            val node = onEngine[inst.id]?.let { nodeOf(it) } ?: continue
-            for ((param, cc) in inst.controls) {
-                val p = paramIndex(node, param) ?: continue
-                val range = NativeBridge.nativeNodeParamRange(node, p)
-                val key = "${inst.id}.$param"
-                keys += key; ccs += cc; nodes += node; params += p
-                mins += range[0]; maxs += range[1]; ints += range[2] > 0.5f
-                controlStart[key] = NativeBridge.nativeGetNodeParam(node, p).toDouble()
-            }
-        }
-        controlKeys = keys
-        runCatching {
-            NativeBridge.nativeSetControlMaps(ccs.toIntArray(), nodes.toIntArray(), params.toIntArray(),
-                mins.toFloatArray(), maxs.toFloatArray(), ints.toBooleanArray())
-        }
+        controlStart.putAll(maps)
     }
 
     /** What the mapped controls moved since the last poll: the switcher and the stage learn the new values. */
     private fun pollControls() {
-        val moved = runCatching { NativeBridge.nativeTakeMovedControls() }.getOrDefault(0L)
+        val moved = engines.takeMovedControls()
         if (moved == 0L) return
         var setBfreeMoved = false
         for ((k, key) in controlKeys.withIndex()) {
             if (moved and (1L shl k) == 0L) continue
-            val v = engineValue(key) ?: continue
+            val v = engines.engineValue(key) ?: continue
             touch(key, switcher?.currentValue(key) ?: controlStart[key])
             switcher?.noteValue(key, v)
             if (key.startsWith("$setBfreeId.")) setBfreeMoved = true
@@ -593,127 +407,35 @@ class SongPlayer(private val lib: Library, private val host: EngineHost, private
         if (setBfreeMoved) refreshSetBfree()
     }
 
-    /** The "<instance>.<parameter>" waiting for a controller to be moved (MIDI learn), or null. */
-    var learningControl by mutableStateOf<String?>(null); private set
-    private var onLearned: ((Int) -> Unit)? = null
+    // ---------------------------------------------------------- the stage's setBfree
 
-    /** The next controller moved goes to [key]: [done] gets its number. */
-    fun learnControl(key: String, done: (Int) -> Unit) {
-        learningControl = key
-        onLearned = done
-        runCatching { NativeBridge.nativeControlLearn(true) }
+    /** setBfree's stage controls (SetBfreeNode.h `Param`): drawbars 0-8, Leslie 37, percussion 27. */
+    val setBfree = androidx.compose.runtime.mutableStateMapOf<Int, Float>()
+    /** Which of the song's setBfree instances the stage shows: the first playing in the live set, else the first. */
+    var setBfreeId by mutableStateOf<String?>(null); private set
+
+    private fun setBfreeNode(): Int? = setBfreeId?.let { engines.nodeOfInstance(it) }
+
+    fun refreshSetBfree() {
+        val node = setBfreeNode() ?: return
+        for (i in SETBFREE_STAGE_PARAMS) setBfree[i] = runCatching { NativeBridge.nativeGetNodeParam(node, i) }.getOrDefault(0f)
     }
 
-    fun cancelLearn() {
-        if (learningControl == null) return
-        learningControl = null
-        onLearned = null
-        runCatching { NativeBridge.nativeControlLearn(false) }
+    /** A stage setBfree control moved: heard at once, and kept in mind for "Store in live set". */
+    fun setSetBfree(index: Int, v: Float) {
+        val node = setBfreeNode() ?: return
+        val key = "$setBfreeId.${NativeBridge.nativeNodeParamName(node, index)}"
+        touch(key, switcher?.currentValue(key) ?: NativeBridge.nativeGetNodeParam(node, index).toDouble())
+        NativeBridge.nativeSetNodeParam(node, index, v)
+        switcher?.noteValue(key, v.toDouble())
+        setBfree[index] = v
     }
 
-    /** A key range being set by playing the key (which field asked), or null. */
-    var learningKey by mutableStateOf<String?>(null); private set
-    private var onKeyLearned: ((Int) -> Unit)? = null
-
-    /** The next key played goes to [field]: [done] gets its note number. */
-    fun learnKey(field: String, done: (Int) -> Unit) {
-        learningKey = field
-        onKeyLearned = done
-        runCatching { NativeBridge.nativeNoteLearn(true) }
-    }
-
-    fun cancelKeyLearn() {
-        if (learningKey == null) return
-        learningKey = null
-        onKeyLearned = null
-        runCatching { NativeBridge.nativeNoteLearn(false) }
-    }
-
-    private fun pollLearn() {
-        if (learningKey != null) {
-            val note = runCatching { NativeBridge.nativeTakeLearnedNote() }.getOrDefault(-1)
-            if (note >= 0) {
-                val done = onKeyLearned
-                note("key learned: $note -> $learningKey")
-                cancelKeyLearn()
-                done?.invoke(note)
-            }
-        }
-        if (learningControl == null) return
-        val cc = runCatching { NativeBridge.nativeTakeLearnedControl() }.getOrDefault(-1)
-        if (cc < 0) return
-        val done = onLearned
-        note("control learned: CC $cc -> $learningControl")
-        cancelLearn()
-        done?.invoke(cc)
-    }
-
-    /**
-     * Writes the tempo tapped or typed (or "no tempo") where it belongs (I12.3):
-     * into the current live set's own tempo if it has one, else the song's -- a
-     * new version of the song's entry.
-     */
-    fun saveTempo() {
-        if (heard != null) return
-        val id = songEntries.getOrNull(songIndex) ?: return
-        val r = rack ?: return
-        val name = songNames.getOrNull(songIndex) ?: return
-        val i = liveSetIndex
-        val b = bpm
-        fun with(t: Tempo?) = (t ?: Tempo()).copy(bpm = b).takeIf { it.bpm != null || it != Tempo() }
-        val own = r.liveSets.getOrNull(i)?.tempo
-        val saved = if (own != null) r.copy(liveSets = r.liveSets.toMutableList().also { it[i] = it[i].copy(tempo = with(own) ?: Tempo()) })
-            else r.copy(tempo = with(r.tempo))
-        lib.saveSong(id, name, saved)
-        sessionBpm.remove(tempoKey(i))
-        reload()
-    }
-
-    // ------------------------------------------------------------ lead sheet
-
-    /** The current song's lead sheet as a file in the store, or null (S9.1). */
-    var sheetFile by mutableStateOf<java.io.File?>(null); private set
-    var sheetPage by mutableIntStateOf(0); private set
-    var sheetPages by mutableIntStateOf(0)
-    /** Settings of the environment (S9.2): 2-up, half turns, and what the page turner turns. */
-    var sheetTwoUp by mutableStateOf(prefs.getBoolean("sheet.twoUp", true))
-    var sheetHalfTurn by mutableStateOf(prefs.getBoolean("sheet.halfTurn", true))
-    var keysTurnPages by mutableStateOf(prefs.getBoolean("sheet.keysTurnPages", true))
-
-    /** TEST (PROVISIONAL.md): attach [file] as the current song's lead sheet, as the editor does. */
-    fun attachSheetForTest(file: java.io.File) {
-        val id = songEntries.getOrNull(songIndex) ?: return
-        val r = rack ?: return
-        val name = songNames.getOrNull(songIndex) ?: return
-        lib.saveSong(id, name, r.copy(leadSheet = storePdf(file.readBytes())))
-        reload()
-        Log.i(TAG, "lead sheet attached to '$name': ${sheetFile?.name}, ${file.length()} B")
-    }
-
-    /** A PDF into the library; returns its object. */
-    fun storePdf(bytes: ByteArray): Digest {
-        require(bytes.size > 4 && String(bytes, 0, 4, Charsets.US_ASCII) == "%PDF") { "not a PDF" }
-        return lib.store.put(bytes)
-    }
-
-    fun saveSheetSettings() {
-        prefs.edit().putBoolean("sheet.twoUp", sheetTwoUp).putBoolean("sheet.halfTurn", sheetHalfTurn)
-            .putBoolean("sheet.keysTurnPages", keysTurnPages).apply()
-    }
-
-    /** In 2-up a half turn moves one page, so the right page becomes the left (I9.3). */
-    private fun turnStep() = if (sheetTwoUp && !sheetHalfTurn) 2 else 1
-
-    fun pageForward() {
-        val last = (sheetPages - (if (sheetTwoUp) 2 else 1)).coerceAtLeast(0)
-        sheetPage = (sheetPage + turnStep()).coerceAtMost(last)
-    }
-
-    fun pageBack() { sheetPage = (sheetPage - turnStep()).coerceAtLeast(0) }
+    // ------------------------------------------------------------ stage or not
 
     /** A page-turner key: pages when the song has a lead sheet and the setup says so, live sets otherwise. */
-    fun forwardKey() = if (keysTurnPages && sheetFile != null) pageForward() else nextLiveSet()
-    fun backKey() = if (keysTurnPages && sheetFile != null) pageBack() else previousLiveSet()
+    fun forwardKey() = if (sheet.turnsPages) sheet.forward() else nextLiveSet()
+    fun backKey() = if (sheet.turnsPages) sheet.back() else previousLiveSet()
 
     /** Set by the UI: a Back gesture goes to the stage instead of leaving the app. */
     var backToStage: (() -> Unit)? = null
@@ -748,8 +470,7 @@ class SongPlayer(private val lib: Library, private val host: EngineHost, private
     private val releaser = Runnable { if (parked) devices.release() }
 
     private fun park() {
-        for (i in 0 until runCatching { NativeBridge.nativeInstanceCount() }.getOrDefault(0)) setWireAt(i, midi = false)
-        for ((id, i) in onEngine) playing[id] = midiOn[i]
+        engines.silence()
         if (parked) return
         parked = true
         // A moment later, and not at all if a song is heard meanwhile: saving
@@ -769,63 +490,6 @@ class SongPlayer(private val lib: Library, private val host: EngineHost, private
         }
     }
 
-    /**
-     * TEST (PROVISIONAL.md): a device's own-sound path end to end, without the
-     * screen, on the first device that can own sounds (a CP-88). Imports its
-     * current sound, builds a song whose live set 1 owns it and whose live
-     * set 2 selects the device's first stored sound, opens it on the stage
-     * (which writes the sound into the reserved area) and selects live set
-     * [liveSet]. Logs what it did under rigalong-stage; tools/cp88sysex reads a
-     * CP-88 back.
-     */
-    fun deviceSelfTest(liveSet: Int) {
-        Thread {
-            runCatching {
-                val d = devices.withSounds().firstOrNull() ?: error("no device that can own a sound")
-                val drv = devices.driver(d)
-                val (sound, name) = devices.importCurrent(d)
-                Log.i(TAG, "selftest: imported '$name' ${sound.short} from ${d.name}")
-                val first = drv.address.associate { it.key to it.range.first }.filterKeys { k -> drv.address.none { it.key == k && it.optional } }
-                val draft = RackSong(
-                    instances = listOf(com.rigalong.model.RackInstance("sfizz", RackEngine.SFIZZ,
-                        com.rigalong.model.RackSlot(level = 0.0))),
-                    liveSets = listOf(
-                        com.rigalong.model.RackLiveSet("Own", devices = mapOf(d.name to
-                            com.rigalong.model.RackDevicePart(d.kind, "own", sound = sound, soundName = name))),
-                        com.rigalong.model.RackLiveSet("Select ${drv.describe(first)}", devices = mapOf(d.name to
-                            com.rigalong.model.RackDevicePart(d.kind, "select", first))),
-                    ))
-                val song = draft.toObjects(lib.store)
-                val liveSets = song.liveSets.map { lib.store.getTyped<LiveSet>(it.toRef().digest) }
-                android.os.Handler(android.os.Looper.getMainLooper()).post {
-                    this.song = song
-                    rack = draft
-                    switcher = LiveSetSwitcher(song, liveSets)
-                    liveSetObjects = liveSets
-                    liveSetNames.clear(); liveSetNames.addAll(liveSets.map { it.name })
-                    devices.writeSong(liveSets)
-                    selectLiveSet(liveSet - 1)
-                    Thread { devices.settle(); Log.i(TAG, "selftest: live set $liveSet selected; ${devices.status}") }.start()
-                }
-            }.onFailure { Log.e(TAG, "selftest failed: $it") }
-        }.start()
-    }
-
-    /** DEBUG HOOK (PROVISIONAL.md): [DeviceRig.writeSelectTest] with two renamed copies of a library sound. */
-    fun deviceWriteSelectTest(delays: List<Int>) {
-        Thread {
-            runCatching {
-                val d = devices.withSounds().firstOrNull() ?: error("no device that can own a sound")
-                val f = devices.driver(d).sounds!!.formats.first { it.editable }
-                val base = lib.deviceSounds(devices.driver(d).sounds!!.mediaType).firstNotNullOf { e ->
-                    e.version.target?.let { lib.store.get(it.digest) } }
-                fun named(n: String) = f.fromText(f.toText(base).replaceFirst(Regex("(?m)^name: .*$"), "name: $n"))
-                for (line in devices.writeSelectTest(d, named("Write test A"), named("Write test B"), delays))
-                    Log.i("rigalong-devices", "writeselect: $line")
-            }.onFailure { Log.e("rigalong-devices", "writeselect failed: $it") }
-        }.start()
-    }
-
     // ------------------------------------------------------------ quick edit
 
     /** What the stage asked to edit: a song, and in it a live set or an instance's patch. */
@@ -840,7 +504,7 @@ class SongPlayer(private val lib: Library, private val host: EngineHost, private
      * where a change is that live set's own unless the player says "whole song".
      */
     fun requestEdit(liveSet: Int? = null, instance: String? = null) {
-        val id = songEntries.getOrNull(songIndex) ?: return
+        val id = songEntry ?: return
         editRequest = EditRequest(id, liveSet ?: liveSetIndex.takeIf { instance != null && it >= 0 }, instance)
         showSongs?.invoke()
     }
@@ -857,76 +521,16 @@ class SongPlayer(private val lib: Library, private val host: EngineHost, private
     /** What the last external selection was, for the stage view. */
     var lastSelection by mutableStateOf(""); private set
 
-    // ------------------------------------------------- switching controllers
-
-    /**
-     * Controller -> action (I10.4, I12.3): "next" and "previous" step through
-     * live sets (or turn pages), "tap" taps the tempo, "countIn" counts in, "click" starts and stops
-     * the click. -1 = none.
-     */
-    val controllers = androidx.compose.runtime.mutableStateMapOf<String, Int>().apply {
-        for (a in CONTROLLER_ACTIONS) put(a, prefs.getInt(controllerKey(a), -1))
-    }
-    val ccNext get() = controllers["next"] ?: -1
-    val ccPrevious get() = controllers["previous"] ?: -1
-    /** Which action the next controller press is learned into, or null. */
-    var learning by mutableStateOf<String?>(null); private set
-    private val ccDown = BooleanArray(128)
-
-    private fun controllerKey(action: String) = "switch.cc" + action.replaceFirstChar { it.uppercase() }
-
-    private fun saveControllers() {
-        val e = prefs.edit()
-        for (a in CONTROLLER_ACTIONS) e.putInt(controllerKey(a), controllers[a] ?: -1)
-        e.apply()
-    }
-
-    fun watchControllers() {
-        var low = 0L
-        var high = 0L
-        for (cc in controllers.values) {
-            if (cc in 0..63) low = low or (1L shl cc) else if (cc in 64..127) high = high or (1L shl (cc - 64))
-        }
-        runCatching { NativeBridge.nativeWatchControllers(low, high, learning != null) }
-    }
-
-    fun learn(which: String?) { learning = which; watchControllers() }
-
-    /** All of them at once, as an environment brings them; an action left out has none. */
-    fun setControllers(map: Map<String, Int>) {
-        for (a in CONTROLLER_ACTIONS) controllers[a] = map[a] ?: -1
-        saveControllers()
-        watchControllers()
-    }
-
-    fun clearController(which: String) {
-        controllers[which] = -1
-        saveControllers()
-        watchControllers()
-    }
+    // ------------------------------------------------------- what comes in
 
     /** Where controller events from the MIDI path land; public for the STAGE test hook. */
     fun onController(cc: Int, value: Int) {
-        val down = value >= 64
-        val pressed = down && !ccDown[cc]          // act on the press, once
-        ccDown[cc] = down
-        if (!pressed) return
-        val l = learning
-        if (l != null) {
-            // One controller, one action: learning it here takes it from any other.
-            for (a in CONTROLLER_ACTIONS) if (controllers[a] == cc) controllers[a] = -1
-            controllers[l] = cc
-            saveControllers()
-            learning = null
-            watchControllers()
-            return
-        }
-        when (CONTROLLER_ACTIONS.firstOrNull { controllers[it] == cc }) {
+        when (switches.press(cc, value)) {
             "next" -> forwardKey()
             "previous" -> backKey()
-            "tap" -> tap()
-            "click" -> toggleClick()
-            "countIn" -> countIn()
+            "tap" -> metronome.tap()
+            "click" -> metronome.toggleClick()
+            "countIn" -> metronome.countIn()
             else -> return
         }
         lastSelection = "CC $cc"
@@ -962,17 +566,27 @@ class SongPlayer(private val lib: Library, private val host: EngineHost, private
     }
 
     /**
-     * Follows the CP-88's own live set buttons (V1, LOG.md 2026-10-11): a
-     * selection arrives as Bank Select MSB 63, LSB page - 1, Program Change
-     * set - 1. Set n selects live set n of the current song, whatever the
-     * page. Called by the UI every 50 ms.
+     * Called by the UI every 50 ms: each part takes what came in since --
+     * MIDI out coming up, presets landing, mapped controls moved, MIDI learn,
+     * the count-in's end -- and then the program changes and switching
+     * controllers from the keyboard ([takeSelections]).
      */
-    fun pollSelections() {
+    fun poll() {
         watchMidiOut()
         settle()
         pollControls()
-        pollLearn()
-        followClick()
+        midiLearn.poll()
+        metronome.poll()
+        takeSelections()
+    }
+
+    /**
+     * Follows the CP-88's own live set buttons (V1, LOG.md 2026-10-11): a
+     * selection arrives as Bank Select MSB 63, LSB page - 1, Program Change
+     * set - 1. Set n selects live set n of the current song, whatever the
+     * page. A switching controller comes the same way.
+     */
+    private fun takeSelections() {
         val pcs = runCatching { NativeBridge.nativeDrainPrograms() }.getOrNull() ?: return
         for (v in pcs) {
             if (v ushr 31 == 1) {
@@ -993,320 +607,12 @@ class SongPlayer(private val lib: Library, private val host: EngineHost, private
         }
     }
 
-    fun nextLiveSet() { if (liveSetIndex + 1 < liveSetNames.size) selectLiveSet(liveSetIndex + 1) }
-    fun previousLiveSet() { if (liveSetIndex > 0) selectLiveSet(liveSetIndex - 1) }
-
-    /** setBfree's stage controls (SetBfreeNode.h `Param`): drawbars 0-8, Leslie 37, percussion 27. */
-    val setBfree = androidx.compose.runtime.mutableStateMapOf<Int, Float>()
-    /** Which of the song's setBfree instances the stage shows: the first playing in the live set, else the first. */
-    var setBfreeId by mutableStateOf<String?>(null); private set
-
-    private fun setBfreeNode(): Int? = setBfreeId?.let { onEngine[it] }?.let { nodeOf(it) }
-
-    fun refreshSetBfree() {
-        val node = setBfreeNode() ?: return
-        for (i in SETBFREE_STAGE_PARAMS) setBfree[i] = runCatching { NativeBridge.nativeGetNodeParam(node, i) }.getOrDefault(0f)
-    }
-
-    /** A stage setBfree control moved: heard at once, and kept in mind for "Store in live set". */
-    fun setSetBfree(index: Int, v: Float) {
-        val node = setBfreeNode() ?: return
-        val key = "$setBfreeId.${NativeBridge.nativeNodeParamName(node, index)}"
-        touch(key, switcher?.currentValue(key) ?: NativeBridge.nativeGetNodeParam(node, index).toDouble())
-        NativeBridge.nativeSetNodeParam(node, index, v)
-        switcher?.noteValue(key, v.toDouble())
-        setBfree[index] = v
-    }
-
-    // ------------------------------------------------------------- instances
-
-    /**
-     * The engine instance each of [song]'s instances plays on: the k-th of an
-     * engine in the song on the k-th engine instance of that type (the one of
-     * the default patch first), more added when the song has more. The same
-     * song always gets the same ones, so the stage and the editor agree.
-     */
-    private fun assignment(song: RackSong?): Map<String, Int> {
-        if (song == null) return emptyMap()
-        val count = runCatching { NativeBridge.nativeInstanceCount() }.getOrDefault(0)
-        val byType = HashMap<Int, MutableList<Int>>()
-        for (i in 0 until count) byType.getOrPut(NativeBridge.nativeInstanceType(i)) { mutableListOf() } += i
-        val seen = HashMap<RackEngine, Int>()
-        val out = LinkedHashMap<String, Int>()
-        for (inst in song.instances) {
-            val k = seen.merge(inst.engine, 1, Int::plus)!! - 1
-            val pool = byType.getOrPut(inst.engine.ordinal) { mutableListOf() }
-            while (pool.size <= k) {
-                val n = NativeBridge.nativeAddInstance(inst.engine.ordinal)
-                if (n < 0) break
-                pool += n
-                note("instance $n added for ${inst.engine.label}")
-            }
-            pool.getOrNull(k)?.let { out[inst.id] = it }
-        }
-        return out
-    }
-
-    /** The stage song's instances on the engine's. */
-    private var onEngine: Map<String, Int> = emptyMap()
-
-    private val nodeCache = HashMap<Int, Int>()
-    private fun nodeOf(i: Int): Int? = nodeCache[i] ?: NativeBridge.nativeInstanceNode(i).takeIf { it >= 0 }
-        ?.also { nodeCache[i] = it }
-
-    private fun paramIndex(node: Int, name: String): Int? = (0 until NativeBridge.nativeNodeParamCount(node))
-        .firstOrNull { NativeBridge.nativeNodeParamName(node, it) == name }
-
-    private fun setParamAt(i: Int, param: String, v: Float) {
-        val node = nodeOf(i) ?: return
-        paramIndex(node, param)?.let { NativeBridge.nativeSetNodeParam(node, it, v) }
-    }
-
-    /** One parameter of an engine, as the patch editor shows it (PLAN.md D6). */
-    data class ParamDesc(val name: String, val min: Float, val max: Float, val integer: Boolean, val value: Float)
-
-    private fun paramsOf(node: Int, from: Int = 0, skip: Set<String> = emptySet()): List<ParamDesc> =
-        (from until NativeBridge.nativeNodeParamCount(node)).mapNotNull { p ->
-            val name = NativeBridge.nativeNodeParamName(node, p)
-            if (name.isEmpty() || name in skip) return@mapNotNull null
-            val r = NativeBridge.nativeNodeParamRange(node, p)
-            ParamDesc(name, r[0], r[1], r[2] > 0.5f, NativeBridge.nativeGetNodeParam(node, p))
-        }
-
-    /** Every parameter of [song]'s instance [id] but its level, with its range and current value. */
-    fun engineParams(song: RackSong, id: String): List<ParamDesc> {
-        val node = assignment(song)[id]?.let { nodeOf(it) } ?: return emptyList()
-        return paramsOf(node, skip = setOf("Level"))
-    }
-
-    /**
-     * Puts [song]'s instance [id] with [slot] on its engine instance, so the
-     * patch editor shows -- and the keys play -- this song's patch, not
-     * whatever was on stage. [reload] puts the stage's song back.
-     */
-    fun previewSlot(song: RackSong, id: String, slot: com.rigalong.model.RackSlot) {
-        val inst = song.instance(id) ?: return
-        val i = assignment(song)[id] ?: return
-        loadPresetAt(i, inst.engine, slot.preset, slot.program)
-        applyFxAt(fxNodeOf(i), slot.fx)
-        // The song's sound: its patch, and the values it keeps for its live sets.
-        for ((name, v) in slot.songValues + slot.params) setParamAt(i, name, v.toFloat())
-    }
-
-    /** Whether [song]'s instance [id] is loading a preset in the background (its values not yet its own). */
-    fun loading(song: RackSong, id: String): Boolean = assignment(song)[id]?.let { busy(it) } ?: false
-
-    /** Audition one parameter while editing a patch. */
-    fun auditionParam(song: RackSong, id: String, name: String, v: Float) {
-        assignment(song)[id]?.let { setParamAt(it, name, v) }
-    }
-
-    /** The reverb's parameters, with their ranges and current values. */
-    fun reverbParams(): List<ParamDesc> = reverbIndex()?.let { paramsOf(it) } ?: emptyList()
-
-    /** Puts a song's reverb on the engine: its own values over the defaults. */
-    fun previewReverb(values: Map<String, Double>) {
-        for ((name, v) in REVERB_DEFAULTS + values) auditionReverb(name, v.toFloat())
-    }
-
-    fun auditionReverb(name: String, v: Float) {
-        val node = reverbIndex() ?: return
-        paramIndex(node, name)?.let { NativeBridge.nativeSetNodeParam(node, it, v) }
-    }
-
-    private var reverbNode: Int? = null
-    private fun reverbIndex(): Int? = reverbNode ?: (0 until NativeBridge.nativeNodeCount())
-        .firstOrNull { NativeBridge.nativeNodeType(it) == "Reverb" }?.also { reverbNode = it }
-
-    // ---------------------------------------------------------- insert effects
-
-    private val fxCache = HashMap<Int, Int>()
-    private fun fxNodeOf(i: Int): Int? = fxCache[i] ?: NativeBridge.nativeInstanceFxNode(i).takeIf { it >= 0 }
-        ?.also { fxCache[i] = it }
-
-    /** The effect on the whole mix: the Fx node that is no instance's. */
-    private var masterFxNode: Int? = null
-    private fun masterFx(): Int? = masterFxNode ?: run {
-        val mine = (0 until NativeBridge.nativeInstanceCount()).mapNotNull { fxNodeOf(it) }.toSet()
-        (0 until NativeBridge.nativeNodeCount()).firstOrNull { NativeBridge.nativeNodeType(it) == "Fx" && it !in mine }
-    }?.also { masterFxNode = it }
-
-    /** The effect node of [song]'s instance [id], or of the whole mix for null. */
-    private fun fxTarget(song: RackSong?, id: String?): Int? =
-        if (id == null) masterFx() else assignment(song)[id]?.let { fxNodeOf(it) }
-
-    /**
-     * Puts [fx] on an effect node: a fresh effect that starts at the song's
-     * values (FxNode::configure), so nothing comes from the last song and no
-     * delay glides in from its default time.
-     */
-    private fun applyFxAt(node: Int?, fx: com.rigalong.model.RackFx?) {
-        node ?: return
-        val type = com.rigalong.model.RackFx.TYPES.indexOf(fx?.type ?: "off").coerceAtLeast(0)
-        val params = fx?.params.orEmpty()
-        NativeBridge.nativeFxConfigure(node, type, params.keys.toTypedArray(),
-            params.values.map { it.toFloat() }.toFloatArray())
-        // Fully on until a live set says otherwise: an amount left at 0 by the
-        // previous song would make a new effect silent.
-        paramIndex(node, "Amount")?.let { NativeBridge.nativeSetNodeParam(node, it, 1f) }
-    }
-
-    /** [fx] on [song]'s instance [id], or on the whole mix for null (the effect editor). */
-    fun applyFx(song: RackSong?, id: String?, fx: com.rigalong.model.RackFx?) = applyFxAt(fxTarget(song, id), fx)
-
-    /** The effect's parameters as they are now (the type excluded). */
-    fun fxParams(song: RackSong?, id: String?): List<ParamDesc> =
-        fxTarget(song, id)?.let { paramsOf(it, from = 1) } ?: emptyList()
-
-    fun auditionFx(song: RackSong?, id: String?, name: String, v: Float) {
-        val node = fxTarget(song, id) ?: return
-        paramIndex(node, name)?.let { NativeBridge.nativeSetNodeParam(node, it, v) }
-    }
-
-    /** [v] of the effect's parameter [name] as the player reads it, or null. */
-    fun fxDisplay(song: RackSong?, id: String?, name: String, v: Float): String? {
-        val node = fxTarget(song, id) ?: return null
-        return paramIndex(node, name)?.let { NativeBridge.nativeNodeParamDisplay(node, it, v) }
-    }
-
-    /** A stage fader moved. */
-    fun setLevel(id: String, v: Float) {
-        onEngine[id]?.let { setParamAt(it, "Level", v) }
-        levels[id] = v
-        rack?.instance(id)?.let { switcher?.noteValue(it.levelKey, v.toDouble()) }
-    }
-
-    fun panic() = NativeBridge.nativePanic()
-
-    // ------------------------------------------------------------- applying
-
-    /** The song's instances on the engine's, with their patches; engine instances it does not use are silenced and parked. */
-    private fun setUpEngines() {
-        val r = rack
-        // Every song sets the whole reverb, so one song's room never stays
-        // with the next.
-        previewReverb(r?.reverb.orEmpty())
-        applyFxAt(masterFx(), r?.masterFx)
-        onEngine = assignment(r)
-        val used = onEngine.values.toSet()
-        levels.keys.retainAll(onEngine.keys)
-        playing.keys.retainAll(onEngine.keys)
-        for (i in 0 until NativeBridge.nativeInstanceCount()) {
-            if (i in used) continue
-            // Not in this song: no new notes, no effect, and level 0 lets the engine park.
-            applyFxAt(fxNodeOf(i), null)
-            setWireAt(i, midi = false)
-            setParamAt(i, "Level", 0f)
-        }
-        for (inst in r?.instances.orEmpty()) {
-            val i = onEngine[inst.id] ?: continue
-            applyFxAt(fxNodeOf(i), inst.slot.fx)
-            loadPresetAt(i, inst.engine, inst.slot.preset, inst.slot.program)
-            // The patch's own parameters, over its preset (M8).
-            for ((name, v) in inst.slot.params) setParamAt(i, name, v.toFloat())
-        }
-    }
-
-    private fun loadPresetAt(i: Int, e: RackEngine, wanted: String?, program: Int?) {
-        // "As loaded" on an added instance means what the first of its engine
-        // has: a new instance starts empty, and an empty sfizz is a silent one.
-        val preset = wanted?.takeIf { it.isNotEmpty() } ?: if (i == e.ordinal) null else runCatching {
-            when (e) {
-                RackEngine.SFIZZ -> host.currentInstrument()
-                RackEngine.SURGE -> NativeBridge.nativeSurgeCurrentPatchName()
-                RackEngine.FLUID -> NativeBridge.nativeFluidCurrentFont()
-                else -> null
-            }
-        }.getOrNull()?.takeIf { it.isNotEmpty() }
-        if (preset.isNullOrEmpty()) return
-        runCatching {
-            // The first sfizz goes through EngineContent, which keeps the
-            // choice for the next start and reads the samples' heads into the
-            // page cache before the keys need them.
-            if (i == e.ordinal && e == RackEngine.SFIZZ) {
-                if (host.currentInstrument() != preset) host.selectInstrument(preset)
-                return
-            }
-            // Every other instance, the first of its engine included: by name,
-            // through one loader (AudioEngine::loadInstancePreset). It remembers
-            // a preset asked for before its engine is up and loads it once the
-            // engine is (REVIEW S2, W7: the first Surge XT, Dexed and FluidSynth
-            // used to be skipped here while not ready, and played whatever the
-            // engine came up with).
-            if (NativeBridge.nativeInstancePreset(i) == preset && program == null) return
-            val path = if (e == RackEngine.SFIZZ) host.instrumentPath(preset) else null
-            NativeBridge.nativeInstanceLoadPreset(i, preset, program ?: -1, path)
-        }.onFailure { Log.e("rigalong-ui", "preset $preset for instance $i (${e.key}): $it") }
-    }
-
-    private fun apply(changes: List<Change>) {
-        for (c in changes) when (c) {
-            is Change.Param -> applyParam(c.key, c.value.toFloat())
-            is Change.WireSet -> {
-                val dot = c.wire.lastIndexOf('.')
-                val i = onEngine[c.wire.substring(0, dot)] ?: continue
-                when (c.wire.substring(dot + 1)) {
-                    "midi" -> setWireAt(i, midi = c.on)
-                    "audio" -> setWireAt(i, audio = c.on, g = c.gain.toFloat())
-                }
-            }
-            // External devices: DeviceRig.liveSetSelected, after the changes.
-            is Change.Device -> Unit
-            // On-select MIDI (I6.7): to the keyboard's MIDI out, in the direct modes.
-            is Change.Send -> {
-                val bytes = runCatching { ByteArray(c.hex.length / 2) { c.hex.substring(it * 2, it * 2 + 2).toInt(16).toByte() } }
-                    .getOrNull()
-                val r = bytes?.let { runCatching { NativeBridge.nativeUsbMidiSend(it) }.getOrDefault(-1) } ?: -1
-                if (r < 0) note("on-select MIDI ${c.hex} not sent ($r): no MIDI out in this mode")
-            }
-            is Change.Enable -> Unit   // not in the rack slice yet
-        }
-        for ((id, i) in onEngine) playing[id] = midiOn[i]
-    }
-
-    /** A song key ("sfizz-2.zone.keyLow", "setbfree.Level") on the engine instance its song instance plays on. */
-    private fun applyParam(key: String, v: Float) {
-        val first = key.indexOf('.')
-        if (first < 0) return
-        val id = key.substring(0, first)
-        val i = onEngine[id] ?: return
-        val rest = key.substring(first + 1)
-        if (rest.startsWith("zone.")) {
-            val z = ZONE_PARAMS.indexOf(rest.removePrefix("zone."))
-            if (z >= 0) NativeBridge.nativeZoneParam(i, z, v)
-        } else if (rest.startsWith("fx.")) {
-            val node = fxNodeOf(i) ?: return
-            paramIndex(node, rest.removePrefix("fx."))?.let { NativeBridge.nativeSetNodeParam(node, it, v) }
-        } else {
-            setParamAt(i, rest, v)
-            if (rest == "Level") levels[id] = v
-        }
-    }
-
-    private fun setWireAt(i: Int, midi: Boolean? = null, audio: Boolean? = null, g: Float? = null) {
-        if (i !in 0 until MAX_INSTANCES) return
-        midi?.let { midiOn[i] = it }
-        audio?.let { audioOn[i] = it }
-        g?.let { gain[i] = it }
-        NativeBridge.nativeRackWire(i, midiOn[i], audioOn[i], gain[i])
-    }
-
     companion object {
         private const val TAG = "rigalong-stage"
-        /** What a switching controller can be taught (I10.4, I12.3). */
-        val CONTROLLER_ACTIONS = listOf("next", "previous", "tap", "click", "countIn")
-        /** AudioEngine::kMaxInstances. */
-        const val MAX_INSTANCES = 24
-        /** ReverbNode's own defaults (graph/Nodes.h), for a song that sets none. */
-        val REVERB_DEFAULTS = mapOf("Room size" to 0.72, "Damping" to 0.35, "Width" to 1.0, "Mix" to 0.25)
+        /** The editor's song's tapped tempos, apart from the stage's ([Metronome.follow]'s keys). */
+        private const val EDITOR_TEMPOS = "edit/"
         const val SETBFREE_LESLIE = 37
         const val SETBFREE_PERC = 27
         val SETBFREE_STAGE_PARAMS = (0..8).toList() + listOf(SETBFREE_PERC, SETBFREE_LESLIE)
-
-        /** engine/include/rigalong/MidiZone.h, `Param`, in order. */
-        val ZONE_PARAMS = listOf(
-            "channelIn", "channelOut", "keyLow", "keyHigh", "velLow", "velHigh", "transpose",
-            "passNotes", "passCC", "passBend", "passPressure", "passProgram",
-            "ccFromA", "ccToA", "ccFromB", "ccToB")
     }
 }

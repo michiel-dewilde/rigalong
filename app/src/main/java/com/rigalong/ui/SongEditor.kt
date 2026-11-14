@@ -243,7 +243,7 @@ internal fun SongEditor(song: RackSong, name: String, host: EngineHost, player: 
                 if (at in song.liveSets.indices) onHear(at)
             }
             PresetPicker(inst.engine, inst.slot, host, lib,
-                onAudition = { slot -> player.previewSlot(song, id, slot) },
+                onAudition = { slot -> player.engines.previewSlot(song, id, slot) },
                 onKeep = { slot ->
                     // Still linked: a linked patch given another sound is a change to it, asked about at Save.
                     onChange(song.withSlot(id, slot))
@@ -251,7 +251,7 @@ internal fun SongEditor(song: RackSong, name: String, host: EngineHost, player: 
                 },
                 onCancel = {
                     // What it had, back on the engine.
-                    player.previewSlot(song, id, inst.slot)
+                    player.engines.previewSlot(song, id, inst.slot)
                     picker = null
                 })
         }
@@ -268,7 +268,7 @@ private fun LiveSetCard(song: RackSong, i: Int, ls: RackLiveSet, player: SongPla
     val into = remember { androidx.compose.foundation.relocation.BringIntoViewRequester() }
     LaunchedEffect(focused) { if (focused) into.bringIntoView() }
     // A key still waited for is not waited for once the live set is off the screen.
-    androidx.compose.runtime.DisposableEffect(i) { onDispose { player.cancelKeyLearn() } }
+    androidx.compose.runtime.DisposableEffect(i) { onDispose { player.midiLearn.cancelKey() } }
     Column(Modifier.fillMaxWidth().padding(vertical = 6.dp)
         .bringIntoViewRequester(into)
         .border(if (focused) 2.dp else 1.dp, if (focused) Accent else Line, RoundedCornerShape(8.dp))
@@ -317,8 +317,8 @@ private fun LiveSetCard(song: RackSong, i: Int, ls: RackLiveSet, player: SongPla
                     val field = "$i/${inst.id}/$which"
                     fun set(v: Int) = putPart(if (which == "low") p.copy(keyLow = v) else p.copy(keyHigh = v))
                     NumberField(stringResource(label), now, 0..127, noteName = true, bigStep = 12,
-                        learning = player.learningKey == field,
-                        onLearn = { if (player.learningKey == field) player.cancelKeyLearn() else player.learnKey(field, ::set) },
+                        learning = player.midiLearn.learningKey == field,
+                        onLearn = { if (player.midiLearn.learningKey == field) player.midiLearn.cancelKey() else player.midiLearn.key(field, ::set) },
                         onValue = ::set)
                 }
                 NumberField(stringResource(R.string.transpose_short), p.transpose, -48..48, bigStep = 12) { putPart(p.copy(transpose = it)) }
@@ -367,7 +367,7 @@ private fun LeadSheetButton(song: RackSong, player: SongPlayer, onChange: (RackS
         androidx.activity.result.contract.ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) runCatching {
             val bytes = context.contentResolver.openInputStream(uri)!!.use { it.readBytes() }
-            onChange(song.copy(leadSheet = player.storePdf(bytes)))
+            onChange(song.copy(leadSheet = player.sheet.storePdf(bytes)))
         }
     }
     if (song.leadSheet == null) {

@@ -36,6 +36,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.rigalong.R
 import com.rigalong.model.Tempo
+import com.rigalong.play.Metronome
 import com.rigalong.play.SongPlayer
 import com.rigalong.play.TapTempo
 
@@ -133,57 +134,57 @@ private fun BpmField(bpm: Double, onValue: (Double) -> Unit) {
 @Composable
 fun ClickOptions(player: SongPlayer, host: com.rigalong.play.EngineHost) {
     @Composable
-    fun Choice(label: Int, value: SongPlayer.Presence, onValue: (SongPlayer.Presence) -> Unit) {
+    fun Choice(label: Int, value: Metronome.Presence, onValue: (Metronome.Presence) -> Unit) {
         androidx.compose.foundation.layout.FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp),
             verticalArrangement = Arrangement.Center) {
             Text(stringResource(label), modifier = Modifier.width(120.dp).padding(top = 14.dp))
-            for ((p, l) in listOf(SongPlayer.Presence.ON to R.string.presence_on,
-                    SongPlayer.Presence.COUNT_IN to R.string.presence_count_in,
-                    SongPlayer.Presence.OFF to R.string.presence_off)) {
-                FilterChip(selected = value == p, onClick = { onValue(p); player.saveClickSettings() },
+            for ((p, l) in listOf(Metronome.Presence.ON to R.string.presence_on,
+                    Metronome.Presence.COUNT_IN to R.string.presence_count_in,
+                    Metronome.Presence.OFF to R.string.presence_off)) {
+                FilterChip(selected = value == p, onClick = { onValue(p); player.metronome.saveClickSettings() },
                     label = { Text(stringResource(l)) })
             }
         }
     }
     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-        Choice(R.string.click_sound, player.clickSound) { player.clickSound = it }
-        Choice(R.string.bar_count, player.barCount) { player.barCount = it }
+        Choice(R.string.click_sound, player.metronome.clickSound) { player.metronome.clickSound = it }
+        Choice(R.string.bar_count, player.metronome.barCount) { player.metronome.barCount = it }
         androidx.compose.foundation.layout.FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Text(stringResource(R.string.after_count_in), modifier = Modifier.width(120.dp).padding(top = 14.dp))
-            FilterChip(selected = player.keepGoing, onClick = { player.keepGoing = true; player.saveClickSettings() },
+            FilterChip(selected = player.metronome.keepGoing, onClick = { player.metronome.keepGoing = true; player.metronome.saveClickSettings() },
                 label = { Text(stringResource(R.string.keep_going)) })
-            FilterChip(selected = !player.keepGoing, onClick = { player.keepGoing = false; player.saveClickSettings() },
+            FilterChip(selected = !player.metronome.keepGoing, onClick = { player.metronome.keepGoing = false; player.metronome.saveClickSettings() },
                 label = { Text(stringResource(R.string.stop_after)) })
         }
         Row(verticalAlignment = Alignment.CenterVertically) {
-            NumberField(stringResource(R.string.count_in_bars), player.countInBars, 1..8) {
-                player.countInBars = it; player.saveClickSettings()
+            NumberField(stringResource(R.string.count_in_bars), player.metronome.countInBars, 1..8) {
+                player.metronome.countInBars = it; player.metronome.saveClickSettings()
             }
             Text(stringResource(R.string.count_in_bars_note), color = Dim, fontSize = 12.sp)
         }
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text(stringResource(R.string.click_volume), modifier = Modifier.width(120.dp))
-            Slider(value = player.clickLevel, valueRange = 0.05f..1f, enabled = player.clickSound != SongPlayer.Presence.OFF,
-                onValueChange = { player.clickLevel = it }, onValueChangeFinished = player::saveClickSettings,
+            Slider(value = player.metronome.clickLevel, valueRange = 0.05f..1f, enabled = player.metronome.clickSound != Metronome.Presence.OFF,
+                onValueChange = { player.metronome.clickLevel = it }, onValueChangeFinished = player.metronome::saveClickSettings,
                 modifier = Modifier.weight(1f))
         }
         // Where it goes (S12.4): the main mix, or an output of its own.
-        val outputs = remember(player.clickOutput) { host.clickOutputs() }
+        val outputs = remember(player.metronome.clickOutput) { host.clickOutputs() }
         androidx.compose.foundation.layout.FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Text(stringResource(R.string.click_goes_to), modifier = Modifier.width(120.dp).padding(top = 14.dp))
-            FilterChip(selected = player.clickOutput == null,
-                onClick = { player.clickOutput = null; player.saveClickSettings() },
+            FilterChip(selected = player.metronome.clickOutput == null,
+                onClick = { player.metronome.clickOutput = null; player.metronome.saveClickSettings() },
                 label = { Text(stringResource(R.string.click_main_mix)) })
             for ((key, label) in outputs) {
-                FilterChip(selected = player.clickOutput == key,
-                    onClick = { player.clickOutput = key; player.saveClickSettings() },
+                FilterChip(selected = player.metronome.clickOutput == key,
+                    onClick = { player.metronome.clickOutput = key; player.metronome.saveClickSettings() },
                     label = { Text(label) })
             }
-            val away = player.clickOutput?.takeIf { k -> outputs.none { it.first == k } }
+            val away = player.metronome.clickOutput?.takeIf { k -> outputs.none { it.first == k } }
             if (away != null) FilterChip(selected = true, onClick = {},
                 label = { Text(stringResource(R.string.click_output_away, clickOutputName(away))) })
         }
-        Text(stringResource(if (player.clickOutput == null) R.string.click_goes_to_main else R.string.click_goes_elsewhere),
+        Text(stringResource(if (player.metronome.clickOutput == null) R.string.click_goes_to_main else R.string.click_goes_elsewhere),
             color = Dim, fontSize = 12.sp)
     }
 }
@@ -197,17 +198,17 @@ fun ClickOptions(player: SongPlayer, host: com.rigalong.play.EngineHost) {
 @Composable
 fun TempoDialog(player: SongPlayer, onDismiss: () -> Unit) {
     val tapper = remember { TapTempo() }
-    var text by remember { mutableStateOf(player.bpm?.let(::bpmText).orEmpty()) }
-    fun set() { typedBpm(text)?.let { player.typeTempo(it) } }
+    var text by remember { mutableStateOf(player.metronome.bpm?.let(::bpmText).orEmpty()) }
+    fun set() { typedBpm(text)?.let { player.metronome.typeTempo(it) } }
     AlertDialog(onDismissRequest = onDismiss,
         confirmButton = { Button(onClick = { set(); onDismiss() }) { Text(stringResource(R.string.done)) } },
         title = { Text(stringResource(R.string.tempo)) },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp),
                 modifier = Modifier.verticalScroll(rememberScrollState())) {
-                val t = player.tempo
+                val t = player.metronome.tempo
                 Text((t?.bpm?.let { stringResource(R.string.bpm_metre, bpmText(it), t.metre) } ?: stringResource(R.string.no_tempo)) +
-                    if (player.bpmTapped) "  ·  " + stringResource(R.string.tempo_session) else "",
+                    if (player.metronome.bpmTapped) "  ·  " + stringResource(R.string.tempo_session) else "",
                     fontSize = 18.sp, fontWeight = FontWeight.SemiBold)
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     OutlinedTextField(value = text, singleLine = true, label = { Text(stringResource(R.string.bpm_short)) },
@@ -217,15 +218,15 @@ fun TempoDialog(player: SongPlayer, onDismiss: () -> Unit) {
                         modifier = Modifier.width(110.dp))
                     OutlinedButton(onClick = ::set, enabled = typedBpm(text) != null) { Text(stringResource(R.string.tempo_set)) }
                     OutlinedButton(onClick = {
-                        tapper.tap()?.let { player.typeTempo(it); text = bpmText(it) }
+                        tapper.tap()?.let { player.metronome.typeTempo(it); text = bpmText(it) }
                     }) { Text(stringResource(R.string.tap)) }
                 }
                 androidx.compose.foundation.layout.FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    if (t?.bpm != null) TextButton(onClick = { player.typeTempo(null); text = "" }) {
+                    if (t?.bpm != null) TextButton(onClick = { player.metronome.typeTempo(null); text = "" }) {
                         Text(stringResource(R.string.tempo_none))
                     }
-                    if (player.bpmTapped) {
-                        TextButton(onClick = { player.revertTempo(); text = player.bpm?.let(::bpmText).orEmpty() }) {
+                    if (player.metronome.bpmTapped) {
+                        TextButton(onClick = { player.metronome.revertTempo(); text = player.metronome.bpm?.let(::bpmText).orEmpty() }) {
                             Text(stringResource(R.string.tempo_back))
                         }
                         if (player.heard == null) TextButton(onClick = { player.saveTempo(); onDismiss() }) {

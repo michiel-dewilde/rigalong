@@ -6,6 +6,13 @@ import android.content.Intent
 import android.content.IntentFilter
 import android.os.Build
 import android.util.Log
+import com.rigalong.model.Library
+import com.rigalong.model.RackDevicePart
+import com.rigalong.model.RackEngine
+import com.rigalong.model.RackInstance
+import com.rigalong.model.RackLiveSet
+import com.rigalong.model.RackSlot
+import com.rigalong.model.RackSong
 import java.io.File
 
 /**
@@ -24,6 +31,7 @@ class TestHooks(
     private val router: AudioRouter,
     private val content: EngineContent,
     private val player: com.rigalong.play.SongPlayer,
+    private val library: Library,
     /** MEASURE: the latency probe, as Setup's button starts it. */
     private val measure: () -> Unit,
     private val setMasterDb: (Float) -> Unit,
@@ -196,10 +204,10 @@ class TestHooks(
             // -------------------------------------------------------- the stage
             // The stage, without the screen (1-based):  --ei song 2 --ei liveset 3
             "STAGE" -> stage(intent)
-            // A device's own-sound path end to end (SongPlayer.deviceSelfTest):  --ei liveset 1
-            "DEVICESELFTEST" -> player.deviceSelfTest(intent.getIntExtra("liveset", 1))
+            // A device's own-sound path end to end ([deviceSelfTest]):  --ei liveset 1
+            "DEVICESELFTEST" -> deviceSelfTest(intent.getIntExtra("liveset", 1))
             //   --es delays 0,0,10,10,50,50
-            "DEVICEWRITESELECT" -> player.deviceWriteSelectTest(
+            "DEVICEWRITESELECT" -> deviceWriteSelectTest(
                 (intent.getStringExtra("delays") ?: "0,0,0,0").split(',').mapNotNull { it.trim().toIntOrNull() })
             // The library goes, nothing else (instruments, SoundFonts and banks stay), and the
             // app ends; started again it seeds a fresh library.
@@ -221,14 +229,14 @@ class TestHooks(
         // A file in the app's own folder as the song's lead sheet:
         //   --es sheet leadsheet-test.pdf   --ei page +1 / -1 (a page-turner key)
         intent.getStringExtra("sheet")?.let { name ->
-            runCatching { player.attachSheetForTest(File(context.getExternalFilesDir(null), name)) }
+            runCatching { attachSheet(File(context.getExternalFilesDir(null), name)) }
                 .onFailure { Log.e("rigalong-stage", "sheet: $it") }
         }
         when (intent.getIntExtra("page", 0)) { 1 -> player.forwardKey(); -1 -> player.backKey() }
         // A controller event, as from a footswitch (I10.4): --ei cc 67 --ei value 127;
         // --es learn next|previous first to learn it.
-        intent.getStringExtra("learn")?.let { player.learn(it) }
-        intent.getStringExtra("clearcc")?.let { player.clearController(it) }
+        intent.getStringExtra("learn")?.let { player.switches.learn(it) }
+        intent.getStringExtra("clearcc")?.let { player.switches.clear(it) }
         if (intent.hasExtra("cc")) player.onController(intent.getIntExtra("cc", 0), intent.getIntExtra("value", 127))
         // A zip in the app's own folder, installed as an instrument (I8.8):  --es instrument test-sine.zip
         intent.getStringExtra("instrument")?.let { name ->
@@ -279,5 +287,64 @@ class TestHooks(
             }
             Log.i("rigalong-sysex", "done: $count repl${if (count == 1) "y" else "ies"}")
         }, "rigalong-sysex").start()
+    }
+
+    /** [file] as the stage song's lead sheet, as the editor attaches one. */
+    private fun attachSheet(file: File) {
+        val id = player.songEntry ?: return
+        val r = player.rack ?: return
+        val name = player.songNames.getOrNull(player.songIndex) ?: return
+        library.saveSong(id, name, r.copy(leadSheet = player.sheet.storePdf(file.readBytes())))
+        player.reload()
+        Log.i("rigalong-stage", "lead sheet attached to '$name': ${player.sheet.file?.name}, ${file.length()} B")
+    }
+
+    /**
+     * A device's own-sound path end to end, without the screen, on the first
+     * device that can own sounds (a CP-88). Imports its current sound, builds
+     * a song whose live set 1 owns it and whose live set 2 selects the
+     * device's first stored sound, hears it as the editor would (which writes
+     * the sound into the reserved area) at live set [liveSet]. Logs what it did
+     * under rigalong-stage; tools/cp88sysex reads a CP-88 back.
+     */
+    private fun deviceSelfTest(liveSet: Int) {
+        val devices = player.devices
+        Thread {
+            runCatching {
+                val d = devices.withSounds().firstOrNull() ?: error("no device that can own a sound")
+                val drv = devices.driver(d)
+                val (sound, name) = devices.importCurrent(d)
+                Log.i("rigalong-stage", "selftest: imported '$name' ${sound.short} from ${d.name}")
+                val first = drv.address.associate { it.key to it.range.first }.filterKeys { k -> drv.address.none { it.key == k && it.optional } }
+                val draft = RackSong(
+                    instances = listOf(RackInstance("sfizz", RackEngine.SFIZZ, RackSlot(level = 0.0))),
+                    liveSets = listOf(
+                        RackLiveSet("Own", devices = mapOf(d.name to
+                            RackDevicePart(d.kind, "own", sound = sound, soundName = name))),
+                        RackLiveSet("Select ${drv.describe(first)}", devices = mapOf(d.name to
+                            RackDevicePart(d.kind, "select", first))),
+                    ))
+                android.os.Handler(android.os.Looper.getMainLooper()).post {
+                    player.hear(null, draft, liveSet - 1)
+                    Thread { devices.settle(); Log.i("rigalong-stage", "selftest: live set $liveSet selected; ${devices.status}") }.start()
+                }
+            }.onFailure { Log.e("rigalong-stage", "selftest failed: $it") }
+        }.start()
+    }
+
+    /** [com.rigalong.play.DeviceRig.writeSelectTest] with two renamed copies of a library sound. */
+    private fun deviceWriteSelectTest(delays: List<Int>) {
+        val devices = player.devices
+        Thread {
+            runCatching {
+                val d = devices.withSounds().firstOrNull() ?: error("no device that can own a sound")
+                val f = devices.driver(d).sounds!!.formats.first { it.editable }
+                val base = library.deviceSounds(devices.driver(d).sounds!!.mediaType).firstNotNullOf { e ->
+                    e.version.target?.let { library.store.get(it.digest) } }
+                fun named(n: String) = f.fromText(f.toText(base).replaceFirst(Regex("(?m)^name: .*$"), "name: $n"))
+                for (line in devices.writeSelectTest(d, named("Write test A"), named("Write test B"), delays))
+                    Log.i("rigalong-devices", "writeselect: $line")
+            }.onFailure { Log.e("rigalong-devices", "writeselect failed: $it") }
+        }.start()
     }
 }

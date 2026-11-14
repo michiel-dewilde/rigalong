@@ -55,6 +55,7 @@ import com.rigalong.model.RackSong
 import com.rigalong.model.getTyped
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import com.rigalong.play.EngineRack
 import com.rigalong.play.SongPlayer
 import com.rigalong.play.EngineHost
 
@@ -78,27 +79,27 @@ internal fun SoundEditor(song: RackSong, inst: com.rigalong.model.RackInstance, 
     val part = scope?.let { song.liveSets.getOrNull(it) }?.parts?.get(id) ?: RackPart(plays = false)
     // Read with the song's patch on, so each value shown under a live set's own is the song's --
     // once a preset loading in the background has landed (it resets the engine), and the patch is on again.
-    var params by remember(id) { mutableStateOf<List<SongPlayer.ParamDesc>>(emptyList()) }
+    var params by remember(id) { mutableStateOf<List<EngineRack.ParamDesc>>(emptyList()) }
     var loaded by remember(id) { mutableStateOf(false) }
     LaunchedEffect(id) {
-        player.previewSlot(song, id, slot)
-        for (k in 0 until 200) { if (!player.loading(song, id)) break; delay(50) }
-        player.previewSlot(song, id, slot)
-        params = player.engineParams(song, id)
+        player.engines.previewSlot(song, id, slot)
+        for (k in 0 until 200) { if (!player.engines.loading(song, id)) break; delay(50) }
+        player.engines.previewSlot(song, id, slot)
+        params = player.engines.engineParams(song, id)
         loaded = true
     }
     // The song's value: its patch's, one it keeps for its live sets, or as heard from the preset.
-    fun songValue(p: SongPlayer.ParamDesc) = song.songValue(id, p.name)?.toFloat() ?: p.value
+    fun songValue(p: EngineRack.ParamDesc) = song.songValue(id, p.name)?.toFloat() ?: p.value
     // Every parameter some live set has a value of its own for.
     val ownSomewhere = song.liveSets.flatMap { l -> l.parts[id]?.params?.keys.orEmpty() }.toSet()
     // Heard as edited: this live set's own values on, or off again for the whole song.
     LaunchedEffect(scope, loaded) {
         for (p in params) if (p.name in ownSomewhere) {
-            player.auditionParam(song, id, p.name, part.params[p.name]?.toFloat() ?: songValue(p))
+            player.engines.auditionParam(song, id, p.name, part.params[p.name]?.toFloat() ?: songValue(p))
         }
     }
     // A control still waiting to be learned is not learned after the dialog is gone.
-    androidx.compose.runtime.DisposableEffect(id) { onDispose { player.cancelLearn() } }
+    androidx.compose.runtime.DisposableEffect(id) { onDispose { player.midiLearn.cancelControl() } }
     AlertDialog(onDismissRequest = onDismiss, modifier = WideDialog, properties = WideDialogProperties,
         confirmButton = { TextButton(onClick = { player.reload(); onDismiss() }) { Text(stringResource(R.string.done)) } },
         dismissButton = {
@@ -106,7 +107,7 @@ internal fun SoundEditor(song: RackSong, inst: com.rigalong.model.RackInstance, 
                 val sc = scope
                 if (sc == null) {
                     TextButton(onClick = {
-                        val now = player.engineParams(song, id).associate { it.name to it.value.toDouble() }
+                        val now = player.engines.engineParams(song, id).associate { it.name to it.value.toDouble() }
                         onChange(song.withSlot(id, slot.copy(params = now)))
                     }) { Text(stringResource(R.string.take_current)) }
                     TextButton(onClick = { onChange(song.withSlot(id, slot.copy(params = emptyMap()))) }) {
@@ -115,7 +116,7 @@ internal fun SoundEditor(song: RackSong, inst: com.rigalong.model.RackInstance, 
                 } else {
                     // Every value of this live set's own back to the song's.
                     TextButton(enabled = part.params.isNotEmpty(), onClick = {
-                        for (p in params) if (p.name in part.params) player.auditionParam(song, id, p.name, songValue(p))
+                        for (p in params) if (p.name in part.params) player.engines.auditionParam(song, id, p.name, songValue(p))
                         onChange(song.withPart(sc, id, part.copy(params = emptyMap())))
                     }) { Text(stringResource(R.string.clear)) }
                 }
@@ -158,12 +159,12 @@ internal fun SoundEditor(song: RackSong, inst: com.rigalong.model.RackInstance, 
                             trailing = {
                                 // A knob, wheel or pedal for it (MIDI learn): tap, then move the control.
                                 val cc = inst.controls[p.name]
-                                val learning = player.learningControl == "$id.${p.name}"
+                                val learning = player.midiLearn.learningControl == "$id.${p.name}"
                                 TextButton(onClick = {
                                     when {
-                                        learning -> player.cancelLearn()
+                                        learning -> player.midiLearn.cancelControl()
                                         cc != null -> onChange(song.withControl(id, p.name, null))
-                                        else -> player.learnControl("$id.${p.name}") { got ->
+                                        else -> player.midiLearn.control("$id.${p.name}") { got ->
                                             onChange(song.withControl(id, p.name, got))
                                         }
                                     }
@@ -177,7 +178,7 @@ internal fun SoundEditor(song: RackSong, inst: com.rigalong.model.RackInstance, 
                                 if (own && sc != null) {
                                     // Back to the song's value, or make this the song's.
                                     TextButton(onClick = {
-                                        player.auditionParam(song, id, p.name, songValue(p))
+                                        player.engines.auditionParam(song, id, p.name, songValue(p))
                                         onChange(song.withPart(sc, id, part.copy(params = part.params - p.name)))
                                     }) { Text("↺") }
                                     TextButton(onClick = { onChange(song.useInSong(sc, id, p.name)) }) {
@@ -185,7 +186,7 @@ internal fun SoundEditor(song: RackSong, inst: com.rigalong.model.RackInstance, 
                                     }
                                 }
                             }) { x ->
-                            player.auditionParam(song, id, p.name, x)
+                            player.engines.auditionParam(song, id, p.name, x)
                             if (sc == null) onChange(song.withSlot(id, slot.copy(params = slot.params + (p.name to x.toDouble()))))
                             else onChange(song.withLiveSetValue(sc, id, p.name, x.toDouble(), songValue(p).toDouble()))
                         }
@@ -334,12 +335,12 @@ internal fun PatchSaveDialog(decisions: List<PatchDecision>,
 internal fun ReverbEditor(song: RackSong, player: SongPlayer, onChange: (Map<String, Double>) -> Unit,
                          onDismiss: () -> Unit) =
     ParamEditor(stringResource(R.string.reverb), "reverb", song.reverb, player,
-        load = { player.previewReverb(song.reverb); player.reverbParams() },
-        audition = player::auditionReverb, onChange = onChange, onDismiss = onDismiss)
+        load = { player.engines.previewReverb(song.reverb); player.engines.reverbParams() },
+        audition = player.engines::auditionReverb, onChange = onChange, onDismiss = onDismiss)
 
 @Composable
 private fun ParamEditor(title: String, key: Any, current: Map<String, Double>, player: SongPlayer,
-                        load: () -> List<SongPlayer.ParamDesc>, audition: (String, Float) -> Unit,
+                        load: () -> List<EngineRack.ParamDesc>, audition: (String, Float) -> Unit,
                         onChange: (Map<String, Double>) -> Unit, onDismiss: () -> Unit,
                         header: (@Composable (Map<String, Double>) -> Unit)? = null) {
     val params = remember(key) { load() }
@@ -382,7 +383,7 @@ private val WideDialogProperties = androidx.compose.ui.window.DialogProperties(u
  * ("250 ms", "1/8") and the number where it cannot.
  */
 @Composable
-private fun ParamRow(p: SongPlayer.ParamDesc, v: Float, set: Boolean, display: (Float) -> String?,
+private fun ParamRow(p: EngineRack.ParamDesc, v: Float, set: Boolean, display: (Float) -> String?,
                      mark: Color? = null, trailing: (@Composable () -> Unit)? = null, onValue: (Float) -> Unit) {
     Row(verticalAlignment = Alignment.CenterVertically) {
         Text(p.name + if (mark != null) " ●" else "", modifier = Modifier.width(150.dp), fontSize = 14.sp,
@@ -409,12 +410,12 @@ internal fun FxEditor(title: String, song: RackSong, target: String?, current: c
                      player: SongPlayer, onChange: (com.rigalong.model.RackFx?) -> Unit, onDismiss: () -> Unit) {
     val key = target ?: "mix"
     var fx by remember(key) { mutableStateOf(current ?: com.rigalong.model.RackFx("off")) }
-    val params = remember(key, fx.type) { player.applyFx(song, target, fx); player.fxParams(song, target) }
+    val params = remember(key, fx.type) { player.engines.applyFx(song, target, fx); player.engines.fxParams(song, target) }
     fun put(f: com.rigalong.model.RackFx) { fx = f; onChange(f.takeIf { it.type != "off" }) }
     AlertDialog(onDismissRequest = onDismiss, modifier = WideDialog, properties = WideDialogProperties,
         confirmButton = { TextButton(onClick = { player.reload(); onDismiss() }) { Text(stringResource(R.string.done)) } },
         dismissButton = {
-            TextButton(onClick = { put(fx.copy(params = emptyMap())); player.applyFx(song, target, fx) }) {
+            TextButton(onClick = { put(fx.copy(params = emptyMap())); player.engines.applyFx(song, target, fx) }) {
                 Text(stringResource(R.string.clear))
             }
         },
@@ -432,8 +433,8 @@ internal fun FxEditor(title: String, song: RackSong, target: String?, current: c
                 LazyColumn(Modifier.height(420.dp)) {
                     itemsIndexed(params, key = { _, p -> fx.type + p.name }) { _, p ->
                         ParamRow(p, fx.params[p.name]?.toFloat() ?: p.value, fx.params.containsKey(p.name),
-                            display = { player.fxDisplay(song, target, p.name, it) }) { x ->
-                            player.auditionFx(song, target, p.name, x)
+                            display = { player.engines.fxDisplay(song, target, p.name, it) }) { x ->
+                            player.engines.auditionFx(song, target, p.name, x)
                             put(fx.copy(params = fx.params + (p.name to x.toDouble())))
                         }
                     }

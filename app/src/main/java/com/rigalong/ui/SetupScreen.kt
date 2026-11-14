@@ -36,6 +36,7 @@ import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.delay
 import androidx.compose.ui.res.stringResource
 import com.rigalong.R
+import com.rigalong.play.SwitchControllers
 import com.rigalong.play.SongPlayer
 import com.rigalong.play.EngineHost
 import com.rigalong.play.Environments
@@ -148,7 +149,7 @@ fun SetupScreen(player: SongPlayer, host: EngineHost, lib: Library) {
             }
             Spacer(Modifier.height(6.dp))
             Text(stringResource(R.string.switching), fontWeight = FontWeight.SemiBold)
-            for (action in SongPlayer.CONTROLLER_ACTIONS) {
+            for (action in SwitchControllers.ACTIONS) {
                 val label = stringResource(when (action) {
                     "next" -> R.string.cc_next
                     "previous" -> R.string.cc_previous
@@ -156,9 +157,9 @@ fun SetupScreen(player: SongPlayer, host: EngineHost, lib: Library) {
                     "countIn" -> R.string.cc_count_in
                     else -> R.string.cc_click
                 })
-                ControllerRow(label, player.controllers[action] ?: -1, player.learning == action, accent, dim,
-                    onLearn = { player.learn(if (player.learning == action) null else action) },
-                    onClear = { player.clearController(action) })
+                ControllerRow(label, player.switches.controllers[action] ?: -1, player.switches.learning == action, accent, dim,
+                    onLearn = { player.switches.learn(if (player.switches.learning == action) null else action) },
+                    onClear = { player.switches.clear(action) })
             }
             Text(stringResource(R.string.switching_note), color = dim, fontSize = 12.sp)
             Text(stringResource(R.string.keys_note), color = dim, fontSize = 12.sp)
@@ -170,20 +171,20 @@ fun SetupScreen(player: SongPlayer, host: EngineHost, lib: Library) {
             Text(stringResource(R.string.metronome), fontWeight = FontWeight.SemiBold)
             // The same options as the stage's tempo dialog.
             ClickOptions(player, host)
-            SetupToggle(stringResource(R.string.midi_clock), player.midiClock, accent, dim) {
-                player.midiClock = it; player.saveClickSettings()
+            SetupToggle(stringResource(R.string.midi_clock), player.metronome.midiClock, accent, dim) {
+                player.metronome.midiClock = it; player.metronome.saveClickSettings()
             }
             Text(stringResource(R.string.click_note), color = dim, fontSize = 12.sp)
             Spacer(Modifier.height(6.dp))
             Text(stringResource(R.string.lead_sheets), fontWeight = FontWeight.SemiBold)
-            SetupToggle(stringResource(R.string.two_up), player.sheetTwoUp, accent, dim) {
-                player.sheetTwoUp = it; player.saveSheetSettings()
+            SetupToggle(stringResource(R.string.two_up), player.sheet.twoUp, accent, dim) {
+                player.sheet.twoUp = it; player.sheet.saveSettings()
             }
-            SetupToggle(stringResource(R.string.half_turn), player.sheetHalfTurn, accent, dim) {
-                player.sheetHalfTurn = it; player.saveSheetSettings()
+            SetupToggle(stringResource(R.string.half_turn), player.sheet.halfTurn, accent, dim) {
+                player.sheet.halfTurn = it; player.sheet.saveSettings()
             }
-            SetupToggle(stringResource(R.string.keys_turn_pages), player.keysTurnPages, accent, dim) {
-                player.keysTurnPages = it; player.saveSheetSettings()
+            SetupToggle(stringResource(R.string.keys_turn_pages), player.sheet.keysTurnPages, accent, dim) {
+                player.sheet.keysTurnPages = it; player.sheet.saveSettings()
             }
         }
     }, second = { m ->

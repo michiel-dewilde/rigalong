@@ -51,7 +51,7 @@ import com.rigalong.play.EngineHost
 @Composable
 internal fun StageScreen(player: SongPlayer, host: EngineHost) {
     // With a lead sheet the screen is split between it and the controls (S9.1, S15.3).
-    val sheet = player.sheetFile
+    val sheet = player.sheet.file
     if (sheet == null) {
         StageControls(player, host, Modifier.fillMaxSize())
         return
@@ -59,7 +59,7 @@ internal fun StageScreen(player: SongPlayer, host: EngineHost) {
     BoxWithConstraints(Modifier.fillMaxSize()) {
         val portrait = maxHeight > maxWidth
         val sheetView = @Composable { m: Modifier ->
-            LeadSheetView(sheet, player.sheetPage, player.sheetTwoUp && !portrait, { player.sheetPages = it }, m)
+            LeadSheetView(sheet, player.sheet.page, player.sheet.twoUp && !portrait, { player.sheet.pages = it }, m)
         }
         if (portrait) {
             // Portrait: the sheet above, the controls below (S15.4).
@@ -188,7 +188,7 @@ private fun StageControls(player: SongPlayer, host: EngineHost, modifier: Modifi
             Text(stringResource(R.string.levels), color = Dim, fontSize = (14f * s).sp)
             // The sounds this live set does not play are one tap away.
             val all = player.rack?.instances.orEmpty()
-            val silent = all.count { player.playing[it.id] != true }
+            val silent = all.count { player.engines.playing[it.id] != true }
             if (silent > 0 && silent < all.size) {
                 Text(if (player.stageAllSounds) stringResource(R.string.playing_only) else stringResource(R.string.silent_more, silent),
                     color = Accent, fontSize = (14f * s).sp,
@@ -251,7 +251,7 @@ private fun stagePanelsMinWidth(player: SongPlayer, s: Float): Float {
 private fun stageSounds(player: SongPlayer): List<com.rigalong.model.RackInstance> {
     val all = player.rack?.instances.orEmpty()
     if (player.stageAllSounds) return all
-    return all.filter { player.playing[it.id] == true }.ifEmpty { all }
+    return all.filter { player.engines.playing[it.id] == true }.ifEmpty { all }
 }
 
 private const val LEVEL_MIN = 110f
@@ -289,14 +289,14 @@ private fun StagePanels(player: SongPlayer, host: EngineHost, s: Float, modifier
     val pad = 10f * s
     val panels = ArrayList<StagePanel>()
     for (inst in sounds) panels += StagePanel(LEVEL_MIN * s, 160f * s) { m ->
-        val plays = player.playing[inst.id] ?: false
+        val plays = player.engines.playing[inst.id] ?: false
         Column(m.background(Panel, RoundedCornerShape((10f * s).dp)).padding(pad.dp),
             horizontalAlignment = Alignment.CenterHorizontally) {
             // A long press on its name opens its patch in the editor.
             Text(rackNow!!.displayName(inst), fontWeight = FontWeight.SemiBold, color = if (plays) Accent else Dim,
                 fontSize = (16f * s).sp, maxLines = 1, overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.combinedClickable(onClick = {}, onLongClick = { player.requestEdit(instance = inst.id) }))
-            val level = player.levels[inst.id] ?: 0f
+            val level = player.engines.levels[inst.id] ?: 0f
             // The level first: a narrow panel cuts off the word, which the name's colour says too.
             Text("%.0f %%".format(level * 100) + "  ·  " +
                 stringResource(if (plays) R.string.engine_playing else R.string.engine_silent),
@@ -480,12 +480,12 @@ private fun TempoBox(player: SongPlayer, s: Float = 1f) {
     if (dialog) TempoDialog(player) { dialog = false }
     var now by remember { mutableStateOf(System.nanoTime()) }
     LaunchedEffect(Unit) { while (true) { now = System.nanoTime(); delay(16) } }
-    val bpm = player.bpm
+    val bpm = player.metronome.bpm
     val beatNs = bpm?.let { (60e9 / it).toLong() }
-    val phase = if (beatNs != null && beatNs > 0) ((now - player.beatOrigin).mod(beatNs)).toDouble() / beatNs else 1.0
+    val phase = if (beatNs != null && beatNs > 0) ((now - player.metronome.beatOrigin).mod(beatNs)).toDouble() / beatNs else 1.0
     // The beat blinks only while the metronome runs (S12.6).
-    val lit = player.clickRunning && now >= player.beatOrigin && phase < 0.15
-    val count = player.clickBeat(now)
+    val lit = player.metronome.clickRunning && now >= player.metronome.beatOrigin && phase < 0.15
+    val count = player.metronome.clickBeat(now)
     // One framed group, so its start button is never taken for the next song's ▶ beside it.
     Row(verticalAlignment = Alignment.CenterVertically,
         modifier = Modifier.border(1.dp, Line, RoundedCornerShape((12f * s).dp)).padding((6f * s).dp)) {
@@ -502,18 +502,18 @@ private fun TempoBox(player: SongPlayer, s: Float = 1f) {
         Column(horizontalAlignment = Alignment.CenterHorizontally,
             modifier = Modifier.clickable { dialog = true }.padding(horizontal = (6f * s).dp, vertical = (4f * s).dp)) {
             Text(bpm?.let { bpmText(it) + " BPM" } ?: stringResource(R.string.no_tempo), fontSize = (18f * s).sp,
-                color = if (player.bpmTapped) Warn else Color.White)
-            Text(player.tempo?.metre ?: "", fontSize = (13f * s).sp, color = Dim)
+                color = if (player.metronome.bpmTapped) Warn else Color.White)
+            Text(player.metronome.tempo?.metre ?: "", fontSize = (13f * s).sp, color = Dim)
         }
         Spacer(Modifier.width((8f * s).dp))
-        BigButton(stringResource(R.string.tap), enabled = true, width = 88, scale = s) { player.tap() }
+        BigButton(stringResource(R.string.tap), enabled = true, width = 88, scale = s) { player.metronome.tap() }
         Spacer(Modifier.width((8f * s).dp))
         // Play / Stop, and Count-in (S12.6); what they sound and show is the setup's.
-        BigButton(stringResource(if (player.clickRunning) R.string.click_stop else R.string.metronome_start),
-            enabled = bpm != null || player.clickRunning, width = 104, selected = player.clickRunning,
-            fontSize = 22, scale = s) { player.toggleClick() }
+        BigButton(stringResource(if (player.metronome.clickRunning) R.string.click_stop else R.string.metronome_start),
+            enabled = bpm != null || player.metronome.clickRunning, width = 104, selected = player.metronome.clickRunning,
+            fontSize = 22, scale = s) { player.metronome.toggleClick() }
         Spacer(Modifier.width((8f * s).dp))
-        BigButton(stringResource(R.string.count_in), enabled = bpm != null, width = 104, selected = player.countingIn,
-            fontSize = 22, scale = s) { player.countIn() }
+        BigButton(stringResource(R.string.count_in), enabled = bpm != null, width = 104, selected = player.metronome.countingIn,
+            fontSize = 22, scale = s) { player.metronome.countIn() }
     }
 }

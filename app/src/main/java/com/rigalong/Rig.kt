@@ -45,8 +45,8 @@ class Rig private constructor(private val app: Context) {
     private val clickOutputs = ClickOutputs(app)
     val host: EngineHost = Host()
     val player = SongPlayer(library, host, prefs)
-    init { clickOutputs.use(player.clickOutput) }
-    private val hooks = TestHooks(app, router, content, player, measure = ::measureLatency, setMasterDb = ::setMasterDb)
+    init { clickOutputs.use(player.metronome.clickOutput) }
+    private val hooks = TestHooks(app, router, content, player, library, measure = ::measureLatency, setMasterDb = ::setMasterDb)
     private val handler = Handler(Looper.getMainLooper())
 
     /** The activity showing the rig, while there is one: for what only an activity can do (ask for a permission, finish). */

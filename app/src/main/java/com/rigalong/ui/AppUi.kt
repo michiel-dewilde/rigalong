@@ -82,10 +82,10 @@ fun AppUi(player: SongPlayer, lib: Library, host: EngineHost) {
     }
     LaunchedEffect(Unit) { player.backToStage = { screen = 0 } }
     LaunchedEffect(Unit) { player.showSongs = { screen = 1 } }
-    LaunchedEffect(Unit) { player.watchControllers() }
+    LaunchedEffect(Unit) { player.switches.watch() }
     LaunchedEffect(Unit) {
         while (true) {
-            player.pollSelections()
+            player.poll()
             delay(50)
         }
     }
@@ -149,7 +149,7 @@ private fun TopBar(player: SongPlayer, health: String, screen: Int, songsUnsaved
         }
     }
     val panic: @Composable () -> Unit = {
-        Button(onClick = player::panic, colors = ButtonDefaults.buttonColors(containerColor = Danger),
+        Button(onClick = player.engines::panic, colors = ButtonDefaults.buttonColors(containerColor = Danger),
             modifier = Modifier.height(48.dp)) { Text(stringResource(R.string.panic), fontWeight = FontWeight.Bold, color = Color.White) }
     }
     androidx.compose.foundation.layout.BoxWithConstraints(Modifier.fillMaxWidth()) {

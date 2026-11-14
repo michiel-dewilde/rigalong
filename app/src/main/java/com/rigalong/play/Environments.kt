@@ -31,21 +31,21 @@ object Environments {
                 KEYS to Binding(mode = r.midiMode, device = DeviceMatch(name = r.midiName)),
             ),
             externalSynths = player.devices.devices.toList(),
-            switching = SongPlayer.CONTROLLER_ACTIONS.mapNotNull { a ->
-                player.controllers[a]?.takeIf { it >= 0 }?.let { SwitchSource(KEYS, "cc", number = it, action = a) }
+            switching = SwitchControllers.ACTIONS.mapNotNull { a ->
+                player.switches.controllers[a]?.takeIf { it >= 0 }?.let { SwitchSource(KEYS, "cc", number = it, action = a) }
             },
-            twoUp = player.sheetTwoUp,
-            halfTurn = player.sheetHalfTurn,
-            keysTurnPages = player.keysTurnPages,
-            clickPort = MAIN_OUT.takeIf { player.clickSound != SongPlayer.Presence.OFF },
-            clickContinuous = player.clickSound == SongPlayer.Presence.ON,
-            clickSound = player.clickSound.name,
-            barCount = player.barCount.name,
-            keepGoing = player.keepGoing,
-            countInBars = player.countInBars,
-            clickLevel = player.clickLevel.toDouble(),
-            midiClockPort = KEYS.takeIf { player.midiClock },
-            clickOutput = player.clickOutput,
+            twoUp = player.sheet.twoUp,
+            halfTurn = player.sheet.halfTurn,
+            keysTurnPages = player.sheet.keysTurnPages,
+            clickPort = MAIN_OUT.takeIf { player.metronome.clickSound != Metronome.Presence.OFF },
+            clickContinuous = player.metronome.clickSound == Metronome.Presence.ON,
+            clickSound = player.metronome.clickSound.name,
+            barCount = player.metronome.barCount.name,
+            keepGoing = player.metronome.keepGoing,
+            countInBars = player.metronome.countInBars,
+            clickLevel = player.metronome.clickLevel.toDouble(),
+            midiClockPort = KEYS.takeIf { player.metronome.midiClock },
+            clickOutput = player.metronome.clickOutput,
             doNotDisturb = host.stageDnd(),
             masterDb = host.masterDb().toDouble(),
         )
@@ -60,26 +60,26 @@ object Environments {
             bufferMs = out?.bufferMs?.toInt() ?: com.rigalong.UsbBuffers.DEFAULT_MS))
         player.devices.update(env.externalSynths)
         player.devices.forget()
-        player.setControllers(env.switching.filter { it.kind == "cc" && it.number != null }
+        player.switches.set(env.switching.filter { it.kind == "cc" && it.number != null }
             .associate { it.action to it.number!! })
-        player.sheetTwoUp = env.twoUp
-        player.sheetHalfTurn = env.halfTurn
-        player.keysTurnPages = env.keysTurnPages
-        player.saveSheetSettings()
+        player.sheet.twoUp = env.twoUp
+        player.sheet.halfTurn = env.halfTurn
+        player.sheet.keysTurnPages = env.keysTurnPages
+        player.sheet.saveSettings()
         // Older environments: a click port or none, continuous or a count-in (and on 2026-10-12, a mode).
         val legacy = env.clickMode ?: if (env.clickContinuous) "CONTINUOUS" else "COUNT_IN"
-        player.clickSound = env.clickSound?.let { runCatching { SongPlayer.Presence.valueOf(it) }.getOrNull() } ?: when {
-            env.clickPort == null -> SongPlayer.Presence.OFF
-            legacy == "CONTINUOUS" -> SongPlayer.Presence.ON
-            else -> SongPlayer.Presence.COUNT_IN
+        player.metronome.clickSound = env.clickSound?.let { runCatching { Metronome.Presence.valueOf(it) }.getOrNull() } ?: when {
+            env.clickPort == null -> Metronome.Presence.OFF
+            legacy == "CONTINUOUS" -> Metronome.Presence.ON
+            else -> Metronome.Presence.COUNT_IN
         }
-        player.barCount = env.barCount?.let { runCatching { SongPlayer.Presence.valueOf(it) }.getOrNull() } ?: SongPlayer.Presence.ON
-        player.keepGoing = env.keepGoing ?: (legacy != "COUNT_IN")
-        player.countInBars = env.countInBars ?: 1
-        player.clickLevel = env.clickLevel.toFloat()
-        player.midiClock = env.midiClockPort != null
-        player.clickOutput = env.clickOutput
-        player.saveClickSettings()
+        player.metronome.barCount = env.barCount?.let { runCatching { Metronome.Presence.valueOf(it) }.getOrNull() } ?: Metronome.Presence.ON
+        player.metronome.keepGoing = env.keepGoing ?: (legacy != "COUNT_IN")
+        player.metronome.countInBars = env.countInBars ?: 1
+        player.metronome.clickLevel = env.clickLevel.toFloat()
+        player.metronome.midiClock = env.midiClockPort != null
+        player.metronome.clickOutput = env.clickOutput
+        player.metronome.saveClickSettings()
         host.setStageDnd(env.doNotDisturb)
         env.masterDb?.let { host.setMasterDb(it.toFloat()) }
         // After the reroute has settled -- it runs on its own thread and takes
