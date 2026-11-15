@@ -56,10 +56,10 @@ fun AppUi(player: SongPlayer, lib: Library, host: EngineHost) {
     var screen by remember { mutableIntStateOf(0) }
     var health by remember { mutableStateOf("") }
     // The song open in Songs outlives the screen -- and the app: unsaved edits are kept on disk.
-    val songsEdit = remember { SongsEdit().also { it.restore(lib) } }
+    val songsEdit = remember { SongsEdit(lib, player).also { it.restore() } }
     LaunchedEffect(songsEdit.editing, songsEdit.editName) {
         delay(400)
-        withContext(kotlinx.coroutines.Dispatchers.IO) { runCatching { songsEdit.persist(lib) } }
+        withContext(kotlinx.coroutines.Dispatchers.IO) { runCatching { songsEdit.persist() } }
     }
     // The on-screen keys whenever there is no MIDI input to play from (S20.4), on every screen.
     var keys by remember { mutableStateOf(false) }

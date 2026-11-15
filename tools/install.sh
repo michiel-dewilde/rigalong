@@ -1,8 +1,12 @@
 #!/bin/bash
-# install.sh : the release APK onto the tablet, when no USB dialog is up and nobody plays
-# (the note counter stands still; no "midi pkt" line at all = no key played since the app started).
+# install.sh : the release APK onto the tablet, when no USB dialog is up and nobody plays.
+# Nobody plays = the note counter of the app's own "midi pkt" log line stands still for 10 s
+# (no such line since the app started = no key played since then).
 ADB=/c/Users/michi/AppData/Local/Android/Sdk/platform-tools/adb.exe
-notes() { $ADB shell "logcat -d -t 400" | grep 'midi pkt' | tail -1 | sed -E 's/.* on=([0-9]+) off.*->.*/\1/' | tr -d '\r'; }
+notes() {
+  $ADB shell 'logcat -d --pid=$(pidof com.rigalong)' | grep 'midi pkt' | tail -1 |
+    sed -E 's/.* on=([0-9]+) off.*->.*/\1/' | tr -d '\r'
+}
 a=$(notes); sleep 10; b=$(notes)
 d=$($ADB shell "dumpsys activity activities | grep -c UsbPermissionActivity" | tr -d '\r')
 echo "notes $a -> $b, dialog $d"

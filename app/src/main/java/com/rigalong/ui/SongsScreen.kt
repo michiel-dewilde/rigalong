@@ -63,7 +63,7 @@ import com.rigalong.play.EngineHost
  * [restore]): closing the app or a crash loses nothing (Michiel, 2026-11-13);
  * "Back to saved" lets the edits go.
  */
-class SongsEdit {
+class SongsEdit(private val lib: Library, private val player: SongPlayer) {
     var selected by mutableStateOf<Digest?>(null)
     var editing by mutableStateOf<Pair<Digest?, RackSong>?>(null)
     var editName by mutableStateOf("")
@@ -75,6 +75,94 @@ class SongsEdit {
     /** The setlist the Songs panel shows, chosen there; null: the one on stage. */
     var setlist by mutableStateOf<Digest?>(null)
     val unsaved: Boolean get() = editing?.let { (id, song) -> id == null || song != original || editName != originalName } ?: false
+    /** Counts what was changed in the library from here, so the lists read it again. */
+    var revision by mutableIntStateOf(0)
+        private set
+
+    /** The setlist edited here: the one chosen in the panel, else the one on stage. */
+    val setlistId: Digest? get() = setlist?.takeIf { lib.store.entry(it) != null } ?: player.setlistId
+
+    /** The library was changed from here: the lists and the stage read it again. */
+    fun changed() { revision++; player.reload() }
+
+    fun pickSetlist(id: Digest) { setlist = id; revision++ }
+    fun putOnStage(id: Digest) { player.openSetlist(id); revision++ }
+
+    /** Song [id] as saved, in the editor; edits to what was open are let go. */
+    fun open(id: Digest) {
+        selected = id
+        val e = lib.store.entry(id)
+        val rack = lib.song(id)?.let { lib.rackSong(it) }
+        if (e != null && rack != null) { editing = id to rack; editName = e.version.name; original = rack; originalName = editName }
+    }
+
+    /** A song that is not in the library yet, in the editor. */
+    fun startNew(song: RackSong, name: String, intoSetlist: Boolean) {
+        newIntoSetlist = intoSetlist
+        editing = null to song
+        original = null
+        editName = name
+        selected = null
+    }
+
+    /** The library patches saving the open song would change, each a choice for the player (I8.5, I8.13). */
+    fun patchDecisions(): List<Library.PatchDecision> =
+        editing?.let { (id, song) -> lib.patchDecisions(original, song, id) }.orEmpty()
+
+    /**
+     * Saves the open song, as one change with all that goes with it: [moves]
+     * (per library patch its new content and the other songs that move on to
+     * it), and a new song's place at the end of the setlist. The sounds whose
+     * library patch is in [only] let go of it and keep their own ("only in
+     * this song"). The stage reads the library again; a live set that was
+     * being heard is heard again. A saved song without edits is left alone.
+     */
+    fun save(moves: Map<Digest, Pair<com.rigalong.model.Patch, Collection<Digest>>> = emptyMap(), only: Set<Digest> = emptySet()) {
+        val (was, edited) = editing ?: return
+        // Nothing to save: no version, and no Undo step, for a song that is as the library has it.
+        if (was != null && !unsaved && lib.song(was) != null) return
+        val song = if (only.isEmpty()) edited else edited.copy(instances = edited.instances.map {
+            if (it.slot.libraryPatch in only) it.copy(slot = it.slot.copy(libraryPatch = null)) else it
+        })
+        val into = setlistId
+        val id = lib.inOneChange("song", editName) {
+            val id = lib.saveSongAndPatches(was, editName, song, moves)
+            if (was == null && into != null && newIntoSetlist) {
+                val ids = lib.songsOf(into).mapNotNull { it.first?.id } + id
+                lib.saveSetlist(into, lib.store.entry(into)?.version?.name ?: player.setlistName, ids)
+            }
+            id
+        }
+        editing = id to song
+        original = song
+        originalName = editName
+        selected = id
+        revision++
+        val wasHeard = player.heard?.takeIf { it.first == was }?.second
+        player.reload()
+        wasHeard?.let { player.hear(id, song, it) }
+    }
+
+    /** The open song saved as another one, [name], and that one opened. */
+    fun saveCopy(name: String) {
+        val song = editing?.second ?: return
+        val id = lib.saveSong(null, name, song)
+        revision++
+        open(id)
+    }
+
+    /** The library's last action undone, whole; the open song as it is after that. */
+    fun undo() {
+        lib.undo()
+        revision++
+        editing?.first?.let { open(it) }
+        player.reload()
+    }
+
+    /** The saved song back, the edits let go (a song that has been saved). */
+    fun backToSaved() {
+        editing?.first?.let { open(it); player.reload() }
+    }
 
     /**
      * Writes the open song to [Library.draftFile] while it has unsaved edits,
@@ -82,7 +170,7 @@ class SongsEdit {
      * objects (content-addressed, unreferenced until saved); the file holds
      * their digests and what the editor needs around them. Off the main thread.
      */
-    fun persist(lib: Library) {
+    fun persist() {
         val ed = editing
         if (ed == null || !unsaved) { lib.draftFile.delete(); return }
         val j = org.json.JSONObject()
@@ -99,7 +187,7 @@ class SongsEdit {
     }
 
     /** The song that had unsaved edits when the app last stopped, open again as it was. */
-    fun restore(lib: Library) {
+    fun restore() {
         val f = lib.draftFile
         if (!f.exists()) return
         runCatching {
@@ -122,50 +210,21 @@ class SongsEdit {
 
 @Composable
 internal fun SongsScreen(player: SongPlayer, lib: Library, host: EngineHost, st: SongsEdit) {
-    var revision by remember { mutableIntStateOf(0) }
-    // The setlist edited here: the one chosen in the panel, else the one on stage.
-    val setlistId = st.setlist?.takeIf { lib.store.entry(it) != null } ?: player.setlistId
-    var selected by st::selected
-    var editing by st::editing
-    var editName by st::editName
+    val revision = st.revision
+    val setlistId = st.setlistId
+    val selected = st.selected
+    val editing = st.editing
+    val editName = st.editName
     var focus by remember { mutableStateOf<SongPlayer.EditRequest?>(null) }
     // A phone shows the setlist or the editor: whether the list is back in front of an open song.
     var listShown by remember { mutableStateOf(false) }
-    var newIntoSetlist by st::newIntoSetlist
-    var original by st::original
-    var originalName by st::originalName
     var decisions by remember { mutableStateOf<List<Library.PatchDecision>>(emptyList()) }
     // Another song asked for while this one has unsaved edits: what to do once the player says.
     var pending by remember { mutableStateOf<(() -> Unit)?>(null) }
     fun guarded(action: () -> Unit) { if (st.unsaved) pending = action else action() }
     val newSongName = stringResource(R.string.new_song)
     val copyName = stringResource(R.string.copy_of, editName)
-    fun open(id: Digest) {
-        selected = id
-        listShown = false
-        val e = lib.store.entry(id)
-        val rack = lib.song(id)?.let { lib.rackSong(it) }
-        if (e != null && rack != null) { editing = id to rack; editName = e.version.name; original = rack; originalName = editName }
-    }
-    fun save(moves: Map<Digest, Pair<com.rigalong.model.Patch, Collection<Digest>>>) {
-        val ed = editing ?: return
-        val id = lib.inOneChange("song", editName) {
-            val id = lib.saveSongAndPatches(ed.first, editName, ed.second, moves)
-            if (ed.first == null && setlistId != null && newIntoSetlist) {
-                val ids = lib.songsOf(setlistId).mapNotNull { it.first?.id } + id
-                lib.saveSetlist(setlistId, lib.store.entry(setlistId)?.version?.name ?: player.setlistName, ids)
-            }
-            id
-        }
-        editing = id to ed.second
-        original = ed.second
-        originalName = editName
-        selected = id
-        revision++
-        val wasHeard = player.heard?.takeIf { it.first == ed.first }?.second
-        player.reload()
-        wasHeard?.let { player.hear(id, ed.second, it) }
-    }
+    fun open(id: Digest) { listShown = false; st.open(id) }
     // While a live set of the open song is heard, the engine follows the edits (after a pause).
     LaunchedEffect(editing) {
         val ed = editing ?: return@LaunchedEffect
@@ -193,16 +252,12 @@ internal fun SongsScreen(player: SongPlayer, lib: Library, host: EngineHost, st:
                 onNew = { intoSetlist ->
                     guarded {
                         listShown = false
-                        newIntoSetlist = intoSetlist
-                        editing = null to RackSong.starter(preset = host.currentInstrument())
-                        original = null
-                        editName = newSongName
-                        selected = null
+                        st.startNew(RackSong.starter(preset = host.currentInstrument()), newSongName, intoSetlist)
                     }
                 },
-                onChanged = { revision++; player.reload() },
-                onPickSetlist = { st.setlist = it; revision++ },
-                onPutOnStage = { player.openSetlist(it); revision++ })
+                onChanged = st::changed,
+                onPickSetlist = st::pickSetlist,
+                onPutOnStage = st::putOnStage)
         }
         val editor = @Composable {
             val ed = editing
@@ -213,31 +268,22 @@ internal fun SongsScreen(player: SongPlayer, lib: Library, host: EngineHost, st:
                     // Undo: the last action, whole (a save that moved patches, songs and setlists).
                     val last = remember(revision) { lib.lastChange() }
                     if (last != null) {
-                        TextButton(onClick = {
-                            lib.undo()
-                            revision++
-                            ed.first?.let { open(it) }
-                            player.reload()
-                        }) { Text(stringResource(R.string.undo_named, last.name)) }
+                        TextButton(onClick = st::undo) { Text(stringResource(R.string.undo_named, last.name)) }
                     }
                     SongEditor(ed.second, editName, host, player, lib, focus?.takeIf { it.song == ed.first },
-                        unsaved = ed.first == null || ed.second != original || editName != originalName,
+                        unsaved = st.unsaved,
                         // The saved song back, the edits let go (only for a song that has been saved).
-                        onBackToSaved = ed.first?.takeIf { st.unsaved }?.let { id -> { open(id); player.reload() } },
+                        onBackToSaved = if (ed.first != null && st.unsaved) st::backToSaved else null,
                         hearing = player.heard?.takeIf { it.first == ed.first }?.second,
                         onHear = { i -> player.hear(ed.first, ed.second, i) },
-                        onName = { editName = it },
-                        onChange = { editing = ed.first to it },
+                        onName = { st.editName = it },
+                        onChange = { st.editing = ed.first to it },
                         onSave = {
                             // A changed library patch: everywhere, only here, or chosen songs (I8.5, I8.13).
-                            val d = lib.patchDecisions(original, ed.second, ed.first)
-                            if (d.isEmpty()) save(emptyMap()) else decisions = d
+                            val d = st.patchDecisions()
+                            if (d.isEmpty()) st.save() else decisions = d
                         },
-                        onSaveCopy = {
-                            val id = lib.saveSong(null, copyName, ed.second)
-                            revision++
-                            open(id)
-                        })
+                        onSaveCopy = { st.saveCopy(copyName) })
                 }
             }
         }
@@ -249,16 +295,7 @@ internal fun SongsScreen(player: SongPlayer, lib: Library, host: EngineHost, st:
                 dismissButton = { TextButton(onClick = { pending = null; go() }) { Text(stringResource(R.string.discard_changes), color = Danger) } })
         }
         if (decisions.isNotEmpty()) {
-            PatchSaveDialog(decisions, onSave = { moves, only ->
-                decisions = emptyList()
-                // "Only in this song": the slot lets go of the library patch and keeps its own.
-                if (only.isNotEmpty()) editing = editing?.let { (id, r) ->
-                    id to r.copy(instances = r.instances.map {
-                        if (it.slot.libraryPatch in only) it.copy(slot = it.slot.copy(libraryPatch = null)) else it
-                    })
-                }
-                save(moves)
-            },
+            PatchSaveDialog(decisions, onSave = { moves, only -> decisions = emptyList(); st.save(moves, only) },
                 onDismiss = { decisions = emptyList() })
         }
         if (wide) {
