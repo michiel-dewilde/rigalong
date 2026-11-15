@@ -12,6 +12,8 @@ import android.media.midi.MidiManager
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
+import com.rigalong.DeviceLists.MidiChoice
+import com.rigalong.DeviceLists.OutputChoice
 import com.rigalong.model.devices.Devices
 
 /**
@@ -74,29 +76,10 @@ class AudioRouter(private val context: Context, private val prefs: SharedPrefere
         private set
 
     private var midiDevice: MidiDevice? = null
-    // 2 bursts. Once the render thread exists the callback is a memcpy that
-    // cannot overrun, so this buffer no longer has to cover synthesis time at
-    // all, only the OS waking the callback late. The earlier 6 was sized for a
-    // deadline that no longer applies, and 3 was AAudio's nominal floor rather
-    // than anything measured.
-    //
-    // MEASURED, on the tablet's own speaker, under load rather than idle -- an
-    // empty graph survives any buffer, so a sweep of a silent engine measures
-    // nothing. A note a second plus a chord every fourth, 30 s per setting:
-    //
-    //     3 bursts -> 12 ms, 0 xruns
-    //     2 bursts ->  8 ms, 0 xruns     <- here
-    //     1 burst  ->  4 ms, 1 xrun
-    //
-    // So 2 is the last setting that holds. This does NOT relax the per-callback
-    // deadline -- the callback still runs on the same block -- it buys slack
-    // before a late callback becomes an audible dropout, and one burst of slack
-    // turned out to be one too few.
-    //
-    // Deliberately NOT restored from prefs. The `bursts` extra on the ROUTE
-    // test hook writes the pref, which is useful for sweeping, but a
-    // sweep that ended at 1 should not quietly become the setting the app boots
-    // into tomorrow night. Every launch starts from the value that was measured.
+    // 2 bursts: the last setting that held under load (3 -> 12 ms and 2 -> 8 ms
+    // without an xrun, 1 -> 4 ms with one; FINDINGS 9c). NOT restored from
+    // prefs: a sweep of the ROUTE hook that ended at 1 must not become what
+    // the app starts with tomorrow night.
     private var bufferBursts = 2
 
     /**
@@ -121,49 +104,21 @@ class AudioRouter(private val context: Context, private val prefs: SharedPrefere
     /** EXCLUSIVE by default; the SHARING test hook switches. */
     private var wantExclusive = true
 
-    // ASK FOR SOMETHING THE DEVICE DOES NOT DECLARE, deliberately and only for
-    // a measurement. Zero means "use what the device declares", which is the
-    // shipped behaviour and the only behaviour a user ever gets.
-    //
-    // This exists because of what Android's policy dump says on the phone:
-    // the MMAP mix port that EXCLUSIVE comes from -- "mmap_no_irq_out" -- has
-    // exactly ONE profile, 48000 Hz and PCM_16_BIT, while the CP-88 port has
-    // exactly one profile, 44100 Hz and PCM_24_BIT_PACKED. So exclusive on
-    // this device is not merely "available at 48 kHz"; it is available ONLY
-    // through a port that cannot carry the CP-88's rate OR its word length,
-    // and the HAL therefore converts both. The question worth measuring is
-    // what that conversion costs in latency and quality -- not whether it is
-    // happening, which the dump already settles.
-    //
-    //   adb shell am broadcast -a com.rigalong.RATE --ei hz 48000 --ei fmt 1
-    //   adb shell am broadcast -a com.rigalong.RATE --ei hz 0 --ei fmt 0
+    // A rate and format the device does NOT declare, for a measurement only
+    // (the RATE hook; FINDINGS 9c). Zero: what the device declares, which is
+    // all a player ever gets.
     private var rateOverride = 0
     private var formatOverride = 0
 
     /**
      * Brings the rig back when the CP-88 reappears, and gets it OFF the tablet
-     * speaker if it ever lands there.
-     *
-     * The first version of this watched only for `running == false`, and a real
-     * unplug never produced that. Here is what a real unplug actually did:
-     *
-     *   stream error after close: ErrorDisconnected
-     *   ...got Legacy, devIds = [2], perf = NO, burst = 882
-     *   stream recovered after disconnect, on device 10051 (attempt 1)
-     *
-     * Asking for a device id that no longer exists does not fail. AAudio falls
-     * back to the built-in speaker and returns OK, so the engine "recovered",
-     * `running` stayed true, and this function never ran. The native side now
-     * refuses a stream that came back on the wrong device — but the check that
-     * matters is here, because only this side can ask AudioManager which device
-     * the CP-88 is TODAY, and a replug gives it a new id.
-     *
-     * So there are two failures to notice, not one:
+     * speaker if it ever lands there. Two failures to notice, not one:
      *   * not running at all, and the CP-88 is available again;
-     *   * running, but on something that is not the CP-88.
-     *
-     * The second is the dangerous one. It is silent: audio "works", the meters
-     * move, and the sound is coming out of a speaker nobody on a stage can hear.
+     *   * running, but on something that is not the CP-88 -- the dangerous one:
+     *     AAudio answers a device id that is gone with the built-in speaker
+     *     and OK, the meters move, and nobody on a stage hears it.
+     * Only this side can ask which device the CP-88 is today; a replug gives
+     * it a new id (FINDINGS 9c).
      */
     fun watch() {
         // A routing change deliberately leaves the output closed for seconds --
@@ -191,22 +146,10 @@ class AudioRouter(private val context: Context, private val prefs: SharedPrefere
             if (deviceLostSince == 0L) { deviceLostSince = now; return }
             if (now - deviceLostSince < 2000L || now - lastRestartAttempt < 2000L) return
 
-            // A retry is for something TRANSIENT -- a jogged cable, an
-            // interface the kernel has not let go of yet. It is not a way to
-            // keep asking a question that has already been answered.
-            //
-            // Michiel's report of a "connect/disconnect loop" was exactly this:
-            // the clock request failed with EBUSY, which it was always going to
-            // do, and the watchdog re-routed every two seconds for as long as
-            // the app was open. Each pass tore the MIDI down and built it back,
-            // which is why notes went missing while it spun.
-            //
-            // So the retries are counted. After kDirectRetries the mode is left
-            // exactly as the player chose it -- their setting is not ours to
-            // change behind their back -- but the ALSA engine is started, so
-            // the instrument MAKES SOUND while the reason sits on the screen.
-            // Silence with a correct setting is worse than sound with a
-            // complaint, on a stage most of all.
+            // A retry is for something transient. After kDirectRetries the
+            // mode stays as the player chose it, but the ALSA engine is
+            // started: sound with a complaint on the screen beats silence with
+            // a correct setting (the "connect/disconnect loop", FINDINGS 9c).
             if (directRetries >= kDirectRetries) {
                 if (!alsaFallbackOn) {
                     alsaFallbackOn = true
@@ -258,24 +201,10 @@ class AudioRouter(private val context: Context, private val prefs: SharedPrefere
         if (now - lastRestartAttempt < 2000L) return
         lastRestartAttempt = now
 
-        // No CP-88. Two bad answers, and the least bad one depends on where you
-        // are standing.
-        //
-        // The original rule was to refuse the tablet's own speaker outright,
-        // because on a stage a speaker nobody can hear is worse than silence:
-        // the meters move, the player believes the rig works, and the failure
-        // goes unnoticed until someone asks why the keyboard is quiet.
-        //
-        // But measured 2026-09-21: pulling the cable left the app silent and
-        // STUCK -- no stream, and playing did nothing until it was restarted.
-        // That is not a rig that "works without the CP-88" in any sense, and it
-        // is a trap anywhere the CP-88 is simply not part of the setup.
-        //
-        // So: fall back to the built-in speaker, but only after the CP-88 has
-        // been missing for a good while, and SAY SO loudly -- findOutputDeviceId
-        // already labels it "built-in (NO USB DEVICE ...)" and the status line
-        // shows that label. The CP-88 is still preferred and is taken back the
-        // moment it reappears, which is the branch above.
+        // No CP-88: the built-in speaker, but only after it has been missing
+        // a good while, and labelled so. Refusing the speaker left the app
+        // silent and stuck after a pulled cable (FINDINGS 9c). The CP-88 is
+        // taken back the moment it reappears, above.
         if (!haveOutput) {
             if (now - deviceLostSince < SPEAKER_FALLBACK_AFTER_MS) return
             if (stats.running && stats.deviceId != NativeBridge.DEVICE_UNSPECIFIED &&
@@ -442,90 +371,8 @@ class AudioRouter(private val context: Context, private val prefs: SharedPrefere
 
     // --------------------------------------------------------------- choices
 
-    /** An audio output, by its ALSA card name. `usb` set when it is a USB device. */
-    class OutputChoice(val name: String, val alsa: AudioDeviceInfo?, val usb: UsbDevice?)
-
-    /** A MIDI input port, by its ALSA port name ("CP88/CP73 MIDI 1"). */
-    class MidiChoice(val name: String, val card: String, val port: Int,
-                     val info: MidiDeviceInfo?, val usb: UsbDevice?)
-
-    private fun isUsbType(d: AudioDeviceInfo) =
-        d.type == AudioDeviceInfo.TYPE_USB_DEVICE ||
-            d.type == AudioDeviceInfo.TYPE_USB_HEADSET ||
-            d.type == AudioDeviceInfo.TYPE_USB_ACCESSORY
-
-    /** The UsbDevice behind an AAudio device, matched by product name. */
-    private fun usbFor(d: AudioDeviceInfo, usbDevices: Collection<UsbDevice>): UsbDevice? {
-        val pn = d.productName?.toString().orEmpty()
-        return usbDevices.firstOrNull { u ->
-            UsbSession.hasAudioOut(u) && u.productName?.trim()?.let { it.isNotEmpty() && pn.contains(it) } == true
-        }
-    }
-
-    /**
-     * Every output, in the order Setup's "next device" cycles: what AudioManager lists
-     * (USB devices and the tablet's own speaker), plus USB devices this process
-     * owns whole -- they have no ALSA card while it does, so AudioManager no
-     * longer lists them, but they are still the instrument's output.
-     */
-    private fun outputChoices(): List<OutputChoice> {
-        val am = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
-        val usbDevices = usbManager().deviceList.values
-        val out = LinkedHashMap<String, OutputChoice>()
-        for (d in am.getDevices(AudioManager.GET_DEVICES_OUTPUTS)) {
-            val usbType = isUsbType(d)
-            if (!usbType && d.type != AudioDeviceInfo.TYPE_BUILTIN_SPEAKER) continue
-            val usb = if (usbType) usbFor(d, usbDevices) else null
-            val name = usb?.let { UsbSession.alsaCardName(it) } ?: d.productName?.toString().orEmpty()
-            if (name !in out) out[name] = OutputChoice(name, d, usb)
-        }
-        for (u in usbDevices) {
-            if (!UsbSession.hasAudioOut(u)) continue
-            val name = UsbSession.alsaCardName(u)
-            if (name !in out) out[name] = OutputChoice(name, null, u)
-        }
-        return out.values.toList()
-    }
-
-    /**
-     * Every MIDI input port, by ALSA name. MidiManager's USB devices are named
-     * from their UsbDevice by the snd-usb-audio rule; ports of devices this
-     * process owns come from the open session, which read the jack strings.
-     */
-    private fun midiChoices(): List<MidiChoice> {
-        val out = LinkedHashMap<String, MidiChoice>()
-        val manager = context.getSystemService(Context.MIDI_SERVICE) as? MidiManager
-        val devices: Array<MidiDeviceInfo> = when {
-            manager == null -> emptyArray()
-            Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU ->
-                manager.getDevicesForTransport(MidiManager.TRANSPORT_MIDI_BYTE_STREAM).toTypedArray()
-            else -> @Suppress("DEPRECATION") manager.devices
-        }
-        for (info in devices) {
-            if (info.outputPortCount <= 0) continue
-            @Suppress("DEPRECATION")
-            val usb = info.properties.getParcelable<UsbDevice>(MidiDeviceInfo.PROPERTY_USB_DEVICE)
-            val card = usb?.let { UsbSession.alsaCardName(it) } ?: info.midiName()
-            for (p in 0 until info.outputPortCount) {
-                val name = if (usb != null) {
-                    NativeBridge.nativeAlsaMidiPortName(card, JackNames.lookup(usb, p), p)
-                } else {
-                    info.ports.firstOrNull {
-                        it.type == MidiDeviceInfo.PortInfo.TYPE_OUTPUT && it.portNumber == p
-                    }?.name?.takeIf { it.isNotBlank() } ?: "$card ${p + 1}"
-                }
-                if (name !in out) out[name] = MidiChoice(name, card, p, info, usb)
-            }
-        }
-        for (u in usbManager().deviceList.values) {
-            if (!UsbSession.hasMidi(u)) continue
-            val card = UsbSession.alsaCardName(u)
-            val names = sessionPortNames[u.deviceName]
-                ?: listOf(NativeBridge.nativeAlsaMidiPortName(card, JackNames.lookup(u, 0), 0))
-            names.forEachIndexed { p, n -> if (n !in out) out[n] = MidiChoice(n, card, p, null, u) }
-        }
-        return out.values.toList()
-    }
+    /** What is plugged in (DeviceLists.kt): the outputs and MIDI inputs to choose from. */
+    private val devices = DeviceLists(context) { sessionPortNames }
 
     /**
      * The output in use. The user's choice wins; otherwise the interim order,
@@ -536,7 +383,7 @@ class AudioRouter(private val context: Context, private val prefs: SharedPrefere
      * the caller decides about the speaker.
      */
     private fun resolveAudio(): OutputChoice? {
-        val c = outputChoices()
+        val c = devices.outputs()
         chosenOutputName?.let { want -> c.firstOrNull { it.name == want }?.let { return it } }
         fun named(vararg keys: String) = c.firstOrNull { ch ->
             ch.usb != null && keys.any { ch.name.uppercase().contains(it) }
@@ -551,7 +398,7 @@ class AudioRouter(private val context: Context, private val prefs: SharedPrefere
      * only, so a device the player removed stays removed.
      */
     fun recogniseDevices() {
-        val cards = midiChoices().map { it.card }.filter { Devices.recognise(it) != null }.toSet()
+        val cards = devices.midiInputs().map { it.card }.filter { Devices.recognise(it) != null }.toSet()
         if (cards.isEmpty()) return
         val seen = prefs.getStringSet("devices.seen", emptySet())!!
         val now = cards - seen
@@ -599,7 +446,7 @@ class AudioRouter(private val context: Context, private val prefs: SharedPrefere
     }
 
     private fun resolveMidi(): MidiChoice? {
-        val c = midiChoices()
+        val c = devices.midiInputs()
         chosenMidiName?.let { want -> c.firstOrNull { it.name == want }?.let { return it } }
         return c.firstOrNull { ch -> ch.port == 0 && Devices.recognise(ch.card) != null } ?: c.firstOrNull()
     }
@@ -667,74 +514,20 @@ class AudioRouter(private val context: Context, private val prefs: SharedPrefere
     }
 
     // --- NO LATCH WATCHDOG. Deliberately. -------------------------------------
-    //
-    // There was one. It watched `late` and reset the device when a hole
-    // appeared, taking the reset at the next musical gap. It is gone, and it
-    // should not come back in that form.
-    //
-    // The reason is a negative result that is now thoroughly established:
-    // **a latched CP-88 is indistinguishable from a healthy one, from here.**
-    // Measured live during a latch against a healthy baseline -- frames
-    // advancing at exactly 44100/s, `deficit`, `late`, `starved` and `errors`
-    // all reading as healthy, altsetting 1=1 2=1 with GET_INTERFACE still
-    // answering, IN packet sizes 44..45, URB flight time ~7,6 ms, and the
-    // submitted packet-size sequence a flawless 44/45 cadence straight through
-    // the transition. AudioControl has eps=0, so there is no status interrupt
-    // endpoint and no asynchronous error channel; isochronous OUT has no
-    // handshake by design. There is no question left to ask the device.
-    //
-    // So the old watchdog triggered on the DISTURBANCE rather than the state,
-    // which was defensible only while a hole nearly always meant a latch. The
-    // implicit-feedback fix inverted that. Holes are now routine and survivable
-    // -- trials run to `late` 103, 277, 370, 670 with the instrument perfectly
-    // audible -- so the trigger no longer discriminates at all, and under hard
-    // playing it would fire every 30 s and spend 2,7 s in silence each time,
-    // for nothing. A recovery that cannot tell the fault from the noise is a
-    // dropout generator.
-    //
-    // Michiel's rule, and it is the right one: no watchdog that cannot
-    // conclusively detect the latch OVER THE WIRE. An acoustic oracle is not
-    // acceptable for this -- it needs the microphone, it is defeated by a loud
-    // room, and it makes a noise of its own.
-    //
-    // Recovery is therefore MANUAL and certain: the RESET test hook, which
-    // calls resetDirectUsb(), which is proved. (Since the fbx transport holds
-    // rather than latches, nothing on the screen offers it any more.)
-    //
-    // To reinstate one, something must first be found that says FOR SURE that a
-    // latch is present or must have occurred. HANDOFF section 21 lists what has
-    // already been ruled out, so that work does not start from zero.
+    // A latched CP-88 cannot be told from a healthy one over the wire, and a
+    // recovery that fires on holes instead is a dropout generator. Michiel's
+    // rule: no watchdog that cannot conclusively detect the latch over the
+    // wire. Recovery is manual and certain: RESET, resetDirectUsb(). What was
+    // measured and ruled out: FINDINGS 9c, HANDOFF section 21.
 
     private var lastAltReport: String? = null
     private var altReads = 0
 
     /**
      * Asks the DEVICE, once a second, what altsetting its streaming interfaces
-     * are on.
-     *
-     * This is a hypothesis under test, not a settled diagnostic. THE LATCH has
-     * no host-visible signature: during one, the transport's own counters say
-     * everything is fine -- `errors=0`, `starved=0`, frames advancing at
-     * exactly 44100/s, the controller reporting every packet as put on the
-     * wire. Isochronous OUT has no handshake, so a device that has stopped
-     * listening looks identical to one that is playing.
-     *
-     * GET_INTERFACE is the one question that goes to the device and comes back
-     * with an answer. Two things could show up in it:
-     *
-     *   * the streaming interface sitting at alt 0, the zero-bandwidth
-     *     setting, which would mean the device stopped streaming and said so
-     *     in the only place we never looked;
-     *   * the control transfer itself failing (-1), which would mean the
-     *     device's function is wedged rather than merely quiet.
-     *
-     * If neither ever moves during a latch, that is worth knowing too: it
-     * would rule out the endpoint configuration and point at the device's
-     * internal audio path, which nothing on this end can see.
-     *
-     * Cheap enough to leave running: one control transfer a second is a
-     * rounding error on the bus, and it runs on the usb thread rather than the
-     * caller's, because `sessions` belongs to that thread.
+     * are on: GET_INTERFACE is the one question that goes to the device and
+     * comes back with an answer, and a change is logged. A hypothesis under
+     * test, not a settled diagnostic (FINDINGS 9c). On the usb thread.
      */
     fun watchUsbAltSetting() {
         if (!::usbHandler.isInitialized || routingBusy) return
@@ -943,17 +736,9 @@ class AudioRouter(private val context: Context, private val prefs: SharedPrefere
      * whether to escalate.
      */
     private fun awaitAndroidSees(s: UsbSession, timeoutMs: Long = 4000L): Boolean {
-        fun seen(): Boolean {
-            val d = s.device
-            val am = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
-            val audio = !UsbSession.hasAudioOut(d) || am.getDevices(AudioManager.GET_DEVICES_OUTPUTS)
-                .any { isUsbType(it) && usbFor(it, listOf(d)) != null }
-            val midi = !UsbSession.hasMidi(d) || midiChoices().any { it.info != null && it.usb?.deviceName == d.deviceName }
-            return audio && midi
-        }
         val t0 = android.os.SystemClock.uptimeMillis()
         while (android.os.SystemClock.uptimeMillis() - t0 < timeoutMs) {
-            if (seen()) {
+            if (devices.androidSees(s.device)) {
                 android.util.Log.i("rigalong-ui", "\"${s.cardName}\" is back with Android after " +
                     "${android.os.SystemClock.uptimeMillis() - t0} ms")
                 return true
@@ -965,82 +750,17 @@ class AudioRouter(private val context: Context, private val prefs: SharedPrefere
     }
 
     /**
-     * Recovery from THE LATCH.
-     *
-     * The fault: in a direct USB mode the CP-88 goes silent while the transport
-     * keeps running -- URBs are acknowledged, the feedback endpoint still
-     * reports its rate, frames keep counting -- and nothing in the app can tell
-     * "presenting" from "acknowledging and discarding". There is no detector
-     * yet, so there is no automatic recovery either. This is what the RESET
-     * test hook does when it happens.
-     *
-     * WHAT IT DOES, and why exactly this:
-     *
-     *   1. stop both sinks and give every interface back to the kernel;
-     *   2. **USB reset** -- USBDEVFS_RESET, every driver on the device unbound
-     *      and rebound;
-     *   3. wait until Android can see the card again;
-     *   4. route the device to ALSA and hold, so a stream really opens on it;
-     *   5. take it back into the direct mode it was in.
-     *
-     * THIS WAS NOT GUESSED. It shipped first as a ladder -- three rungs,
-     * cheapest first, each adding one thing, so that whichever rung cleared a
-     * real latch would also say which part was load-bearing. Michiel then met a
-     * latch and reported: "only rung 3 worked."
-     *
-     * That is a genuine result and it kills the cheap theories:
-     *
-     *   * Disowning and re-owning the device is NOT enough. Releasing every
-     *     interface with USBDEVFS_CONNECT, and waiting until snd-usb-audio has
-     *     rebuilt the card, still left it latched.
-     *   * Nor is letting ALSA actually STREAM on the card. That was rung 2, and
-     *     it is the closest automation of the manual fix, and it did not clear
-     *     it either.
-     *   * Only unbinding and rebinding the drivers -- a port-level reset the
-     *     device itself sees -- brings the sound back. So the stuck state lives
-     *     in the DEVICE or in its endpoint configuration, not in which process
-     *     happens to own the interfaces.
-     *
-     * The ladder is gone because it has done its job; keeping it would only
-     * make the player try two things that are now known not to work, at the one
-     * moment there is no time for it.
-     *
-     * The ALSA dwell in step 4 is KEPT even though the reset is what does the
-     * work. It has never been tested apart from the reset -- rung 3 included
-     * it -- so dropping it now would be trading a procedure known to work for
-     * an untested shorter one. It costs about two seconds.
-     */
-    /**
-     * How long the ALSA recycle stays silent. Three to four seconds, and the
-     * reason is in the device's own behaviour rather than taste.
-     *
-     * AudioFlinger holds the output open for a two second standby delay
-     * (`Standby delay ns=2000000000`), so an immediate reopen never tears the
-     * USB substream down and the budget is not reset. Four seconds clears that
-     * with margin. Measured in cp88-usb-audio-halt: recycling every eight
-     * minutes WITH this gap survived 105 683 968 frames across two 40-minute
-     * runs agreeing to 0,04 %, where the same recycle WITHOUT the gap failed
-     * normally at 39 365 632 frames. The silence is the entire mechanism.
+     * How long the ALSA recycle stays silent: past AudioFlinger's two second
+     * standby delay, or the USB substream is never torn down and the frame
+     * budget is not reset. The silence is the whole mechanism (FINDINGS 9c).
      */
     private val kAlsaRecycleGapMs = 4000L
 
     /**
-     * The ALSA path halts at a FRAME BUDGET, not a fault, and this resets it.
-     *
-     * Michiel, after living with both paths: "still the alsa flow is much more
-     * stable if it would just not have latched deterministically at 13-14
-     * minutes." That halt is not the latch this app has been chasing -- it is
-     * reproducible to 0,04 % and it is cleared by a teardown plus silence,
-     * where the latch is stochastic and needs USBDEVFS_RESET.
-     *
-     * So RESET does the right thing for whichever path is live:
-     * a USB reset in a direct mode, and this recycle on ALSA. Taken BEFORE the
-     * budget runs out it prevents the halt rather than recovering from it,
-     * which is the whole point -- roughly every eight minutes, between pieces.
-     *
-     * The gap is audible and unavoidable here. Covering it by bridging the
-     * audio through this app's own usbfs transport while ALSA is torn down is
-     * the obvious next step, and it is not this function.
+     * The ALSA path halts at a frame budget (13-14 minutes, reproducible to
+     * 0,04 %), not a fault; a teardown plus silence resets it. Taken before
+     * the budget runs out it prevents the halt. The gap is audible
+     * (FINDINGS 9c).
      */
     private fun recycleAlsaOutput() {
         if (!::usbHandler.isInitialized) return
@@ -1068,6 +788,17 @@ class AudioRouter(private val context: Context, private val prefs: SharedPrefere
         }
     }
 
+    /**
+     * Recovery from THE LATCH (the RESET hook), in a direct USB mode:
+     *   1. stop both sinks and give every interface back to the kernel;
+     *   2. USB reset -- every driver on the device unbound and rebound: the
+     *      one step that clears it ("only rung 3 worked");
+     *   3. wait until Android can see the card again;
+     *   4. route the device to ALSA and hold, so a stream really opens on it
+     *      (kept: never tested apart from the reset; about two seconds);
+     *   5. take it back into the direct mode it was in.
+     * The ladder this came from, and what it ruled out: FINDINGS 9c.
+     */
     private fun resetDirectUsb() {
         if (!::usbHandler.isInitialized) return
         usbHandler.post {
@@ -1234,7 +965,7 @@ class AudioRouter(private val context: Context, private val prefs: SharedPrefere
      * reconfigures itself.
      */
     fun cycleOutput() {
-        val names = listOf<String?>(null) + outputChoices().map { it.name }
+        val names = listOf<String?>(null) + devices.outputs().map { it.name }
         val i = names.indexOf(chosenOutputName)
         chosenOutputName = names[(if (i < 0) 0 else i + 1) % names.size]
         prefs.edit().putString("chosenOutputName", chosenOutputName).apply()
@@ -1275,64 +1006,10 @@ class AudioRouter(private val context: Context, private val prefs: SharedPrefere
             else -> "${choice.name}  [USB, ALSA]"
         }
         NativeBridge.nativeSetPreferredRate(
-            if (rateOverride > 0) rateOverride else nativeRateOf(d))
+            if (rateOverride > 0) rateOverride else devices.rateOf(d))
         NativeBridge.nativeSetPreferredFormat(
-            if (formatOverride > 0) formatOverride else nativeFormatOf(d))
+            if (formatOverride > 0) formatOverride else devices.formatOf(d))
         return d?.id ?: NativeBridge.DEVICE_UNSPECIFIED
-    }
-
-    /**
-     * The rate the device itself declares, or 0 for "let AAudio pick".
-     *
-     * This has to be asked of the DEVICE. Leaving the rate unspecified and
-     * trusting what comes back was wrong: AAudio returned 48000 for the CP-88,
-     * which declares 44100 and nothing else, and the stream opened happily with
-     * a resampler in the HAL. Android's own policy dump shows the single
-     * profile -- 44100, 24-bit packed, stereo -- and it agrees with Yamaha's
-     * documentation.
-     *
-     * Where a device offers several rates, the highest is taken.
-     */
-    private fun nativeRateOf(d: AudioDeviceInfo?): Int {
-        val rates = d?.sampleRates ?: return 0
-        return rates.maxOrNull() ?: 0
-    }
-
-    /**
-     * The widest format the device declares, as an Oboe AudioFormat value.
-     *
-     * Widest, not most convenient: the CP-88 declares 24-bit packed and asking
-     * it for I16 had the HAL pad eight bits away. The render ring is float, so
-     * handing it any of these costs one conversion in the callback and loses
-     * nothing on our side. Dither is applied only for a 16-bit target, where
-     * truncation would otherwise be audible as a modulating noise floor.
-     *
-     * If the wide format turns out not to be granted -- EXCLUSIVE/MMAP may only
-     * be available at one format -- Oboe's own fallback attempt covers it, and
-     * the granted format is logged on every open.
-     */
-    private fun nativeFormatOf(d: AudioDeviceInfo?): Int {
-        // TRIED AND REJECTED, 2026-09-22: asking the built-in speaker for I16
-        // in the hope that a narrower format would unlock MMAP/EXCLUSIVE. It
-        // does not. I16 is granted and the stream is still SHARED, with the
-        // same 192-frame burst, even when EXCLUSIVE is asked for explicitly.
-        // The same code gets EXCLUSIVE on the CP-88 (sharing=0, burst 89), so
-        // the request is right and this tablet's speaker simply has no
-        // exclusive path. There is no permission for it either: AAudio gates
-        // EXCLUSIVE on the HAL, and aaudio.mmap_exclusive_policy here is
-        // already 2 (AUTO). Do not spend another evening on it.
-        val enc = d?.encodings ?: return 0
-        val has24 = enc.contains(android.media.AudioFormat.ENCODING_PCM_24BIT_PACKED)
-        val has32 = enc.contains(android.media.AudioFormat.ENCODING_PCM_32BIT)
-        val hasFloat = enc.contains(android.media.AudioFormat.ENCODING_PCM_FLOAT)
-        val has16 = enc.contains(android.media.AudioFormat.ENCODING_PCM_16BIT)
-        return when {
-            has24 -> 3      // oboe I24
-            has32 -> 4      // oboe I32
-            hasFloat -> 2   // oboe Float
-            has16 -> 1      // oboe I16
-            else -> 0
-        }
     }
 
     // ------------------------------------------------------------------- MIDI
@@ -1376,14 +1053,9 @@ class AudioRouter(private val context: Context, private val prefs: SharedPrefere
         }, handler)
     }
 
-    private fun MidiDeviceInfo.midiName(): String =
-        properties.getString(MidiDeviceInfo.PROPERTY_NAME)
-            ?: properties.getString(MidiDeviceInfo.PROPERTY_PRODUCT)
-            ?: "device"
-
     /** Cycles MIDI in: automatic, then each port present, then back. */
     fun cycleMidi() {
-        val names = listOf<String?>(null) + midiChoices().map { it.name }
+        val names = listOf<String?>(null) + devices.midiInputs().map { it.name }
         val i = names.indexOf(chosenMidiName)
         chosenMidiName = names[(if (i < 0) 0 else i + 1) % names.size]
         prefs.edit().putString("chosenMidiName", chosenMidiName).apply()
@@ -1533,7 +1205,7 @@ class AudioRouter(private val context: Context, private val prefs: SharedPrefere
 
     /** The names of every audio output and MIDI port present now (S3.10). */
     fun availableDevices(): Set<String> =
-        (outputChoices().map { it.name } + midiChoices().map { it.name }).toSet()
+        (devices.outputs().map { it.name } + devices.midiInputs().map { it.name }).toSet()
 
     fun setUsbBufferMs(ms: Int) {
         if (ms !in UsbBuffers.choicesMs || ms == usbBufferMs) return
@@ -1561,22 +1233,10 @@ class AudioRouter(private val context: Context, private val prefs: SharedPrefere
     }
 
     /**
-     * REINIT: the cheap recovery candidate.
-     *
-     * Michiel: "if routing to alsa and back fixes it, surely you can somehow
-     * send some sequence to reinit the stream without closing?" Routing to
-     * ALSA releases the interfaces, lets snd-usb-audio rebind and
-     * re-SET_INTERFACE them, then takes them back -- about 2,7 s and a full
-     * teardown. The USB-level part of that is just the UAC teardown: drop the
-     * streaming interfaces to alt 0, the zero-bandwidth setting, and put them
-     * back. usbfs can do that WITHOUT releasing anything.
-     *
-     * The recovery ladder, measured against a deterministic latch (ZLP).
-     * Level 1 is the UAC teardown and is known NOT to be enough; the higher
-     * rungs are what a route to ALSA and back does on the way past: level 2
-     * clears the endpoints' halt, level 3 hands the interfaces back so the
-     * kernel driver rebinds, then takes them again -- the ALSA round-trip
-     * minus ALSA actually streaming.
+     * REINIT: the cheap recovery candidates, without releasing the device.
+     * Level 1 the UAC teardown (alt 0 and back; known NOT to be enough), 2
+     * also clears the endpoints' halt, 3 hands the interfaces back so the
+     * kernel driver rebinds, then takes them again (FINDINGS 9c).
      */
     fun debugReinit(level: Int) {
         usbHandler.post {
@@ -1630,11 +1290,11 @@ class AudioRouter(private val context: Context, private val prefs: SharedPrefere
 
     /** OUTPUT: the output device by (part of) its name; empty is automatic. */
     fun debugOutput(want: String) {
-        val hit = outputChoices().firstOrNull { it.name.contains(want, true) }
+        val hit = devices.outputs().firstOrNull { it.name.contains(want, true) }
         if (want.isEmpty()) {
             chosenOutputName = null
         } else if (hit == null) {
-            android.util.Log.i("rigalong-ui", "outputs: " + outputChoices().joinToString { it.name })
+            android.util.Log.i("rigalong-ui", "outputs: " + devices.outputs().joinToString { it.name })
             return
         } else {
             chosenOutputName = hit.name
