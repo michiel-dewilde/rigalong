@@ -237,6 +237,7 @@ add_library(rigalong SHARED
         native_bridge.cpp
         AudioEngine.cpp
         LatencyProbe.cpp
+        Rack.cpp
         MidiInput.cpp
         RealtimePriority.cpp
         usb/UsbAudioOut.cpp

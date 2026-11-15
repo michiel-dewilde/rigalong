@@ -17,16 +17,7 @@
 #include "MidiInput.h"
 #include "RealtimePriority.h"
 #include "usb/UsbAudioOut.h"
-#include <rigalong/Graph.h>
-#include <rigalong/MidiZone.h>
-#include <rigalong/Wire.h>
-#include "graph/SetBfreeNode.h"
-#include "graph/SurgeNode.h"
-#include "graph/DexedNode.h"
-#include "graph/PlaitsNode.h"
-#include "graph/FluidNode.h"
-#include "graph/Nodes.h"
-#include "graph/FxNode.h"
+#include "Rack.h"
 
 // Stream settings measured as working on this rig (Galaxy Tab S9 Ultra -> CP-88
 // over USB, 2026-09-19): AAudio, MMAP + EXCLUSIVE granted, 44100 Hz, 89-frame
@@ -108,88 +99,17 @@ public:
         rigalong::FxNode::setHostTempo(bpm);
     }
 
-    // --- graph -------------------------------------------------------------
-    // The signal path is a node graph (see GRAPH.md): the rack, built in code --
-    // six instances to begin with, more as songs ask for them (see instances).
-    rigalong::Graph& graph() { return mGraph; }
+    // --- the rack ----------------------------------------------------------
+    // The node graph, its instances and their loaders (Rack.h). This engine
+    // compiles it into a schedule and runs that.
+    Rack& rack() { return mRack; }
 
     // Recompiles and publishes a new schedule. Off the audio thread only.
     bool rebuildGraph(std::string* error = nullptr);
 
-    // --- instances -----------------------------------------------------------
-    // An INSTANCE is one engine node with its own zone, insert effect and the
-    // two switchable wires around it -- what a song calls a sound. The six of
-    // the default patch are instances 0-5 (kRack* order); a song that wants a
-    // second sfizz or a third Surge XT gets more, added while audio runs.
-    static constexpr int kMaxInstances = 24;
-    int instanceCount() const { return mInstanceCount.load(std::memory_order_acquire); }
-    // Its engine (kRack*), or -1.
-    int instanceType(int i) const { return i >= 0 && i < instanceCount() ? mInstanceType[i] : -1; }
-    rigalong::Node* instanceNode(int i) const { return i >= 0 && i < instanceCount() ? mInstanceNode[i] : nullptr; }
-    rigalong::FxNode* instanceFx(int i) const { return i >= 0 && i < instanceCount() ? mFx[i] : nullptr; }
-
-    // A new instance of engine `type` (kRack*): built, wired, compiled in
-    // without touching what is playing (only the new nodes are prepared), and
-    // its library loading started in the background as the first one's was.
-    // Returns its index, or -1. Off the audio thread.
+    // A new instance of engine `type` (Rack::Engine), compiled in without
+    // touching what is playing. Returns its index, or -1. Off the audio thread.
     int addInstance(int type);
-
-    // Gives instance `i` the preset `name` (an SFZ id with its `path`, a setBfree
-    // registration, a Surge "Category/Name", a DX7 voice, a SoundFont file and
-    // `program`, a Plaits model). Slow loads run in the background; a request
-    // made before the instance's library is up is honoured once it is.
-    void loadInstancePreset(int i, const std::string& name, int program, const std::string& path);
-    bool instanceBusy(int i) const;
-    // The preset it has now, by the same name, or "".
-    std::string instancePreset(int i) const;
-
-    // The instruments in the default patch. All are always present and all
-    // always receive MIDI; which one is heard is a question of level, so that
-    // layering setBfree under sfizz costs nothing but a fader move.
-    rigalong::SetBfreeNode* setBfree() { return mSetBfree; }
-    rigalong::SfizzNode* sfizz() { return mSfizz; }
-    rigalong::SurgeNode* surge() { return mSurge; }
-    rigalong::DexedNode* dexed() { return mDexed; }
-    rigalong::PlaitsNode* plaits() { return mPlaits; }
-    rigalong::FluidNode* fluid() { return mFluid; }
-
-    // Brings Surge up on the loader thread: constructing it scans the patch
-    // library, which is 41 ms of file work and has no business on the UI thread
-    // or on whatever thread compiled the graph. Until it finishes, the Surge
-    // node renders silence and the rest of the rig is unaffected.
-    void initSurgeAsync(const std::string& dataPath, const std::string& homePath);
-
-    // Queues a Surge patch load. Same reasoning as loadInstrumentAsync: the load
-    // opens and parses a file, so it happens off both the audio and UI threads.
-    // `name` is the stable "Category/Name" that a patch stores.
-    void loadSurgePatchNamedAsync(const std::string& name);
-    bool isSurgeBusy() const { return mSurgeBusy.load(std::memory_order_relaxed); }
-
-    // Reads every DX7 cartridge in `dirs`. File IO, so it runs on the loader.
-    // Selecting a voice afterwards is cheap enough to do inline: it unpacks 128
-    // bytes and hands them over through a single-slot atomic.
-    void loadDexedBanksAsync(const std::vector<std::string>& dirs);
-    // Content was added to the engines' folders (an imported SoundFont, DX7
-    // bank or Surge patch): every FluidSynth, Dexed and Surge in the rack looks
-    // again, off the audio and UI threads. Their current sounds stay.
-    void rescanContentAsync();
-    // Surge's folder for the player's own patches, as Surge worked it out; empty before it is up.
-    std::string surgeUserPatchesPath() const;
-    bool isDexedBusy() const { return mDexedBusy.load(std::memory_order_relaxed); }
-
-    // Builds FluidSynth and lists the SoundFonts in `dirs`. Neither is slow,
-    // but loading a font afterwards is -- megabytes of samples, and for SF3 a
-    // Vorbis decode of every one of them -- so all of it runs on the loader.
-    void initFluidAsync(const std::vector<std::string>& dirs);
-    void loadSoundFontNamedAsync(const std::string& name);
-    bool isFluidBusy() const { return mFluidBusy.load(std::memory_order_relaxed); }
-
-    // Queues an SFZ load on the loader thread. Returns immediately: parsing an
-    // instrument and opening its samples must never happen on the audio thread,
-    // and must not block the UI either.
-    void loadInstrumentAsync(const std::string& id, const std::string& path);
-
-    bool isLoading() const { return mLoading.load(std::memory_order_relaxed); }
 
     // Injects a note from the on-screen keys, as if it had arrived over MIDI.
     void injectNote(int note, int velocity);
@@ -433,7 +353,7 @@ private:
     // Graph, and the compiled schedule the audio thread actually runs.
     // Publication is a single atomic store; retired schedules are freed on a
     // non-audio thread, never inside the callback.
-    rigalong::Graph mGraph;
+    Rack mRack;
     std::atomic<rigalong::Schedule*> mSchedule{nullptr};
     std::vector<std::unique_ptr<rigalong::Schedule>> mScheduleKeepAlive;
 
@@ -461,50 +381,7 @@ private:
     // and is on the new one, or the writer sees the old one in the hazard --
     // there is no interleaving in which the writer frees what the reader holds.
     std::atomic<rigalong::Schedule*> mScheduleHazard{nullptr};
-    rigalong::SfizzNode* mSfizz = nullptr;
-    rigalong::SetBfreeNode* mSetBfree = nullptr;
-    rigalong::SurgeNode* mSurge = nullptr;
-    rigalong::DexedNode* mDexed = nullptr;
-    rigalong::PlaitsNode* mPlaits = nullptr;
-    rigalong::FluidNode* mFluid = nullptr;
-    rigalong::ReverbNode* mReverb = nullptr;
-
-    // THE RACK (PLAN.md M2, first slice): one zone and two switchable wires per
-    // engine, so a song's live sets can split, layer, transpose and route the
-    // fixed set of engines without a recompile. Index: kRack* below.
-    // Per instance (see instances, above); entries are written before
-    // mInstanceCount moves past them, so the render thread never sees half of one.
-    rigalong::MidiZoneNode* mZone[kMaxInstances] = {};
-    rigalong::FxNode* mFx[kMaxInstances] = {};
-    std::shared_ptr<rigalong::WireControl> mRackMidi[kMaxInstances];
-    std::shared_ptr<rigalong::WireControl> mRackAudio[kMaxInstances];
-    int mInstanceType[kMaxInstances] = {};
-    rigalong::Node* mInstanceNode[kMaxInstances] = {};
-    int mInstanceLevelParam[kMaxInstances] = {};
-    std::atomic<int> mInstanceCount{0};
-    std::atomic<bool> mInstanceBusy[kMaxInstances] = {};
-    // A FluidSynth instance's preset as last asked for, plus one (0: none).
-    std::atomic<int> mFluidProgram[kMaxInstances] = {};
-    rigalong::NodeId mIdMidiIn = -1;
-    rigalong::NodeId mIdReverb = -1;
-    // What the first instances were brought up with, for the ones added later.
-    std::string mSurgeDataPath, mSurgeHomePath;
-    std::vector<std::string> mFluidDirs, mDexedDirs;
-    void wireInstance(int i, int type, rigalong::Node* node, rigalong::NodeId idNode, int levelParam);
     bool compileAndPublish(bool prepareAll, std::string* error);
-public:
-    // Rack positions, in the order the engines were always built.
-    enum { kRackSfizz, kRackSetBfree, kRackSurge, kRackDexed, kRackPlaits, kRackFluid, kRackSize };
-    rigalong::MidiZoneNode* zone(int i) const { return i >= 0 && i < instanceCount() ? mZone[i] : nullptr; }
-    void setRackWire(int i, bool midiOn, bool audioOn, float gain) {
-        if (i < 0 || i >= instanceCount() || !mRackMidi[i]) return;
-        mRackMidi[i]->setOn(midiOn);
-        mRackAudio[i]->setOn(audioOn);
-        mRackAudio[i]->setGain(gain);
-    }
-private:
-    // Not in the default patch any more; kept for the graph editor to place.
-    rigalong::LimiterNode* mLimiter = nullptr;
 
     // Events injected from the UI (on-screen keys), handed to the graph at the
     // top of the next block. Single producer, single consumer, fixed capacity.
@@ -536,23 +413,6 @@ private:
     std::atomic<int> mLearnedNote{-1};
     std::atomic<int> mLearnedControl{-1};
     void applyControlMaps(const rigalong::MidiBuffer& in);
-
-    // Background loader. Ordinary priority and deliberately NOT pinned to the
-    // big cores: it must never compete with the audio thread. See GRAPH.md.
-    std::thread mLoaderThread;
-    std::atomic<bool> mLoading{false};
-
-    // Surge gets its own loader rather than sharing sfizz's: bringing Surge XT
-    // up and swapping an sfizz instrument are independent, and making one wait on the other
-    // would be a needless coupling on stage. It is a detached pthread rather
-    // than a std::thread because it needs a bigger stack than bionic's default
-    // -- see runOnBigStack() in the .cpp, which explains what that cost.
-    std::atomic<bool> mSurgeBusy{false};
-    std::atomic<bool> mDexedBusy{false};
-    std::atomic<bool> mFluidBusy{false};
-    mutable std::mutex mLoadLock;
-    std::string mPendingLoad;
-    std::string mPendingId;
 
     // Preallocated render scratch. Sized generously at open time; the callback
     // chunks if it is ever handed more frames than this, which should not happen.
@@ -886,55 +746,6 @@ private:
     // Logs the MIDI path stage by stage, so a dropped note can be located
     // rather than argued about. See the definition.
     void logMidiChain() const;
-
-    // Gates instruments in and out of the schedule by level, releasing their
-    // voices on each transition. Called from the render thread.
-    void updateInstrumentGates(int frames);
-
-    // A silenced instrument keeps RUNNING until it has actually gone quiet.
-    //
-    // Its level is already zero, so none of it is audible; the point is to let
-    // whatever it holds internally -- setBfree's rotary and reverb live
-    // inside beatrix, not in this graph -- decay away. A node that stops being
-    // processed freezes those tails and resumes them when it comes back, which
-    // is audible and was reported as exactly that.
-    //
-    // A fixed grace was the first attempt and it was a guess: too short for a
-    // long reverb, wasteful for a node that fell silent at once. So the gate
-    // watches the node's own pre-level peak instead and asks for a full second
-    // of continuous silence before parking it.
-    static constexpr double kQuietSeconds = 1.0;
-
-    // What counts as silence: -80 dBFS.
-    //
-    // This started at -100 dBFS, which was needlessly strict and cost real
-    // time: a piano tail decays exponentially, so the last twenty decibels of
-    // it take SECONDS while being inaudible throughout. Measured on this rig
-    // at -100 dBFS: sfizz 17,64 s, Plaits 9,76 s, FluidSynth 5,21 s, against a
-    // 1,00 s minimum for an engine that was not sounding.
-    //
-    // -80 dBFS is still far below hearing. The only thing the threshold has to
-    // guarantee is that the FROZEN tail is inaudible when the engine is
-    // brought back: at -80 dBFS, with the fader at unity and the master at its
-    // +12 dB end, that tail returns at -68 dBFS. Nothing in a room hears it.
-    static constexpr float kSilenceFloor = 1.0e-4f;
-
-    // A ceiling, because "wait for silence" is not a termination proof: a
-    // self-oscillating patch or a stuck reverb never reaches the floor, and the
-    // point of the gate is to stop paying for engines nobody is playing. Thirty
-    // seconds is far past any musical tail; reaching it is logged, because it
-    // means an engine is droning with its output muted.
-    static constexpr double kQuietCeilingSeconds = 30.0;
-
-    // Held peak of each instrument's own output, before its level. Render
-    // thread writes, logProfile() reads and resetPeaks() clears. See
-    // updateInstrumentGates.
-    float mNodePeakHold[kMaxInstances] = {};
-
-    bool mGateFlushing[kMaxInstances] = {};
-    int mGateFade[kMaxInstances] = {};    // frames left of the level ramp
-    int mGateQuiet[kMaxInstances] = {};   // frames of continuous silence
-    int mGateFlush[kMaxInstances] = {};   // frames spent flushing in total
 
     // Highest sfizz voice count seen. Mutable because stats() is const and is
     // the only place the count is sampled. See stats().
