@@ -127,6 +127,8 @@ private:
     void applyParam(int index, float value);   // render thread only
     void pushParam(int index, float value);    // any thread
 
+    // Frees the engine (the rate changed, or the node goes).
+    void destroyEngine();
     b_instance* mInst = nullptr;
     bool mInitialised = false;
     double mRate = 44100.0;

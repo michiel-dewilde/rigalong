@@ -111,6 +111,10 @@ SetBfreeNode::SetBfreeNode() {
 }
 
 SetBfreeNode::~SetBfreeNode() {
+    destroyEngine();
+}
+
+void SetBfreeNode::destroyEngine() {
     if (!mInst) return;
     freeReverb(mInst->reverb);
     freeWhirl(mInst->whirl);
@@ -120,6 +124,8 @@ SetBfreeNode::~SetBfreeNode() {
     freeProgs(mInst->progs);
     freeRunningConfig(mInst->state);
     delete mInst;
+    mInst = nullptr;
+    mInitialised = false;
 }
 
 void SetBfreeNode::prepare(double sampleRate, int maxFrames) {
@@ -137,43 +143,25 @@ void SetBfreeNode::prepare(double sampleRate, int maxFrames) {
     //     nws = (SampleRateD * i) / Hz;   /* ideal nof samples */
     //
     // -- so wheels built at 44100 and then played at 48000 run 8,8 % sharp,
-    // which is most of a whole tone. Reported 2026-09-21: "organ and sf2 sound
-    // transposed, C sounds like D", and only those two, because sfizz takes
-    // setSampleRate() on every prepare and the rest re-init on a rate change.
-    //
-    // It was invisible until the rate stopped being hardcoded at 44100. Now it
-    // changes whenever the output moves between the CP-88 (44100) and the
-    // tablet's own speaker (48000).
+    // which is most of a whole tone. The rate changes whenever the output
+    // moves between the CP-88 (44100) and the tablet's own speaker (48000).
     if (mInitialised) {
         if (std::abs(mRate - sampleRate) < 0.5) return;
 
-        // Re-initialise IN PLACE, without reallocating. This is upstream's own
-        // pattern: b_synth/lv2.c's initSynth() runs exactly this sequence on an
-        // existing instance and is called repeatedly, so it is a supported thing
-        // to do rather than a trick.
+        // A NEW ENGINE FOR A NEW RATE, not the old one initialised again.
         //
-        // Tearing down and rebuilding would also work -- the destructor above
-        // shows setbfree does provide freeToneGenerator and friends -- but it
-        // would drop every sounding note and cost the wavetable build again,
-        // for no gain.
-        LOGI("setBfree: rebuilding the tone generator for %.0f Hz (was %.0f)",
-             sampleRate, mRate);
-        mRate = sampleRate;
-        SampleRateD = sampleRate;
-
-        initToneGenerator(mInst->synth, mInst->midicfg);
-        initVibrato(mInst->synth, mInst->midicfg);
-        initPreamp(mInst->preamp, mInst->midicfg);
-        initReverb(mInst->reverb, mInst->midicfg, sampleRate);
-        initWhirl(mInst->whirl, mInst->midicfg, sampleRate);
-        initRunningConfig(mInst->state, mInst->midicfg);
-        initMidiTables(mInst->midicfg);
-
-        // The re-init resets the engine to its defaults, so put the registration
-        // back. mParams is the node's own copy and survives all of this, which
-        // is why a device change does not cost you your drawbars.
-        for (int i = 0; i < kNumParams; ++i) applyParam(i, mParams[i]);
-        return;
+        // Initialising in place (b_synth/lv2.c's initSynth() sequence on the
+        // existing instance) looked like upstream's own pattern and is not
+        // safe to repeat: initToneGenerator() compiles each key's wheel
+        // contributions into lists it APPENDS to and never clears, so every
+        // rate change added one more copy of every contribution. Measured on
+        // the CP-88's line out, 2026-11-15: after the output had been to the
+        // tablet's speaker and back -- what an unplugged cable does -- the
+        // same chord was 9,5 dB louder, which is three times. A fresh engine
+        // is by construction what a fresh start has. The notes it held are
+        // gone, as they are for every engine when the stream restarts.
+        LOGI("setBfree: a new engine for %.0f Hz (was %.0f)", sampleRate, mRate);
+        destroyEngine();
     }
 
     mRate = sampleRate;
@@ -204,8 +192,11 @@ void SetBfreeNode::prepare(double sampleRate, int maxFrames) {
 
     mInitialised = true;
 
-    // Push our defaults into the freshly built engine. Direct, not queued: the
-    // render thread cannot be running a node that has only just been prepared.
+    // Push our own values into the freshly built engine: the defaults the
+    // first time, the registration as it stood after a rate change (mParams is
+    // the node's own copy, which is why a device change does not cost you your
+    // drawbars). Direct, not queued: the render thread cannot be running a
+    // node that is being prepared.
     for (int i = 0; i < kNumParams; ++i) applyParam(i, mParams[i]);
 }
 
