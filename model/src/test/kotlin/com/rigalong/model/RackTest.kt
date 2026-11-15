@@ -26,6 +26,17 @@ class RackTest {
     )
 
     @Test
+    fun aLiveSetSetsTheZoneParametersTheModelNamesAndNoOthers() {
+        // The app checks RackPart.ZONE_PARAMS against the engine at its start, so the list must be what is written.
+        val song = draft.toObjects(store)
+        for (ref in song.liveSets) {
+            val ls = store.getTyped<LiveSet>(ref.toRef().digest)
+            val zone = ls.overrides.keys.filter { it.startsWith("sfizz.zone.") }.map { it.removePrefix("sfizz.zone.") }
+            assertEquals(RackPart.ZONE_PARAMS.toSet(), zone.toSet())
+        }
+    }
+
+    @Test
     fun aRackSongRoundTrips() {
         val song = draft.toObjects(store)
         val back = assertNotNull(RackSong.fromObjects(store, song))

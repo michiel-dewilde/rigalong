@@ -440,16 +440,17 @@ private fun SetBfreePanel(player: SongPlayer, s: Float, modifier: Modifier) {
         // (the fader draws its own margin), so squeezed they lose no target.
         Row(Modifier.weight(1f).fillMaxWidth()) {
             for (i in 0..8) {
-                val v = (player.setBfree[i] ?: 0f) / 8f
+                val bar = SongPlayer.SETBFREE_DRAWBARS[i]
+                val v = (player.setBfree[bar] ?: 0f) / 8f
                 Column(Modifier.weight(1f).fillMaxHeight(), horizontalAlignment = Alignment.CenterHorizontally) {
                     Text(DRAWBAR_LABELS[i], fontSize = (13f * s).sp, color = Dim)
                     // Whole steps, as on the instrument: 0..8.
                     Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
-                        RelativeFader(v, { player.setSetBfree(i, Math.round(it * 8f).toFloat()) },
+                        RelativeFader(v, { player.setSetBfree(bar, Math.round(it * 8f).toFloat()) },
                             Modifier.heightIn(max = FADER_MAX).fillMaxHeight().fillMaxWidth(),
                             color = DRAWBAR_COLOURS[i])
                     }
-                    Text(((player.setBfree[i] ?: 0f).toInt()).toString(), fontSize = (13f * s).sp)
+                    Text(((player.setBfree[bar] ?: 0f).toInt()).toString(), fontSize = (13f * s).sp)
                 }
             }
         }

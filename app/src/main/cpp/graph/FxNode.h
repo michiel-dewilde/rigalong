@@ -38,6 +38,9 @@ namespace rigalong {
 class FxNode : public Node {
 public:
     enum Type { kOff, kDelay, kPhaser, kFlanger, kRotary, kReverb, kNumTypes };
+    // A kind by its name ("Delay"; any case), or -1; and its name.
+    static int typeNamed(const char* name);
+    static const char* typeNameOf(int type);
     static constexpr int kMaxParams = 20;
     static constexpr int kSyncBase = 1 + kMaxParams;
     static constexpr int kBlock = 16;

@@ -409,26 +409,36 @@ class SongPlayer(private val lib: Library, host: EngineHost, private val prefs: 
 
     // ---------------------------------------------------------- the stage's setBfree
 
-    /** setBfree's stage controls (SetBfreeNode.h `Param`): drawbars 0-8, Leslie 37, percussion 27. */
-    val setBfree = androidx.compose.runtime.mutableStateMapOf<Int, Float>()
+    /** setBfree's stage controls, by the engine's names for them ([SETBFREE_STAGE_PARAMS]). */
+    val setBfree = androidx.compose.runtime.mutableStateMapOf<String, Float>()
     /** Which of the song's setBfree instances the stage shows: the first playing in the live set, else the first. */
     var setBfreeId by mutableStateOf<String?>(null); private set
 
     private fun setBfreeNode(): Int? = setBfreeId?.let { engines.nodeOfInstance(it) }
 
+    /** Where setBfree has each parameter, by its name: the same in every setBfree, so read once. */
+    private var setBfreeParams: Map<String, Int>? = null
+    private fun setBfreeParam(node: Int, name: String): Int? = (setBfreeParams
+        ?: (0 until NativeBridge.nativeNodeParamCount(node)).associateBy { NativeBridge.nativeNodeParamName(node, it) }
+            .also { setBfreeParams = it })[name]
+
     fun refreshSetBfree() {
         val node = setBfreeNode() ?: return
-        for (i in SETBFREE_STAGE_PARAMS) setBfree[i] = runCatching { NativeBridge.nativeGetNodeParam(node, i) }.getOrDefault(0f)
+        for (name in SETBFREE_STAGE_PARAMS) {
+            val p = setBfreeParam(node, name) ?: continue
+            setBfree[name] = runCatching { NativeBridge.nativeGetNodeParam(node, p) }.getOrDefault(0f)
+        }
     }
 
     /** A stage setBfree control moved: heard at once, and kept in mind for "Store in live set". */
-    fun setSetBfree(index: Int, v: Float) {
+    fun setSetBfree(name: String, v: Float) {
         val node = setBfreeNode() ?: return
-        val key = "$setBfreeId.${NativeBridge.nativeNodeParamName(node, index)}"
-        touch(key, switcher?.currentValue(key) ?: NativeBridge.nativeGetNodeParam(node, index).toDouble())
-        NativeBridge.nativeSetNodeParam(node, index, v)
+        val p = setBfreeParam(node, name) ?: return
+        val key = "$setBfreeId.$name"
+        touch(key, switcher?.currentValue(key) ?: NativeBridge.nativeGetNodeParam(node, p).toDouble())
+        NativeBridge.nativeSetNodeParam(node, p, v)
         switcher?.noteValue(key, v.toDouble())
-        setBfree[index] = v
+        setBfree[name] = v
     }
 
     // ------------------------------------------------------------ stage or not
@@ -611,8 +621,11 @@ class SongPlayer(private val lib: Library, host: EngineHost, private val prefs: 
         private const val TAG = "rigalong-stage"
         /** The editor's song's tapped tempos, apart from the stage's ([Metronome.follow]'s keys). */
         private const val EDITOR_TEMPOS = "edit/"
-        const val SETBFREE_LESLIE = 37
-        const val SETBFREE_PERC = 27
-        val SETBFREE_STAGE_PARAMS = (0..8).toList() + listOf(SETBFREE_PERC, SETBFREE_LESLIE)
+        /** setBfree's parameters on the stage, by the engine's names: the upper manual's nine drawbars, percussion, the Leslie. */
+        val SETBFREE_DRAWBARS = listOf("Upper 16", "Upper 5 1/3", "Upper 8", "Upper 4", "Upper 2 2/3",
+            "Upper 2", "Upper 1 3/5", "Upper 1 1/3", "Upper 1")
+        const val SETBFREE_LESLIE = "Leslie"
+        const val SETBFREE_PERC = "Percussion"
+        val SETBFREE_STAGE_PARAMS = SETBFREE_DRAWBARS + listOf(SETBFREE_PERC, SETBFREE_LESLIE)
     }
 }

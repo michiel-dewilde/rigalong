@@ -2,6 +2,7 @@
 
 #include <android/log.h>
 
+#include <algorithm>
 #include <cmath>
 #include <pthread.h>
 #include <set>
@@ -140,6 +141,22 @@ void Rack::build() {
     mDexed->setParam(rigalong::DexedNode::kLevel, 0.0f);
     mPlaits->setParam(rigalong::PlaitsNode::kLevel, 0.0f);
     mFluid->setParam(rigalong::FluidNode::kLevel, 0.0f);
+}
+
+int Rack::engineNamed(const std::string& name) const {
+    const int count = std::min(instanceCount(), static_cast<int>(kEngines));
+    for (int i = 0; i < count; ++i) {
+        if (name == mInstanceNode[i]->typeName()) return mInstanceType[i];
+    }
+    return -1;
+}
+
+const char* Rack::engineName(int type) const {
+    const int count = std::min(instanceCount(), static_cast<int>(kEngines));
+    for (int i = 0; i < count; ++i) {
+        if (mInstanceType[i] == type) return mInstanceNode[i]->typeName();
+    }
+    return "";
 }
 
 // ----------------------------------------------------------------- loaders

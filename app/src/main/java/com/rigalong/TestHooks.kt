@@ -100,10 +100,10 @@ class TestHooks(
                     }
                 }
             }
-            // Engine instances without a song:  --ei add 2  (a new Surge XT);  --ei i 6 --es preset NAME --ef level 0.8
+            // Engine instances without a song:  --es add "Surge XT"  (a new one);  --ei i 6 --es preset NAME --ef level 0.8
             "INSTANCE" -> {
-                if (intent.hasExtra("add")) {
-                    val i = NativeBridge.nativeAddInstance(intent.getIntExtra("add", 0))
+                intent.getStringExtra("add")?.let { engine ->
+                    val i = NativeBridge.nativeAddInstance(engine)
                     Log.i(TAG, "instance added: $i of ${NativeBridge.nativeInstanceCount()}")
                 }
                 val i = intent.getIntExtra("i", -1)
@@ -115,7 +115,7 @@ class TestHooks(
                             .firstOrNull { NativeBridge.nativeNodeParamName(node, it) == "Level" }
                         if (p != null) NativeBridge.nativeSetNodeParam(node, p, intent.getFloatExtra("level", 0f))
                     }
-                    Log.i(TAG, "instance $i: type ${NativeBridge.nativeInstanceType(i)}, node " +
+                    Log.i(TAG, "instance $i: ${NativeBridge.nativeNodeType(NativeBridge.nativeInstanceNode(i))}, node " +
                         "${NativeBridge.nativeInstanceNode(i)}, busy ${NativeBridge.nativeInstanceBusy(i)}, " +
                         "preset '${NativeBridge.nativeInstancePreset(i)}'")
                 }

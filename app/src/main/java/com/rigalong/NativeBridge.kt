@@ -54,6 +54,8 @@ object NativeBridge {
     /** Bit k: map k moved its parameter since the last call. */
     external fun nativeTakeMovedControls(): Long
     external fun nativeGetStats(): FloatArray
+    /** The name of each figure in [nativeGetStats], in its order. */
+    external fun nativeStatNames(): Array<String>
 
     /**
      * EXCLUSIVE (true, the default) or SHARED for the NEXT stream open.
@@ -95,8 +97,7 @@ object NativeBridge {
     /** Loads an SFZ file into the first sfizz on the background loader thread. Returns immediately. */
     external fun nativeLoadInstrument(id: String, path: String)
 
-    /** setBfree, the tonewheel organ: one of its programmes onto a manual (0 upper). */
-    external fun nativeSetBfreePreset(index: Int, manual: Int)
+    /** setBfree, the tonewheel organ: the names of its programmes. */
     external fun nativeSetBfreePresetNames(): Array<String>
 
     // ------------------------------------------------------------- surge xt
@@ -125,7 +126,6 @@ object NativeBridge {
     external fun nativeRescanContent()
     /** Surge's folder for the player's own patches; empty before Surge is up. */
     external fun nativeSurgeUserPatchesPath(): String
-    external fun nativeDexedReady(): Boolean
     external fun nativeDexedVoiceCount(): Int
     external fun nativeDexedVoiceName(index: Int): String
     /** The voice [nativeDexedSelectVoiceNamed] would pick, as its cartridge has it (128 packed bytes); null if none. */
@@ -136,7 +136,6 @@ object NativeBridge {
     // --- Plaits -------------------------------------------------------------
     // Sixteen synthesis models, already compiled into the binary because Surge
     // vendors them. No library to scan, so there is nothing async here.
-    external fun nativeSetPlaitsParam(index: Int, value: Float)
     external fun nativePlaitsEngineNames(): Array<String>
 
     // ----------------------------------------------------------- fluidsynth
@@ -145,8 +144,6 @@ object NativeBridge {
     // the APK -- they are content with their own licences. Both the font and
     // the preset are addressed by NAME, which is what a saved patch stores.
     external fun nativeInitFluid(dirs: Array<String>)
-    external fun nativeFluidReady(): Boolean
-    external fun nativeFluidBusy(): Boolean
 
     external fun nativeFluidFontCount(): Int
     external fun nativeFluidFontName(index: Int): String
@@ -158,7 +155,6 @@ object NativeBridge {
 
     /** The font's presets by index, in bank and program order. */
     external fun nativeFluidCurrentPreset(): Int
-    external fun nativeFluidSelectPreset(index: Int)
 
     /**
      * The graph, generically: enough to walk it without knowing what is in it.
@@ -174,21 +170,29 @@ object NativeBridge {
     external fun nativeNodeParamName(index: Int, param: Int): String
     external fun nativeGetNodeParam(index: Int, param: Int): Float
     // --- instances: a song's sounds, several of one engine if it wants (AudioEngine.h)
-    /** A new instance of engine [type] (RackEngine order), added while audio runs; its index, or -1. */
-    external fun nativeAddInstance(type: Int): Int
+    /**
+     * A new instance of the engine whose nodes are called [engine] (RackEngine.nodeType:
+     * "Surge XT"), added while audio runs; its index, or -1.
+     */
+    external fun nativeAddInstance(engine: String): Int
     external fun nativeInstanceCount(): Int
-    /** Its engine (RackEngine order), or -1. */
-    external fun nativeInstanceType(i: Int): Int
+    /** How many instances the rack can hold. */
+    external fun nativeMaxInstances(): Int
+    /** The engines this build has, by their nodes' names; and its kinds of insert effect. */
+    external fun nativeEngineNames(): Array<String>
+    external fun nativeFxTypeNames(): Array<String>
     /** The graph ordinal of its engine node, for the node calls. */
     external fun nativeInstanceNode(i: Int): Int
     /** The graph ordinal of its insert effect. */
     external fun nativeInstanceFxNode(i: Int): Int
+    /** The graph ordinal of its MIDI zone (keyLow, keyHigh, transpose, channelIn...: by name, as any node's). */
+    external fun nativeInstanceZoneNode(i: Int): Int
     /** Gives it a preset by name ([path] for an SFZ instrument, [program] for a SoundFont; -1 if none). */
     external fun nativeInstanceLoadPreset(i: Int, name: String, program: Int, path: String?)
     external fun nativeInstanceBusy(i: Int): Boolean
     external fun nativeInstancePreset(i: Int): String
-    /** A song's insert effect, whole: a fresh effect of [type] that starts at these values. */
-    external fun nativeFxConfigure(index: Int, type: Int, names: Array<String>, values: FloatArray)
+    /** A song's insert effect, whole: a fresh effect of the kind called [type] ("delay") that starts at these values. */
+    external fun nativeFxConfigure(index: Int, type: String, names: Array<String>, values: FloatArray)
     /** A value as the player reads it ("250 ms", "1/8"), or null. */
     external fun nativeNodeParamDisplay(index: Int, param: Int, value: Float): String?
     /** A parameter's range: [min, max, 1 if whole numbers only] (PLAN.md D6). */
@@ -260,9 +264,6 @@ object NativeBridge {
      * ramped without a recompile. Order: sfizz, setBfree, surge, dexed, plaits, fluid.
      */
     external fun nativeRackWire(i: Int, midiOn: Boolean, audioOn: Boolean, gain: Float)
-
-    /** Engine [i]'s MIDI zone (engine/include/rigalong/MidiZone.h, `Param`). */
-    external fun nativeZoneParam(i: Int, param: Int, value: Float)
 
     /** TEST: stall the USB reap loop once for [ms], to reproduce a starved IN queue. */
     external fun nativeUsbTestStall(ms: Int)
@@ -368,28 +369,77 @@ object NativeBridge {
         }
     }
 
-    /** Decoded view of the stats array. Indices must match native_bridge.cpp. */
+    /**
+     * The engine's figures, each found by its NAME in [nativeStatNames]: the
+     * order they come in is the engine's own business (REVIEW S6). A figure
+     * this class asks for that the engine does not have stops the app the
+     * first time the figures are read, which is as it starts.
+     */
     class Stats(private val v: FloatArray) {
-        val latencyMs get() = v[0]
-        val cpuLoadPercent get() = v[1]
-        val callbackMaxMs get() = v[2]
-        val xRuns get() = v[3].toInt()
-        val burstFrames get() = v[4].toInt()
-        val bufferFrames get() = v[5].toInt()
-        val sampleRate get() = v[6].toInt()
-        val activeVoices get() = v[7].toInt()
-        val sharingMode get() = v[8].toInt()
-        val performanceMode get() = v[9].toInt()
-        val usesAAudio get() = v[10].toInt() == 1
-        val midiMessages get() = v[11].toLong()
-        val running get() = v[12].toInt() == 1
-        val ringUnderruns get() = v[18].toInt()
-        val ringFillMs get() = v[19]
-        val renderMaxMs get() = v[20]
-        val ringTargetMs get() = v[21]
+        private object At {
+            private val names = nativeStatNames().withIndex().associate { (i, n) -> n to i }
+            private fun at(name: String) = names[name] ?: error("the engine has no figure called '$name'")
+            val latencyMs = at("latencyMs")
+            val cpuLoadPercent = at("cpuLoadPercent")
+            val callbackMaxMs = at("callbackMaxMs")
+            val xRuns = at("xRuns")
+            val burstFrames = at("burstFrames")
+            val bufferFrames = at("bufferFrames")
+            val sampleRate = at("sampleRate")
+            val activeVoices = at("activeVoices")
+            val sharingMode = at("sharingMode")
+            val performanceMode = at("performanceMode")
+            val usesAAudio = at("usesAAudio")
+            val midiMessages = at("midiMessages")
+            val running = at("running")
+            val probeState = at("probeState")
+            val roundTripMs = at("roundTripMs")
+            val inputPeak = at("inputPeak")
+            val inputLatencyMs = at("inputLatencyMs")
+            val loading = at("loading")
+            val ringUnderruns = at("ringUnderruns")
+            val ringFillMs = at("ringFillMs")
+            val renderMaxMs = at("renderMaxMs")
+            val ringTargetMs = at("ringTargetMs")
+            val outputPeak = at("outputPeak")
+            val deviceId = at("deviceId")
+            val stalledSeconds = at("stalledSeconds")
+            val timestampOk = at("timestampOk")
+            val streamState = at("streamState")
+            val usbActive = at("usbActive")
+            val usbRunning = at("usbRunning")
+            val usbDeficitMs = at("usbDeficitMs")
+            val usbHolds = at("usbHolds")
+            val usbAltErrors = at("usbAltErrors")
+            val usbErrors = at("usbErrors")
+            val usbFeedbackRate = at("usbFeedbackRate")
+            val usbMaxGapMs = at("usbMaxGapMs")
+            val usbMaxAltMs = at("usbMaxAltMs")
+            val usbLastAltMs = at("usbLastAltMs")
+            /** By reason: proof, gap, lost, bad ask, slow burst, starve. */
+            val usbHoldsBy = listOf("Proof", "Gap", "Lost", "BadAsk", "SlowBurst", "Starve").map { at("usbHolds$it") }
+        }
+
+        val latencyMs get() = v[At.latencyMs]
+        val cpuLoadPercent get() = v[At.cpuLoadPercent]
+        val callbackMaxMs get() = v[At.callbackMaxMs]
+        val xRuns get() = v[At.xRuns].toInt()
+        val burstFrames get() = v[At.burstFrames].toInt()
+        val bufferFrames get() = v[At.bufferFrames].toInt()
+        val sampleRate get() = v[At.sampleRate].toInt()
+        val activeVoices get() = v[At.activeVoices].toInt()
+        val sharingMode get() = v[At.sharingMode].toInt()
+        val performanceMode get() = v[At.performanceMode].toInt()
+        val usesAAudio get() = v[At.usesAAudio].toInt() == 1
+        val midiMessages get() = v[At.midiMessages].toLong()
+        val running get() = v[At.running].toInt() == 1
+        val ringUnderruns get() = v[At.ringUnderruns].toInt()
+        val ringFillMs get() = v[At.ringFillMs]
+        val renderMaxMs get() = v[At.renderMaxMs]
+        val ringTargetMs get() = v[At.ringTargetMs]
 
         /** Peak of what is actually leaving the box, 0..1, decayed over ~60 ms. */
-        val outputPeak get() = v[22]
+        val outputPeak get() = v[At.outputPeak]
 
         /**
          * The device the stream is REALLY on.
@@ -398,7 +448,7 @@ object NativeBridge {
          * built-in speaker when a requested device has gone away, so this is the
          * only way to notice that a recovery landed somewhere useless.
          */
-        val deviceId get() = v[23].toInt()
+        val deviceId get() = v[At.deviceId].toInt()
 
         /**
          * How long the HARDWARE has presented nothing, in seconds. 0 when
@@ -414,39 +464,39 @@ object NativeBridge {
          * stops being exact as a float after about six minutes at 44100 Hz,
          * which is exactly the timescale the fault lives on.
          */
-        val stalledSeconds get() = v[24]
+        val stalledSeconds get() = v[At.stalledSeconds]
 
         /** 0 when the HAL gave no timestamp, so absent cannot pass for healthy. */
-        val timestampOk get() = v[25].toInt() == 1
+        val timestampOk get() = v[At.timestampOk].toInt() == 1
 
         /** oboe::StreamState. 2 = Open, 4 = Started, 6 = Paused, 8 = Stopped. */
-        val streamState get() = v[26].toInt()
+        val streamState get() = v[At.streamState].toInt()
 
         // --- direct USB -------------------------------------------------------
-        val usbActive get() = v.getOrElse(27) { 0f }.toInt() == 1
-        val usbRunning get() = v.getOrElse(28) { 0f }.toInt() == 1
+        val usbActive get() = v[At.usbActive].toInt() == 1
+        val usbRunning get() = v[At.usbRunning].toInt() == 1
         /** Wall time minus the audio the controller says it put on the wire. */
-        val usbDeficitMs get() = v.getOrElse(29) { 0f }
+        val usbDeficitMs get() = v[At.usbDeficitMs]
         /** Holds: each a short silence by design, never a latch. */
-        val usbHolds get() = v.getOrElse(30) { 0f }.toInt()
+        val usbHolds get() = v[At.usbHolds].toInt()
         /** Holds whose alt cycle was refused, so the FIFO was not emptied. Must stay 0. */
-        val usbAltErrors get() = v.getOrElse(31) { 0f }.toInt()
-        val usbErrors get() = v.getOrElse(32) { 0f }.toInt()
-        val usbFeedbackRate get() = v.getOrElse(33) { 0f }
-        val usbMaxGapMs get() = v.getOrElse(34) { 0f }
+        val usbAltErrors get() = v[At.usbAltErrors].toInt()
+        val usbErrors get() = v[At.usbErrors].toInt()
+        val usbFeedbackRate get() = v[At.usbFeedbackRate]
+        val usbMaxGapMs get() = v[At.usbMaxGapMs]
         /** Holds by reason: proof, gap, lost, bad ask, slow burst, starve. */
-        val usbHoldsBy: List<Int> get() = (35..40).map { v.getOrElse(it) { 0f }.toInt() }
+        val usbHoldsBy: List<Int> get() = At.usbHoldsBy.map { v[it].toInt() }
         /** The alt cycle a hold ends with, which empties the device's FIFO: most of a hold's silence. */
-        val usbMaxAltMs get() = v.getOrElse(41) { 0f }
-        val usbLastAltMs get() = v.getOrElse(42) { 0f }
+        val usbMaxAltMs get() = v[At.usbMaxAltMs]
+        val usbLastAltMs get() = v[At.usbLastAltMs]
 
         /** The unambiguous combination: making signal, and nothing coming out. */
         val audioStalled get() = timestampOk && stalledSeconds > 1.0f && outputPeak > 0.001f
-        val probeState get() = v[13].toInt()
-        val roundTripMs get() = v[14]
-        val inputPeak get() = v[15]
-        val inputLatencyMs get() = v[16]
-        val loading get() = v[17].toInt() == 1
+        val probeState get() = v[At.probeState].toInt()
+        val roundTripMs get() = v[At.roundTripMs]
+        val inputPeak get() = v[At.inputPeak]
+        val inputLatencyMs get() = v[At.inputLatencyMs]
+        val loading get() = v[At.loading].toInt() == 1
         /** Kept in step with SfizzNode::prepare(). */
         val voiceLimit get() = 64
 

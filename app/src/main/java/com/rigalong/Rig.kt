@@ -102,6 +102,13 @@ class Rig private constructor(private val app: Context) {
         }
         NativeBridge.nativeSetMasterDb(masterDb)
         router.start()
+        // What the app asks the engine for BY NAME -- engines, effects, zone and
+        // setBfree parameters -- has to exist in this build of the engine
+        // (REVIEW S6). A build where it does not never gets past its first
+        // start: that is the point. The graph first, where no sink built it.
+        NativeBridge.nativePrepareGraph()
+        val missing = com.rigalong.play.EngineRack.missingInEngine()
+        check(missing.isEmpty()) { "this build's engine lacks: " + missing.joinToString() }
         content.start()
         // Once the engine has its nodes: the demo setlist on first run (S14.2),
         // then back to where the last session was (S13.2).

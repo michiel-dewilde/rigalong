@@ -26,10 +26,22 @@ class EngineRack(private val host: EngineHost, private val note: (String) -> Uni
     /** The stage song's instances on the engine's: song instance id -> engine instance. */
     var onEngine: Map<String, Int> = emptyMap(); private set
 
-    // Per ENGINE instance (AudioEngine::kMaxInstances).
-    private val midiOn = BooleanArray(MAX_INSTANCES) { true }
-    private val audioOn = BooleanArray(MAX_INSTANCES) { true }
-    private val gain = FloatArray(MAX_INSTANCES) { 1f }
+    // Per ENGINE instance: as many as the rack can hold.
+    private val maxInstances = NativeBridge.nativeMaxInstances()
+    private val midiOn = BooleanArray(maxInstances) { true }
+    private val audioOn = BooleanArray(maxInstances) { true }
+    private val gain = FloatArray(maxInstances) { 1f }
+
+    /** The engine of engine instance [i], by the name of its node. */
+    private val engineCache = HashMap<Int, RackEngine>()
+    private fun engineOf(i: Int): RackEngine? = engineCache[i]
+        ?: nodeOf(i)?.let { RackEngine.ofNodeType(NativeBridge.nativeNodeType(it)) }?.also { engineCache[i] = it }
+
+    /** The first instance of [e]: the one the rack starts with, which the setup's lists and "as loaded" speak of. */
+    private val firstOf = HashMap<RackEngine, Int>()
+    private fun isFirst(i: Int, e: RackEngine): Boolean = firstOf.getOrPut(e) {
+        (0 until NativeBridge.nativeInstanceCount()).firstOrNull { engineOf(it) == e } ?: return false
+    } == i
 
     /**
      * The engine instance each of [song]'s instances plays on: the k-th of an
@@ -40,15 +52,15 @@ class EngineRack(private val host: EngineHost, private val note: (String) -> Uni
     private fun assignment(song: RackSong?): Map<String, Int> {
         if (song == null) return emptyMap()
         val count = runCatching { NativeBridge.nativeInstanceCount() }.getOrDefault(0)
-        val byType = HashMap<Int, MutableList<Int>>()
-        for (i in 0 until count) byType.getOrPut(NativeBridge.nativeInstanceType(i)) { mutableListOf() } += i
+        val byType = HashMap<RackEngine, MutableList<Int>>()
+        for (i in 0 until count) engineOf(i)?.let { byType.getOrPut(it) { mutableListOf() } += i }
         val seen = HashMap<RackEngine, Int>()
         val out = LinkedHashMap<String, Int>()
         for (inst in song.instances) {
             val k = seen.merge(inst.engine, 1, Int::plus)!! - 1
-            val pool = byType.getOrPut(inst.engine.ordinal) { mutableListOf() }
+            val pool = byType.getOrPut(inst.engine) { mutableListOf() }
             while (pool.size <= k) {
-                val n = NativeBridge.nativeAddInstance(inst.engine.ordinal)
+                val n = NativeBridge.nativeAddInstance(inst.engine.nodeType)
                 if (n < 0) break
                 pool += n
                 note("instance $n added for ${inst.engine.label}")
@@ -168,9 +180,8 @@ class EngineRack(private val host: EngineHost, private val note: (String) -> Uni
      */
     private fun applyFxAt(node: Int?, fx: RackFx?) {
         node ?: return
-        val type = RackFx.TYPES.indexOf(fx?.type ?: "off").coerceAtLeast(0)
         val params = fx?.params.orEmpty()
-        NativeBridge.nativeFxConfigure(node, type, params.keys.toTypedArray(),
+        NativeBridge.nativeFxConfigure(node, fx?.type ?: "off", params.keys.toTypedArray(),
             params.values.map { it.toFloat() }.toFloatArray())
         // Fully on until a live set says otherwise: an amount left at 0 by the
         // previous song would make a new effect silent.
@@ -242,7 +253,7 @@ class EngineRack(private val host: EngineHost, private val note: (String) -> Uni
     private fun loadPresetAt(i: Int, e: RackEngine, wanted: String?, program: Int?) {
         // "As loaded" on an added instance means what the first of its engine
         // has: a new instance starts empty, and an empty sfizz is a silent one.
-        val preset = wanted?.takeIf { it.isNotEmpty() } ?: if (i == e.ordinal) null else runCatching {
+        val preset = wanted?.takeIf { it.isNotEmpty() } ?: if (isFirst(i, e)) null else runCatching {
             when (e) {
                 RackEngine.SFIZZ -> host.currentInstrument()
                 RackEngine.SURGE -> NativeBridge.nativeSurgeCurrentPatchName()
@@ -255,7 +266,7 @@ class EngineRack(private val host: EngineHost, private val note: (String) -> Uni
             // The first sfizz goes through EngineContent, which keeps the
             // choice for the next start and reads the samples' heads into the
             // page cache before the keys need them.
-            if (i == e.ordinal && e == RackEngine.SFIZZ) {
+            if (e == RackEngine.SFIZZ && isFirst(i, e)) {
                 if (host.currentInstrument() != preset) host.selectInstrument(preset)
                 return
             }
@@ -279,8 +290,8 @@ class EngineRack(private val host: EngineHost, private val note: (String) -> Uni
         val i = onEngine[id] ?: return
         val rest = key.substring(first + 1)
         if (rest.startsWith("zone.")) {
-            val z = ZONE_PARAMS.indexOf(rest.removePrefix("zone."))
-            if (z >= 0) NativeBridge.nativeZoneParam(i, z, v)
+            val node = zoneNodeOf(i) ?: return
+            zoneParam(node, rest.removePrefix("zone."))?.let { NativeBridge.nativeSetNodeParam(node, it, v) }
         } else if (rest.startsWith("fx.")) {
             val node = fxNodeOf(i) ?: return
             paramIndex(node, rest.removePrefix("fx."))?.let { NativeBridge.nativeSetNodeParam(node, it, v) }
@@ -289,6 +300,15 @@ class EngineRack(private val host: EngineHost, private val note: (String) -> Uni
             if (rest == "Level") levels[id] = v
         }
     }
+
+    private val zoneCache = HashMap<Int, Int>()
+    private fun zoneNodeOf(i: Int): Int? = zoneCache[i] ?: NativeBridge.nativeInstanceZoneNode(i).takeIf { it >= 0 }
+        ?.also { zoneCache[i] = it }
+
+    /** A zone's parameters by name: every zone has the same ones, so they are read once. */
+    private var zoneParams: Map<String, Int>? = null
+    private fun zoneParam(node: Int, name: String): Int? = (zoneParams ?: (0 until NativeBridge.nativeNodeParamCount(node))
+        .associateBy { NativeBridge.nativeNodeParamName(node, it) }.also { zoneParams = it })[name]
 
     /** A live set's wire ("<instance>.midi" / "<instance>.audio") on or off. */
     fun applyWire(c: Change.WireSet) {
@@ -312,7 +332,7 @@ class EngineRack(private val host: EngineHost, private val note: (String) -> Uni
     }
 
     private fun setWireAt(i: Int, midi: Boolean? = null, audio: Boolean? = null, g: Float? = null) {
-        if (i !in 0 until MAX_INSTANCES) return
+        if (i !in 0 until maxInstances) return
         midi?.let { midiOn[i] = it }
         audio?.let { audioOn[i] = it }
         g?.let { gain[i] = it }
@@ -352,15 +372,37 @@ class EngineRack(private val host: EngineHost, private val note: (String) -> Uni
     fun takeMovedControls(): Long = runCatching { NativeBridge.nativeTakeMovedControls() }.getOrDefault(0L)
 
     companion object {
-        /** AudioEngine::kMaxInstances. */
-        const val MAX_INSTANCES = 24
         /** ReverbNode's own defaults (graph/Nodes.h), for a song that sets none. */
         val REVERB_DEFAULTS = mapOf("Room size" to 0.72, "Damping" to 0.35, "Width" to 1.0, "Mix" to 0.25)
 
-        /** engine/include/rigalong/MidiZone.h, `Param`, in order. */
-        val ZONE_PARAMS = listOf(
-            "channelIn", "channelOut", "keyLow", "keyHigh", "velLow", "velHigh", "transpose",
-            "passNotes", "passCC", "passBend", "passPressure", "passProgram",
-            "ccFromA", "ccToA", "ccFromB", "ccToB")
+        /**
+         * What the app will ask the engine for by name, checked against what
+         * this build of the engine has: every engine, every kind of insert
+         * effect, every zone parameter a live set sets. Empty when all is
+         * there; else what is missing, for the log and the status line. The
+         * figures of [NativeBridge.Stats] check themselves when first read.
+         * After the graph is built.
+         */
+        fun missingInEngine(): List<String> = runCatching {
+            val out = ArrayList<String>()
+            val engines = NativeBridge.nativeEngineNames().toSet()
+            for (e in RackEngine.entries) if (e.nodeType !in engines) out += "engine '${e.nodeType}'"
+            val fx = NativeBridge.nativeFxTypeNames().map { it.lowercase() }.toSet()
+            for (t in RackFx.TYPES) if (t !in fx) out += "effect '$t'"
+            val zone = NativeBridge.nativeInstanceZoneNode(0)
+            val zoneNames = (0 until NativeBridge.nativeNodeParamCount(zone)).map { NativeBridge.nativeNodeParamName(zone, it) }.toSet()
+            for (p in com.rigalong.model.RackPart.ZONE_PARAMS) if (p !in zoneNames) out += "zone parameter '$p'"
+            // Every engine's level, and what the stage shows of setBfree.
+            for (i in 0 until NativeBridge.nativeInstanceCount()) {
+                val node = NativeBridge.nativeInstanceNode(i)
+                val type = NativeBridge.nativeNodeType(node)
+                val names = (0 until NativeBridge.nativeNodeParamCount(node)).map { NativeBridge.nativeNodeParamName(node, it) }.toSet()
+                if ("Level" !in names) out += "parameter 'Level' of $type"
+                if (type == RackEngine.SETBFREE.nodeType) {
+                    for (p in SongPlayer.SETBFREE_STAGE_PARAMS) if (p !in names) out += "setBfree parameter '$p'"
+                }
+            }
+            out
+        }.getOrElse { listOf("the engine's names could not be read: $it") }
     }
 }

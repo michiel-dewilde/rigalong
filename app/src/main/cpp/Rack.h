@@ -45,14 +45,18 @@ public:
 
     rigalong::Graph& graph() { return mGraph; }
 
+    // An engine by the name of its nodes (Node::typeName: "sfizz", "Surge XT"),
+    // or -1; and that name, or "". The names are the first six instances' own,
+    // so there is no second list to keep in step. After build().
+    int engineNamed(const std::string& name) const;
+    const char* engineName(int type) const;
+
     // The default patch: one instance of each engine, all but sfizz silent.
     // Does nothing the second time. The caller compiles.
     void build();
 
     // --- instances -----------------------------------------------------------
     int instanceCount() const { return mInstanceCount.load(std::memory_order_acquire); }
-    // Its engine, or -1.
-    int instanceType(int i) const { return i >= 0 && i < instanceCount() ? mInstanceType[i] : -1; }
     rigalong::Node* instanceNode(int i) const { return i >= 0 && i < instanceCount() ? mInstanceNode[i] : nullptr; }
     rigalong::FxNode* instanceFx(int i) const { return i >= 0 && i < instanceCount() ? mFx[i] : nullptr; }
     rigalong::MidiZoneNode* zone(int i) const { return i >= 0 && i < instanceCount() ? mZone[i] : nullptr; }
@@ -80,11 +84,9 @@ public:
 
     // --- the first instance of each engine -----------------------------------
     // Setup's engine panels and the content lists ask these.
-    rigalong::SetBfreeNode* setBfree() const { return mSetBfree; }
     rigalong::SfizzNode* sfizz() const { return mSfizz; }
     rigalong::SurgeNode* surge() const { return mSurge; }
     rigalong::DexedNode* dexed() const { return mDexed; }
-    rigalong::PlaitsNode* plaits() const { return mPlaits; }
     rigalong::FluidNode* fluid() const { return mFluid; }
 
     // Brings Surge up on a loader thread: constructing it scans the patch
@@ -107,7 +109,6 @@ public:
     // Vorbis decode of every one of them -- so all of it runs on a loader.
     void initFluidAsync(const std::vector<std::string>& dirs, double rate);
     void loadSoundFontNamedAsync(const std::string& name);
-    bool isFluidBusy() const { return mFluidBusy.load(std::memory_order_relaxed); }
 
     // Queues an SFZ load for the first sfizz. Returns immediately: parsing an
     // instrument and opening its samples must never happen on the audio thread,

@@ -1,6 +1,7 @@
 #include "FxNode.h"
 
 #include <algorithm>
+#include <cctype>
 #include <chrono>
 #include <cmath>
 #include <cstdlib>
@@ -139,6 +140,21 @@ constexpr int kTagStride = 64;
 constexpr int kGenWrap = 1 << 20;   // kGenWrap * kTagStride stays inside an int
 
 }  // namespace
+
+int FxNode::typeNamed(const char* name) {
+    for (int t = 0; t < kNumTypes; ++t) {
+        const char* a = kTypeNames[t];
+        const char* b = name;
+        while (*a != 0 && *b != 0 && std::tolower(static_cast<unsigned char>(*a)) ==
+                                       std::tolower(static_cast<unsigned char>(*b))) { ++a; ++b; }
+        if (*a == 0 && *b == 0) return t;
+    }
+    return -1;
+}
+
+const char* FxNode::typeNameOf(int type) {
+    return type >= 0 && type < kNumTypes ? kTypeNames[type] : "";
+}
 
 FxNode::FxNode() = default;
 

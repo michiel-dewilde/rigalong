@@ -105,7 +105,7 @@ data class RackSlot(
  */
 data class RackFx(val type: String, val params: Map<String, Double> = emptyMap()) {
     companion object {
-        /** In the engine's order (FxNode::Type); "off" is no effect. */
+        /** The kinds of effect, by the engine's names for them (any order); "off" is no effect. */
         val TYPES = listOf("off", "delay", "phaser", "flanger", "rotary", "reverb")
     }
 }
@@ -127,7 +127,12 @@ data class RackPart(
      * have to load; that is another instance ([RackSong.layerFor]).
      */
     val params: Map<String, Double> = emptyMap(),
-)
+) {
+    companion object {
+        /** The zone parameters every live set sets for each sound, by the engine's names for them. */
+        val ZONE_PARAMS = listOf("keyLow", "keyHigh", "transpose", "channelIn")
+    }
+}
 
 /**
  * What a live set does to one external device (I4.7, I6.7), keyed by the

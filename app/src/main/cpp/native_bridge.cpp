@@ -237,12 +237,6 @@ Java_com_rigalong_NativeBridge_nativeLoadInstrument(JNIEnv* env, jobject, jstrin
 //
 // Its programmes; the parameters go through the generic node calls, by name.
 
-JNIEXPORT void JNICALL
-Java_com_rigalong_NativeBridge_nativeSetBfreePreset(JNIEnv*, jobject, jint index,
-                                                    jint manual) {
-    if (auto* h = engine().rack().setBfree()) h->applyPreset(index, manual);
-}
-
 JNIEXPORT jobjectArray JNICALL
 Java_com_rigalong_NativeBridge_nativeSetBfreePresetNames(JNIEnv* env, jobject) {
     const int count = rigalong::SetBfreeNode::presetCount();
@@ -370,12 +364,6 @@ Java_com_rigalong_NativeBridge_nativeLoadDexedBanks(JNIEnv* env, jobject,
     engine().rack().loadDexedBanksAsync(paths);
 }
 
-JNIEXPORT jboolean JNICALL
-Java_com_rigalong_NativeBridge_nativeDexedReady(JNIEnv*, jobject) {
-    auto* d = engine().rack().dexed();
-    return d && d->ready() ? JNI_TRUE : JNI_FALSE;
-}
-
 JNIEXPORT jint JNICALL
 Java_com_rigalong_NativeBridge_nativeDexedVoiceCount(JNIEnv*, jobject) {
     auto* d = engine().rack().dexed();
@@ -403,12 +391,6 @@ Java_com_rigalong_NativeBridge_nativeDexedSelectVoiceNamed(JNIEnv* env, jobject,
         d->selectVoiceNamed(n);
         env->ReleaseStringUTFChars(name, n);
     }
-}
-
-JNIEXPORT void JNICALL
-Java_com_rigalong_NativeBridge_nativeSetPlaitsParam(JNIEnv*, jobject, jint index,
-                                                       jfloat value) {
-    if (auto* p = engine().rack().plaits()) p->setParam(index, value);
 }
 
 JNIEXPORT jobjectArray JNICALL
@@ -444,17 +426,6 @@ Java_com_rigalong_NativeBridge_nativeInitFluid(JNIEnv* env, jobject, jobjectArra
     engine().rack().initFluidAsync(paths, engine().currentRate());
 }
 
-JNIEXPORT jboolean JNICALL
-Java_com_rigalong_NativeBridge_nativeFluidReady(JNIEnv*, jobject) {
-    auto* f = engine().rack().fluid();
-    return f && f->ready() ? JNI_TRUE : JNI_FALSE;
-}
-
-JNIEXPORT jboolean JNICALL
-Java_com_rigalong_NativeBridge_nativeFluidBusy(JNIEnv*, jobject) {
-    return engine().rack().isFluidBusy() ? JNI_TRUE : JNI_FALSE;
-}
-
 JNIEXPORT jint JNICALL
 Java_com_rigalong_NativeBridge_nativeFluidFontCount(JNIEnv*, jobject) {
     auto* f = engine().rack().fluid();
@@ -484,11 +455,6 @@ JNIEXPORT jint JNICALL
 Java_com_rigalong_NativeBridge_nativeFluidCurrentPreset(JNIEnv*, jobject) {
     auto* f = engine().rack().fluid();
     return f ? f->currentPreset() : -1;
-}
-
-JNIEXPORT void JNICALL
-Java_com_rigalong_NativeBridge_nativeFluidSelectPreset(JNIEnv*, jobject, jint index) {
-    if (auto* f = engine().rack().fluid()) f->selectPreset(index);
 }
 
 // ------------------------------------------------------- the graph, generically
@@ -537,19 +503,25 @@ int ordinalOf(const rigalong::Node* n) {
 }
 }  // namespace
 
+// A new instance of the engine whose nodes are called `engine` ("Surge XT",
+// "FluidSynth": Node::typeName). By name: the app's list of engines and the
+// rack's need not be in the same order.
 JNIEXPORT jint JNICALL
-Java_com_rigalong_NativeBridge_nativeAddInstance(JNIEnv*, jobject, jint type) {
-    return engine().addInstance(type);
+Java_com_rigalong_NativeBridge_nativeAddInstance(JNIEnv* env, jobject, jstring engineName) {
+    const char* c = engineName ? env->GetStringUTFChars(engineName, nullptr) : nullptr;
+    const int type = c ? engine().rack().engineNamed(c) : -1;
+    if (c) env->ReleaseStringUTFChars(engineName, c);
+    return type < 0 ? -1 : engine().addInstance(type);
+}
+
+JNIEXPORT jint JNICALL
+Java_com_rigalong_NativeBridge_nativeMaxInstances(JNIEnv*, jobject) {
+    return Rack::kMaxInstances;
 }
 
 JNIEXPORT jint JNICALL
 Java_com_rigalong_NativeBridge_nativeInstanceCount(JNIEnv*, jobject) {
     return engine().rack().instanceCount();
-}
-
-JNIEXPORT jint JNICALL
-Java_com_rigalong_NativeBridge_nativeInstanceType(JNIEnv*, jobject, jint i) {
-    return engine().rack().instanceType(i);
 }
 
 JNIEXPORT jint JNICALL
@@ -561,6 +533,13 @@ Java_com_rigalong_NativeBridge_nativeInstanceNode(JNIEnv*, jobject, jint i) {
 JNIEXPORT jint JNICALL
 Java_com_rigalong_NativeBridge_nativeInstanceFxNode(JNIEnv*, jobject, jint i) {
     const rigalong::Node* n = engine().rack().instanceFx(i);
+    return n ? ordinalOf(n) : -1;
+}
+
+// Its zone, a node like any other: its parameters go by their names.
+JNIEXPORT jint JNICALL
+Java_com_rigalong_NativeBridge_nativeInstanceZoneNode(JNIEnv*, jobject, jint i) {
+    const rigalong::Node* n = engine().rack().zone(i);
     return n ? ordinalOf(n) : -1;
 }
 
@@ -586,10 +565,19 @@ Java_com_rigalong_NativeBridge_nativeInstancePreset(JNIEnv* env, jobject, jint i
 
 // A song's insert effect, whole (FxNode::configure): type, then named values.
 JNIEXPORT void JNICALL
-Java_com_rigalong_NativeBridge_nativeFxConfigure(JNIEnv* env, jobject, jint index, jint type,
+Java_com_rigalong_NativeBridge_nativeFxConfigure(JNIEnv* env, jobject, jint index, jstring typeName,
                                                      jobjectArray names, jfloatArray values) {
     auto* fx = dynamic_cast<rigalong::FxNode*>(engine().rack().graph().nodeAt(index));
     if (fx == nullptr) return;
+    // The kind of effect by its name ("delay", "rotary"; any case). One this
+    // build does not have is no effect, and says so.
+    const char* t = typeName ? env->GetStringUTFChars(typeName, nullptr) : nullptr;
+    int type = t ? rigalong::FxNode::typeNamed(t) : -1;
+    if (type < 0) {
+        __android_log_print(ANDROID_LOG_ERROR, "rigalong-audio", "no effect called '%s': off", t ? t : "");
+        type = rigalong::FxNode::kOff;
+    }
+    if (t) env->ReleaseStringUTFChars(typeName, t);
     std::vector<std::string> n;
     const jsize count = env->GetArrayLength(names);
     for (jsize i = 0; i < count; ++i) {
@@ -602,6 +590,30 @@ Java_com_rigalong_NativeBridge_nativeFxConfigure(JNIEnv* env, jobject, jint inde
     std::vector<float> v(static_cast<size_t>(env->GetArrayLength(values)));
     if (!v.empty()) env->GetFloatArrayRegion(values, 0, static_cast<jsize>(v.size()), v.data());
     fx->configure(type, n, v);
+}
+
+// The kinds of effect and the engines this build has, by the names the app
+// uses for them: it checks its own lists against these when it starts.
+JNIEXPORT jobjectArray JNICALL
+Java_com_rigalong_NativeBridge_nativeFxTypeNames(JNIEnv* env, jobject) {
+    jobjectArray out = env->NewObjectArray(rigalong::FxNode::kNumTypes, env->FindClass("java/lang/String"), nullptr);
+    for (int i = 0; out != nullptr && i < rigalong::FxNode::kNumTypes; ++i) {
+        jstring name = env->NewStringUTF(rigalong::FxNode::typeNameOf(i));
+        env->SetObjectArrayElement(out, i, name);
+        env->DeleteLocalRef(name);
+    }
+    return out;
+}
+
+JNIEXPORT jobjectArray JNICALL
+Java_com_rigalong_NativeBridge_nativeEngineNames(JNIEnv* env, jobject) {
+    jobjectArray out = env->NewObjectArray(Rack::kEngines, env->FindClass("java/lang/String"), nullptr);
+    for (int i = 0; out != nullptr && i < Rack::kEngines; ++i) {
+        jstring name = env->NewStringUTF(engine().rack().engineName(i));
+        env->SetObjectArrayElement(out, i, name);
+        env->DeleteLocalRef(name);
+    }
+    return out;
 }
 
 // A value as the player reads it ("250 ms", "1/8"), or null where the node has
@@ -639,75 +651,90 @@ Java_com_rigalong_NativeBridge_nativeSetNodeParam(JNIEnv*, jobject, jint index,
     if (rigalong::Node* n = engine().rack().graph().nodeAt(index)) n->setParam(param, value);
 }
 
-// Stats come back as a float array rather than a formatted string: no allocation
-// or text handling on the native side, and the UI decides how to present them.
 JNIEXPORT void JNICALL
 Java_com_rigalong_NativeBridge_nativeSetExclusive(JNIEnv*, jobject, jboolean e) {
     engine().setExclusive(e == JNI_TRUE);
 }
 
+// THE STATS, BY NAME. One table gives the names and the values, so the two
+// cannot drift, and the app finds each figure by its name (NativeBridge.Stats),
+// never by its place: a figure added anywhere here is right at once, and one
+// the app asks for that is gone stops the app at its first reading, not on a
+// stage with a wrong number on screen.
+//
+// Floats: no allocation or text handling on the native side, and the UI
+// decides how to present them. NOT frame counts: an int64 of frames stops
+// being representable as a float after about six minutes at 44100, which is
+// why the output path's health is `stalledSeconds`.
+#define RIGALONG_STATS(X) \
+    X(latencyMs, s.latencyMs) \
+    X(cpuLoadPercent, s.cpuLoadPercent) \
+    X(callbackMaxMs, s.callbackMaxMs) \
+    X(xRuns, s.xRuns) \
+    X(burstFrames, s.burstFrames) \
+    X(bufferFrames, s.bufferFrames) \
+    X(sampleRate, s.sampleRate) \
+    X(activeVoices, s.activeVoices) \
+    X(sharingMode, s.sharingMode) \
+    X(performanceMode, s.performanceMode) \
+    X(usesAAudio, s.usesAAudio) \
+    X(midiMessages, s.midiMessages) \
+    X(running, s.running) \
+    X(probeState, s.probeState) \
+    X(roundTripMs, s.roundTripMs) \
+    X(inputPeak, s.inputPeak) \
+    X(inputLatencyMs, s.inputLatencyMs) \
+    X(loading, s.loading) \
+    X(ringUnderruns, s.ringUnderruns) \
+    X(ringFillMs, s.ringFillMs) \
+    X(renderMaxMs, s.renderMaxMs) \
+    X(ringTargetMs, s.ringTargetMs) \
+    X(outputPeak, s.outputPeak) \
+    X(deviceId, s.deviceId) \
+    X(stalledSeconds, s.stalledSeconds) \
+    X(timestampOk, s.timestampOk) \
+    X(streamState, s.streamState) \
+    X(usbActive, s.usbActive) \
+    X(usbRunning, s.usbRunning) \
+    X(usbDeficitMs, s.usbDeficitMs) \
+    X(usbHolds, s.usbHolds) \
+    X(usbAltErrors, s.usbAltErrors) \
+    X(usbErrors, s.usbErrors) \
+    X(usbFeedbackRate, s.usbFeedbackRate) \
+    X(usbMaxGapMs, s.usbMaxGapMs) \
+    X(usbHoldsProof, s.usbHoldsBy[0]) \
+    X(usbHoldsGap, s.usbHoldsBy[1]) \
+    X(usbHoldsLost, s.usbHoldsBy[2]) \
+    X(usbHoldsBadAsk, s.usbHoldsBy[3]) \
+    X(usbHoldsSlowBurst, s.usbHoldsBy[4]) \
+    X(usbHoldsStarve, s.usbHoldsBy[5]) \
+    X(usbMaxAltMs, s.usbMaxAltMs) \
+    X(usbLastAltMs, s.usbLastAltMs)
+
+JNIEXPORT jobjectArray JNICALL
+Java_com_rigalong_NativeBridge_nativeStatNames(JNIEnv* env, jobject) {
+#define X(name, value) #name,
+    static const char* const kNames[] = {RIGALONG_STATS(X)};
+#undef X
+    const jsize count = static_cast<jsize>(sizeof(kNames) / sizeof(kNames[0]));
+    jobjectArray out = env->NewObjectArray(count, env->FindClass("java/lang/String"), nullptr);
+    for (jsize i = 0; out != nullptr && i < count; ++i) {
+        jstring name = env->NewStringUTF(kNames[i]);
+        env->SetObjectArrayElement(out, i, name);
+        env->DeleteLocalRef(name);
+    }
+    return out;
+}
+
 JNIEXPORT jfloatArray JNICALL
 Java_com_rigalong_NativeBridge_nativeGetStats(JNIEnv* env, jobject) {
     const AudioEngine::Stats s = engine().stats();
-
-    constexpr int kCount = 43;
-    jfloat values[kCount] = {
-            s.latencyMs,                             // 0
-            s.cpuLoadPercent,                        // 1
-            s.callbackMaxMs,                         // 2
-            static_cast<jfloat>(s.xRuns),            // 3
-            static_cast<jfloat>(s.burstFrames),      // 4
-            static_cast<jfloat>(s.bufferFrames),     // 5
-            static_cast<jfloat>(s.sampleRate),       // 6
-            static_cast<jfloat>(s.activeVoices),     // 7
-            static_cast<jfloat>(s.sharingMode),      // 8
-            static_cast<jfloat>(s.performanceMode),  // 9
-            static_cast<jfloat>(s.usesAAudio),       // 10
-            static_cast<jfloat>(s.midiMessages),     // 11
-            static_cast<jfloat>(s.running),          // 12
-            static_cast<jfloat>(s.probeState),       // 13
-            s.roundTripMs,                           // 14
-            s.inputPeak,                             // 15
-            s.inputLatencyMs,                        // 16
-            static_cast<jfloat>(s.loading),          // 17
-            static_cast<jfloat>(s.ringUnderruns),    // 18
-            s.ringFillMs,                            // 19
-            s.renderMaxMs,                           // 20
-            s.ringTargetMs,                          // 21
-            s.outputPeak,                            // 22
-            static_cast<jfloat>(s.deviceId),         // 23
-            // Output-path health, for the dropout that needs a replug. NOT a
-            // frame count: an int64 of frames stops being representable as a
-            // float after about six minutes at 44100, which is precisely the
-            // timescale this bug lives on. Seconds-since-frozen is exact for as
-            // long as anyone cares.
-            s.stalledSeconds,                        // 24
-            static_cast<jfloat>(s.timestampOk),      // 25
-            static_cast<jfloat>(s.streamState),      // 26
-            // Direct USB. Holds are short silences by design; altErrors are
-            // holds that could not empty the device's FIFO and must stay 0.
-            static_cast<jfloat>(s.usbActive),        // 27
-            static_cast<jfloat>(s.usbRunning),       // 28
-            s.usbDeficitMs,                          // 29
-            static_cast<jfloat>(s.usbHolds),         // 30
-            static_cast<jfloat>(s.usbAltErrors),     // 31
-            static_cast<jfloat>(s.usbErrors),        // 32
-            s.usbFeedbackRate,                       // 33
-            s.usbMaxGapMs,                           // 34
-            static_cast<jfloat>(s.usbHoldsBy[0]),    // 35 holds: proof
-            static_cast<jfloat>(s.usbHoldsBy[1]),    // 36 gap
-            static_cast<jfloat>(s.usbHoldsBy[2]),    // 37 lost
-            static_cast<jfloat>(s.usbHoldsBy[3]),    // 38 bad ask
-            static_cast<jfloat>(s.usbHoldsBy[4]),    // 39 slow burst
-            static_cast<jfloat>(s.usbHoldsBy[5]),    // 40 starve
-            s.usbMaxAltMs,                           // 41 worst alt cycle
-            s.usbLastAltMs,                          // 42 latest alt cycle
-    };
-
-    jfloatArray array = env->NewFloatArray(kCount);
-    if (array != nullptr) {
-        env->SetFloatArrayRegion(array, 0, kCount, values);
-    }
+#define X(name, value) static_cast<jfloat>(value),
+    const jfloat values[] = {RIGALONG_STATS(X)};
+#undef X
+    const jsize count = static_cast<jsize>(sizeof(values) / sizeof(values[0]));
+    jfloatArray array = env->NewFloatArray(count);
+    if (array != nullptr) env->SetFloatArrayRegion(array, 0, count, values);
     return array;
 }
 
@@ -1101,18 +1128,11 @@ Java_com_rigalong_NativeBridge_nativeUsbMidiSend(JNIEnv* env, jobject, jbyteArra
     return engine().midi().usbOut().send(bytes.data(), static_cast<int>(n));
 }
 
-// THE RACK (AudioEngine.h): per engine, its zone's parameters and the on/off
-// and gain of its two wires. Index order: sfizz, setBfree, surge, dexed,
-// plaits, fluid.
+// THE RACK (Rack.h): per instance, the on/off and gain of its two wires.
 JNIEXPORT void JNICALL
 Java_com_rigalong_NativeBridge_nativeRackWire(JNIEnv*, jobject, jint i, jboolean midiOn,
                                                   jboolean audioOn, jfloat gain) {
     engine().rack().setWire(i, midiOn == JNI_TRUE, audioOn == JNI_TRUE, gain);
-}
-
-JNIEXPORT void JNICALL
-Java_com_rigalong_NativeBridge_nativeZoneParam(JNIEnv*, jobject, jint i, jint param, jfloat value) {
-    if (rigalong::MidiZoneNode* z = engine().rack().zone(i)) z->setParam(param, value);
 }
 
 // TEST: stall the USB reap loop once for `ms` (a starved IN queue).
