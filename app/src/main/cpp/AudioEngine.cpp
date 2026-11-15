@@ -563,166 +563,9 @@ int AudioEngine::pullForUsb(void* ctx, float* dst, int frames) {
     return static_cast<int>(self->pullFromRing(dst, static_cast<uint32_t>(std::max(0, frames))));
 }
 
-bool AudioEngine::openInput(int32_t deviceId) {
-    // Already up on this device? Then leave it ALONE.
-    //
-    // Reopening was not harmless, which is how this was found. The probe times
-    // out after half a second of INPUT frames, and a freshly opened AAudio
-    // capture stream needs about that long before it delivers anything but
-    // zeros -- so every measurement that reopened the stream first measured a
-    // stream that was not yet running, and reported "PROBE FAILED maxPeak=
-    // 0.0000". Tapping MEASURE twice in a row did it; so did every scripted
-    // probe, since each one enabled the input again on its way in.
-    if (mInputStream != nullptr && mInputDeviceId == deviceId) return true;
-
-    // Try progressively more relaxed configurations. The output side can demand
-    // exclusive/44100/I16 because the CP-88 grants it; the capture side turns out
-    // to be fussier, and for a measurement stream correctness matters far more
-    // than squeezing out the last millisecond.
-    struct Attempt {
-        const char* name;
-        oboe::SharingMode sharing;
-        bool pinFormat;     // demand 44100 / I16 / stereo exactly
-    };
-    static constexpr Attempt kAttempts[] = {
-            {"exclusive, pinned", oboe::SharingMode::Exclusive, true},
-            {"shared, pinned",    oboe::SharingMode::Shared,    true},
-            {"shared, relaxed",   oboe::SharingMode::Shared,    false},
-    };
-
-    for (const auto& a : kAttempts) {
-        oboe::AudioStreamBuilder builder;
-        builder.setDirection(oboe::Direction::Input)
-                ->setPerformanceMode(oboe::PerformanceMode::LowLatency)
-                ->setSharingMode(a.sharing)
-                // Unprocessed: no AGC, no noise suppression, no echo cancellation.
-                // Echo cancellation in particular exists precisely to remove what
-                // this probe is looking for.
-                ->setInputPreset(oboe::InputPreset::Unprocessed)
-                ->setDeviceId(deviceId);
-
-        if (a.pinFormat) {
-            // Sample rate deliberately NOT pinned. Asking the microphone for
-            // 44100 to match the CP-88 puts a resampler in the capture path,
-            // which adds latency that calculateLatencyMillis() does not report
-            // and corrupts the measurement. Let it run at its native rate; the
-            // probe converts frames to milliseconds using getSampleRate(), so
-            // whatever it picks is handled correctly.
-            builder.setFormat(oboe::AudioFormat::I16)
-                    ->setChannelCount(oboe::ChannelCount::Stereo)
-                    ->setSampleRateConversionQuality(oboe::SampleRateConversionQuality::None)
-                    ->setFormatConversionAllowed(false);
-        } else {
-            builder.setFormat(oboe::AudioFormat::I16)
-                    ->setFormatConversionAllowed(true)
-                    ->setSampleRateConversionQuality(oboe::SampleRateConversionQuality::Medium);
-        }
-
-        // No data callback: the input is drained from inside the output callback,
-        // so the two directions stay locked and frame counting stays honest.
-        const oboe::Result opened = builder.openStream(mInputStream);
-        if (opened != oboe::Result::OK || !mInputStream) {
-            LOGE("input open [%s] failed: %s", a.name, oboe::convertToText(opened));
-            mInputStream.reset();
-            continue;
-        }
-
-        const oboe::Result started = mInputStream->requestStart();
-        if (started != oboe::Result::OK) {
-            LOGE("input start [%s] failed: %s", a.name, oboe::convertToText(started));
-            mInputStream->close();
-            mInputStream.reset();
-            continue;
-        }
-
-        mInputChannels = mInputStream->getChannelCount();
-        // May be called before the output stream exists, so do not depend on
-        // mScratchFrames having been sized yet.
-        const int32_t frames = std::max(4096, mScratchFrames);
-        mInputBuffer.assign(
-                static_cast<size_t>(frames) * std::max(1, mInputChannels), 0);
-        mNoiseFloor = 0.0f;
-        mInputDeviceId = deviceId;
-        mProbeState.store(ProbeState::Idle, std::memory_order_relaxed);
-
-        // CHECK WHAT CAME BACK, exactly as the output side does. Asking for an
-        // input device that cannot serve the request does NOT fail: AAudio
-        // falls back to the default input -- the built-in microphone -- and
-        // returns OK, so `open=true` on a device id means nothing by itself.
-        //
-        // Found on 2026-09-25 while testing whether the CP-88 loops host
-        // playback back into its capture endpoint. openInput(6692) returned
-        // true, logged a fresh stream, and was still the microphone: sending
-        // the output to the phone's own speaker took the probe's peak from
-        // 0,015 to 0,66, which only a microphone a few centimetres from that
-        // speaker can do. Without this check the measurement would have been
-        // read as "the CP-88 loops back, quietly".
-        const int32_t gotIn = mInputStream->getDeviceId();
-        LOGI("input open [%s]: rate=%d ch=%d burst=%d sharing=%d perf=%d dev=%d (asked %d)",
-             a.name, mInputStream->getSampleRate(), mInputChannels,
-             mInputStream->getFramesPerBurst(),
-             static_cast<int>(mInputStream->getSharingMode()),
-             static_cast<int>(mInputStream->getPerformanceMode()),
-             gotIn, deviceId);
-        if (deviceId != kUnspecifiedDevice && gotIn != deviceId) {
-            LOGE("input: asked for device %d and got %d -- refusing it",
-                 deviceId, gotIn);
-            mInputStream->stop();
-            mInputStream->close();
-            mInputStream.reset();
-            continue;
-        }
-        return true;
-    }
-
-    LOGE("input stream unavailable after all attempts (deviceId=%d)", deviceId);
-    mProbeState.store(ProbeState::Unavailable, std::memory_order_relaxed);
-    return false;
-}
-
-// mEnvelope MUST be cleared when arming, and forgetting it produced a false
-// POSITIVE rather than a miss, which is the dangerous direction.
-//
-// The envelope is a member that decays at 0.9995 per sample -- about 90 ms to
-// fall by half at 44,1 kHz. Arming a second probe while the previous click's
-// envelope was still above the threshold made the detector fire on the first
-// sample it looked at, and the result was reported as a perfectly good
-// measurement: "PROBE roundTrip=0.00 ms peak=0.0000". A success line carrying
-// no sound at all.
-//
-// Found while building an acoustic oracle for THE LATCH, where it mattered
-// more than usual: the probe was the only way to tell a latched rig from a
-// healthy one, and it was scoring silence as OK on every second run.
-static void armProbeState(float& envelope, int64_t& candidate, int32_t& above) {
-    envelope = 0.0f;
-    candidate = -1;
-    above = 0;
-}
-
-void AudioEngine::startLatencyProbe() {
-    if (!mInputStream) return;
-    mProbeIsNote = false;
-    armProbeState(mEnvelope, mCandidateFrame, mAboveCount);
-    mMaxPeakSinceTrigger = 0.0f;
-    mProbeState.store(ProbeState::Armed, std::memory_order_release);
-}
-
-void AudioEngine::startNoteProbe() {
-    if (!mInputStream) return;
-    mProbeIsNote = true;
-    armProbeState(mEnvelope, mCandidateFrame, mAboveCount);
-    mMaxPeakSinceTrigger = 0.0f;
-    mProbeState.store(ProbeState::ArmedForNote, std::memory_order_release);
-}
-
 void AudioEngine::closeStream() {
     stopRenderThread();
-    if (mInputStream) {
-        mInputStream->stop();
-        mInputStream->close();
-        mInputStream.reset();
-    }
-    mProbeState.store(ProbeState::Unavailable, std::memory_order_relaxed);
+    mProbe.close();
 
     if (mStream) {
         mStream->stop();
@@ -1065,23 +908,6 @@ void AudioEngine::renderBlockIntoRing(int frames) {
         mInjectRead.store(read, std::memory_order_release);
 
         applyControlMaps(*schedule->midiInputSink);
-
-        if (mProbeState.load(std::memory_order_acquire) == ProbeState::ArmedForNote) {
-            const rigalong::MidiBuffer& in = *schedule->midiInputSink;
-            for (int i = 0; i < in.size(); ++i) {
-                if ((in[i].status & 0xF0u) == 0x90 && in[i].data2 > 0) {
-                    mFramesSinceClick = 0;
-                    mCandidateFrame = -1;
-                    mAboveCount = 0;
-                    mThunkFrame = -1;
-                    mMaxPeakSinceTrigger = 0.0f;
-                    mNoteThreshold = std::max(0.015f, mRecentPeak * 4.0f);
-                    mThunkThreshold = std::max(0.004f, mRecentPeak * 1.8f);
-                    mProbeState.store(ProbeState::Waiting, std::memory_order_release);
-                    break;
-                }
-            }
-        }
     }
 
     const int chunk = std::min(frames, mScratchFrames);
@@ -1135,7 +961,7 @@ void AudioEngine::renderBlockIntoRing(int frames) {
     // conversion to the device's format happens in the callback -- the only
     // place that knows what that format is, and where the dither belongs now
     // that it applies only to 16-bit targets.
-    runLatencyProbe(mScratch.data(), chunk);
+    mProbe.run(mScratch.data(), chunk);
 
     const uint32_t write = mRingWrite.load(std::memory_order_relaxed);
     if (mUsbActive.load(std::memory_order_acquire)) {
@@ -1563,164 +1389,6 @@ void AudioEngine::stopRenderThread() {
     }
 }
 
-void AudioEngine::runLatencyProbe(float* out, int32_t numFrames) {
-    if (!mInputStream) return;
-
-    ProbeState state = mProbeState.load(std::memory_order_acquire);
-    if (state == ProbeState::Unavailable) return;
-
-    // Drain the input FULLY every callback. Reading only one output block's worth
-    // is not enough: the input burst (96 frames) is larger than the output burst
-    // (89), so a backlog builds and you end up analysing audio from seconds ago.
-    // That is exactly what happened on the first attempt -- reported input latency
-    // climbed past 3000 ms and the probe timed out against stale audio.
-    const int32_t want = std::min(numFrames * 2, mScratchFrames);
-    const int32_t ch = std::max(1, mInputChannels);
-    // Click probe: floor of 0.01 (-40 dBFS) -- low enough for a click that has
-    // crossed a room, high enough not to trigger on the room itself.
-    //
-    // Note probe: a much higher floor, because the previous note is still ringing
-    // when the next one is played. Only an attack transient clears 0.08, so a
-    // decaying tail cannot masquerade as the next onset. The cost is that notes
-    // must be played with some conviction, which is what one wants to measure
-    // anyway.
-    const float threshold = mProbeIsNote ? mNoteThreshold
-                                         : std::max(0.01f, mNoiseFloor * 6.0f);
-
-    // Nothing within this window after note-on can be the note: the output path
-    // alone is ~9 ms before any air is crossed. Anything detected here is the
-    // key's own mechanical noise, recorded separately.
-    const auto blankFrames =
-            static_cast<int64_t>(0.007 * mInputStream->getSampleRate());
-
-    float peak = 0.0f;
-    int64_t firstHit = -1;          // frames since the clock started
-    int32_t got = 0;
-
-    // How long the level must stay up before an onset is believed. 3 ms rejects a
-    // key thunk while not biasing the result: the time REPORTED is the first
-    // crossing, not the confirmation.
-    const auto sustainFrames =
-            static_cast<int32_t>(0.003 * mInputStream->getSampleRate());
-
-    for (int iter = 0; iter < 32; ++iter) {
-        auto readResult = mInputStream->read(mInputBuffer.data(), want, 0);
-        const int32_t n = readResult ? readResult.value() : 0;
-        if (n <= 0) break;
-
-        for (int32_t i = 0; i < n; ++i) {
-            const float v = std::fabs(static_cast<float>(mInputBuffer[i * ch]) / 32768.0f);
-            if (v > peak) peak = v;
-
-            if (state != ProbeState::Waiting || firstHit >= 0) continue;
-
-            const int64_t pos = mFramesSinceClick + got + i;   // frames since note-on
-
-            if (mProbeIsNote && pos < blankFrames) {
-                // Too early to be the sound. Record the key's mechanical noise.
-                if (mThunkFrame < 0 && v > mThunkThreshold) mThunkFrame = pos;
-                continue;
-            }
-
-            // Compare an ENVELOPE, never the raw sample. Any waveform crosses
-            // zero twice per cycle, so "N consecutive samples above threshold"
-            // is unachievable for real audio -- the synthetic click only passed
-            // because a full-scale square never approaches zero.
-            mEnvelope = std::max(v, mEnvelope * 0.9995f);
-
-            if (mEnvelope > threshold) {
-                if (mCandidateFrame < 0) mCandidateFrame = pos;
-                if (++mAboveCount >= sustainFrames) firstHit = mCandidateFrame;
-            } else {
-                mCandidateFrame = -1;     // a transient, not the note
-                mAboveCount = 0;
-            }
-        }
-        got += n;
-        if (n < want) break;        // input is drained
-    }
-
-    mInputPeak.store(peak, std::memory_order_relaxed);
-    // Decays quickly, so "what is sounding right now" tracks a fading note
-    // rather than remembering its attack.
-    mRecentPeak = std::max(peak, mRecentPeak * 0.80f);
-
-    switch (state) {
-        case ProbeState::ArmedForNote:
-        case ProbeState::Idle:
-            // Track a slow-moving noise floor while idle, so the detection
-            // threshold adapts to whatever is actually on the input.
-            mNoiseFloor = mNoiseFloor * 0.95f + peak * 0.05f;
-            break;
-
-        case ProbeState::Armed: {
-            // Anything read above was pre-click backlog; the count starts now.
-            // Emit the click, overwriting this block. A short full-scale burst
-            // is easy to detect and too brief to be unpleasant.
-            const int32_t n = std::min(numFrames, kClickFrames);
-            for (int32_t i = 0; i < n; ++i) {
-                const float v = (i % 4 < 2) ? 0.9155f : -0.9155f;
-                out[i * 2] = v;
-                out[i * 2 + 1] = v;
-            }
-            mClickRemaining = kClickFrames - n;   // continue over following blocks
-            mFramesSinceClick = 0;
-            mProbeState.store(ProbeState::Waiting, std::memory_order_release);
-            break;
-        }
-
-        case ProbeState::Waiting:
-            if (peak > mMaxPeakSinceTrigger) mMaxPeakSinceTrigger = peak;
-            // The click is longer than one 89-frame block, so finish emitting it.
-            if (mClickRemaining > 0) {
-                const int32_t n = std::min(numFrames, mClickRemaining);
-                for (int32_t i = 0; i < n; ++i) {
-                    const float v = (i % 4 < 2) ? 0.9155f : -0.9155f;
-                    out[i * 2] = v;
-                    out[i * 2 + 1] = v;
-                }
-                mClickRemaining -= n;
-            }
-            if (firstHit >= 0) {
-                const double frames = static_cast<double>(firstHit);
-                const auto ms = static_cast<float>(1000.0 * frames / mInputStream->getSampleRate());
-                mRoundTripMs.store(ms, std::memory_order_relaxed);
-                // The note probe re-arms itself, so a run of readings can be
-                // collected by simply playing rather than tapping between notes.
-                if (mProbeIsNote) {
-                    mCandidateFrame = -1;
-                    mAboveCount = 0;
-                    mProbeState.store(ProbeState::ArmedForNote, std::memory_order_release);
-                } else {
-                    mProbeState.store(ProbeState::Done, std::memory_order_release);
-                }
-                // Logged so a run of trials can be collected and compared without
-                // reading the number off the screen each time.
-                const double thunkMs =
-                        mThunkFrame < 0 ? -1.0
-                                        : 1000.0 * static_cast<double>(mThunkFrame) /
-                                                  mInputStream->getSampleRate();
-                LOGI("PROBE %s=%.2f ms thunk=%.2f ms peak=%.4f thresh=%.4f",
-                     mProbeIsNote ? "keyToTone" : "roundTrip", ms, thunkMs, peak, threshold);
-            } else {
-                mFramesSinceClick += got;
-                if (mFramesSinceClick > kProbeTimeoutFrames) {
-                    // Log what was actually heard: the usual cause of a failure
-                    // is simply that the room is too quiet for the microphone,
-                    // and the observed peak says so immediately.
-                    LOGE("PROBE FAILED (%s) maxPeak=%.4f thresh=%.4f thunk=%lld",
-                         mProbeIsNote ? "note" : "click", mMaxPeakSinceTrigger,
-                         threshold, static_cast<long long>(mThunkFrame));
-                    mProbeState.store(ProbeState::Failed, std::memory_order_release);
-                }
-            }
-            break;
-
-        default:
-            break;
-    }
-}
-
 void AudioEngine::onErrorAfterClose(oboe::AudioStream* stream, oboe::Result error) {
     LOGE("stream error after close: %s", oboe::convertToText(error));
     mRunning.store(false, std::memory_order_release);
@@ -1954,15 +1622,10 @@ AudioEngine::Stats AudioEngine::stats() const {
     s.renderMaxMs = mRenderMaxMs.load(std::memory_order_relaxed);
     s.ringTargetMs = static_cast<float>(1000.0 * mTargetFill.load(std::memory_order_relaxed) /
                                         currentRate());
-    s.probeState = static_cast<int32_t>(mProbeState.load(std::memory_order_acquire));
-    s.roundTripMs = mRoundTripMs.load(std::memory_order_relaxed);
-    s.inputPeak = mInputPeak.load(std::memory_order_relaxed);
-
-    auto input = mInputStream;
-    if (input) {
-        auto inLatency = input->calculateLatencyMillis();
-        if (inLatency) s.inputLatencyMs = static_cast<float>(inLatency.value());
-    }
+    s.probeState = static_cast<int32_t>(mProbe.state());
+    s.roundTripMs = mProbe.roundTripMs();
+    s.inputPeak = mProbe.inputPeak();
+    s.inputLatencyMs = mProbe.inputLatencyMs();
 
     // --- the heartbeat ----------------------------------------------------
     //

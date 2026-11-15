@@ -236,6 +236,7 @@ option(RIGALONG_ASAN "Build with AddressSanitizer" OFF)
 add_library(rigalong SHARED
         native_bridge.cpp
         AudioEngine.cpp
+        LatencyProbe.cpp
         MidiInput.cpp
         RealtimePriority.cpp
         usb/UsbAudioOut.cpp

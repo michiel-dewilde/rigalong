@@ -13,6 +13,7 @@
 #include <rigalong/Dither.h>
 #include <rigalong/Click.h>
 #include <rigalong/Gain.h>
+#include "LatencyProbe.h"
 #include "MidiInput.h"
 #include "RealtimePriority.h"
 #include "usb/UsbAudioOut.h"
@@ -234,27 +235,12 @@ public:
     // --- oboe::AudioStreamErrorCallback
     void onErrorAfterClose(oboe::AudioStream* stream, oboe::Result error) override;
 
-    // --- round-trip latency probe -------------------------------------------
-    //
-    // The CP-88 is a 2-in/2-out interface, so if it returns its output mix on
-    // its USB input we can measure our own latency exactly: write a click, count
-    // how many input frames pass before it comes back. Same technique OboeTester
-    // uses with a physical loopback cable, except the loop is inside the CP-88.
-    //
-    // Whether the CP-88 actually returns the USB-in signal is the open question.
-    // If it does not, inputPeak simply never rises and the probe reports FAILED —
-    // which is itself the answer.
-    enum class ProbeState : int32_t {
-        Unavailable = 0,   // no input stream (not opened, or permission denied)
-        Idle = 1,
-        Armed = 2,         // click will be emitted on the next callback
-        Waiting = 3,       // click emitted, listening for its return
-        Done = 4,
-        Failed = 5,        // nothing came back within the timeout
-        ArmedForNote = 6,  // waiting for a MIDI note-on to start the clock
-    };
-
-    bool openInput(int32_t deviceId);
+    // --- round-trip latency probe (MEASURE) ----------------------------------
+    // The probe's input stream; false when none could be opened on `deviceId`.
+    bool openInput(int32_t deviceId) { return mProbe.open(deviceId); }
+    // Emit a click, time its return: the output stage plus the room and the
+    // microphone. The result arrives in stats().
+    void startLatencyProbe() { mProbe.start(); }
 
     /** Ring depth in ms; 0 restores the burst-derived default. See mFillOverrideMs. */
     void setFillMs(int ms);
@@ -272,16 +258,6 @@ public:
     void setRenderRescueAt(int percent) { if (percent > 0) mRescueAtPercent.store(percent, std::memory_order_relaxed); }
     // Blocks the rescue has rendered (or got rendered) since the stream started.
     int64_t renderRescues() const { return mRescues.load(std::memory_order_relaxed); }
-
-    // Click probe: emit a click, time its return. Measures the output stage plus
-    // the room and the microphone.
-    void startLatencyProbe();
-
-    // Key-to-tone probe: the clock starts when a MIDI note-on arrives from the
-    // CP-88 and stops when the resulting tone reaches the microphone. Subtracting
-    // the click probe cancels the room, the microphone and the output stage,
-    // leaving what the instrument itself costs.
-    void startNoteProbe();
 
     struct Stats {
         float latencyMs = 0.0f;
@@ -305,7 +281,7 @@ public:
         float renderMaxMs = 0.0f;
         float ringTargetMs = 0.0f;
 
-        int32_t probeState = 0;
+        int32_t probeState = 0;         // LatencyProbe::State
         float roundTripMs = 0.0f;
         float inputPeak = 0.0f;         // 0..1, so you can see whether anything returns
         float inputLatencyMs = 0.0f;
@@ -448,10 +424,6 @@ private:
     std::atomic<bool> mUsbActive{false};
     std::atomic<int32_t> mUsbRate{0};
 
-    // Runs on the audio thread, after the engines have rendered. May overwrite the
-    // output block with a click while a measurement is in flight.
-    void runLatencyProbe(float* out, int32_t numFrames);
-
     std::shared_ptr<oboe::AudioStream> mStream;
     std::mutex mStreamLock;          // guards start/stop only, never the callback
 
@@ -588,18 +560,10 @@ private:
     std::vector<int16_t> mDitherOut;
     int mScratchFrames = 0;
 
-    // Input stream for the loopback probe. Entirely optional: if it fails to
-    // open, or permission is denied, the instrument works exactly as before.
-    std::shared_ptr<oboe::AudioStream> mInputStream;
-    // Which device mInputStream is on, so openInput can tell "already up on the
-    // right device" from "up on the wrong one". See openInput.
-    int32_t mInputDeviceId = -1;
-    std::vector<int16_t> mInputBuffer;
-    int32_t mInputChannels = 2;
+    // MEASURE. Run after each block is rendered; it may overwrite the block
+    // with its click while a measurement is in flight.
+    LatencyProbe mProbe;
 
-    std::atomic<ProbeState> mProbeState{ProbeState::Unavailable};
-    std::atomic<float> mRoundTripMs{0.0f};
-    std::atomic<float> mInputPeak{0.0f};
     std::atomic<float> mOutputPeak{0.0f};
 
     // Peak of the int16 frames handed to AAudio, measured in the callback. The
@@ -648,42 +612,6 @@ private:
     mutable std::atomic<double> mLastPresentedAt{0.0};
     mutable std::atomic<float> mStalledSeconds{0.0f};
     mutable std::atomic<double> mLastHealthLogAt{0.0};
-    int64_t mFramesSinceClick = 0;
-    int32_t mClickRemaining = 0;
-    float mNoiseFloor = 0.0f;
-
-    // A tone sustains; a key thunk does not. Requiring the level to STAY above
-    // threshold for a few ms rejects the mechanical click of the key, which
-    // reaches the microphone before the note does and would otherwise be
-    // measured instead of the sound.
-    int64_t mCandidateFrame = -1;
-    int32_t mAboveCount = 0;
-    bool mProbeIsNote = false;
-
-    // Rolling input level, and the tone threshold captured at note-on. A played
-    // note is far quieter than the synthetic click, so a fixed floor either
-    // misses it or triggers on the previous note's tail. The detector instead
-    // looks for a RISE above whatever was already sounding when the key went
-    // down, which works for the first note and over a ringing decay alike.
-    float mRecentPeak = 0.0f;
-    float mNoteThreshold = 0.02f;
-
-    // The microphone also hears the KEY ITSELF -- the mechanical thunk of the
-    // keybed, which reaches it before the sound possibly can. That is not a
-    // nuisance, it is the missing measurement: the thunk happens at key-down,
-    // the tone cannot arrive sooner than the output path (~9 ms) plus the air,
-    // so a blanking window separates them cleanly and the thunk's arrival time
-    // yields the CP-88's own key-scan-to-MIDI delay.
-    int64_t mThunkFrame = -1;
-    float mThunkThreshold = 0.004f;
-    float mMaxPeakSinceTrigger = 0.0f;
-    float mEnvelope = 0.0f;
-
-    // ~10 ms of buzz. Longer than strictly needed, because the click has to
-    // survive a trip through the room and a tablet microphone, not a cable.
-    static constexpr int32_t kClickFrames = 441;
-    static constexpr int64_t kProbeTimeoutFrames = 44100 / 2;   // 500 ms
-
     // --- render thread ------------------------------------------------------
     //
     // The audio callback does NOT synthesise. It copies finished audio out of a

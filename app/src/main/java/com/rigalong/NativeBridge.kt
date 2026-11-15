@@ -457,7 +457,6 @@ object NativeBridge {
             3 -> "listening…"
             4 -> "ROUND TRIP ${"%.2f".format(roundTripMs)} ms"
             5 -> "FAILED — nothing came back"
-            6 -> "ARMED — play a note on the CP-88"
             else -> "?"
         }
 
