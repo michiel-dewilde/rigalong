@@ -245,32 +245,13 @@ private fun LibraryPatchLine(e: RackEngine, slot: RackSlot, values: Map<String, 
 }
 
 /** A library patch the song being saved changed, and what to do about the other songs using it. */
-internal data class PatchDecision(val sound: String, val patch: Entry, val newContent: com.rigalong.model.Patch,
-                                 val others: List<Entry>)
-
-/** The library patches [now] changed (still linked, content edited), each with the other songs on its latest version. */
-internal fun patchDecisions(lib: Library, before: RackSong?, now: RackSong, songId: Digest?): List<PatchDecision> {
-    if (before == null) return emptyList()
-    return now.instances.mapNotNull { inst ->
-        val e = inst.engine
-        val slot = inst.slot
-        val was = before.instance(inst.id)?.slot ?: return@mapNotNull null
-        val id = slot.libraryPatch ?: return@mapNotNull null
-        if (was.libraryPatch != id || was.patch(e) == slot.patch(e)) return@mapNotNull null
-        val link = lib.patchLink(id, was.patch(e)) ?: return@mapNotNull null
-        if (!link.latest) return@mapNotNull null
-        val others = lib.songsUsingPatch(id).filter { it.latest && it.song.id != songId }.map { it.song }
-        PatchDecision(now.displayName(inst), link.entry, slot.patch(e), others)
-    }.distinctBy { it.patch.id }
-}
-
 /**
  * Saving a song whose library patch changed: update it everywhere (the
  * default), only in this song, or in the songs chosen -- the change rippling
  * on to their setlists. One save, one Undo.
  */
 @Composable
-internal fun PatchSaveDialog(decisions: List<PatchDecision>,
+internal fun PatchSaveDialog(decisions: List<Library.PatchDecision>,
                             onSave: (Map<Digest, Pair<com.rigalong.model.Patch, Collection<Digest>>>, Set<Digest>) -> Unit,
                             onDismiss: () -> Unit) {
     // Per patch: the songs that will move with it; all of them to begin with.

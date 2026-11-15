@@ -72,6 +72,54 @@ class StoreTest {
     }
 
     @Test
+    fun whatTheStoreHoldsInMemoryFollowsEveryWrite() {
+        val s = tempStore()
+        val id = s.create("One", Ref(s.put(patch(0.1f))), "Michiel", "2026-11-15T09:00:00Z")
+        assertEquals(listOf("One"), s.entries().map { it.version.name })
+        // Asked before and after each write: the answer is never the one from before.
+        s.update(id, "Michiel", "2026-11-15T09:01:00Z", name = "One again")
+        assertEquals("One again", s.entry(id)?.version?.name)
+        val other = s.create("Two", Ref(s.put(patch(0.2f))), "Michiel", "2026-11-15T09:02:00Z")
+        assertEquals(setOf(id, other), s.entries().map { it.id }.toSet())
+        s.update(other, "Michiel", "2026-11-15T09:03:00Z", delete = true)
+        assertEquals(null, s.entry(other)?.version?.target)
+        assertEquals(4, s.history(s.entry(id)!!.latest).size + s.history(s.entry(other)!!.latest).size)
+    }
+
+    @Test
+    fun aSecondStoreOnTheSameFolderIsSeen() {
+        val dir = Files.createTempDirectory("rigalong-store").toFile()
+        val a = Store(dir)
+        val b = Store(dir)
+        assertTrue(a.entries().isEmpty())
+        val id = b.create("From the other", Ref(b.put(patch(0.3f))), "Michiel", "2026-11-15T09:00:00Z")
+        assertEquals("From the other", a.entry(id)?.version?.name)
+    }
+
+    @Test
+    fun anObjectGcTookAwayIsGoneFromMemoryToo() {
+        val s = tempStore()
+        val kept = s.put(patch(0.5f))
+        s.create("Kept", Ref(kept), "Michiel", "2026-11-15T09:00:00Z")
+        val orphan = s.put(patch(0.9f))
+        assertNotNull(s.appObject(orphan))               // read once, so it is held
+        assertEquals(Json.float32(0.9f), s.getJson(orphan).obj().req("params").obj().req("level"))
+        assertEquals(1, s.gc())
+        assertEquals(null, s.appObject(orphan))
+        assertFailsWith<IllegalStateException> { s.getJson(orphan) }
+        assertNotNull(s.appObject(kept))
+    }
+
+    @Test
+    fun aBinaryObjectIsNotAnAppObjectHoweverOftenAsked() {
+        val s = tempStore()
+        val wav = s.put(byteArrayOf(1, 2, 3))
+        val text = s.put("{ not json".toByteArray())
+        repeat(2) { assertEquals(null, s.appObject(wav)); assertEquals(null, s.appObject(text)) }
+        assertEquals(3, s.get(wav)?.size)
+    }
+
+    @Test
     fun gcKeepsHistoryAndDropsOrphans() {
         val s = tempStore()
         val p1 = s.put(patch(0.5f))

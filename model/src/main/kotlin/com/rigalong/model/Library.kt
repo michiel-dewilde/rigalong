@@ -113,6 +113,10 @@ class Library(dir: File, private val author: String) {
         .map { SongEntry(it, store.getTyped(it.version.target!!.digest)) }
         .sortedBy { it.entry.version.name.lowercase() }
 
+    /** The song of entry [id] as it is now, or null (no such entry, deleted, or not a song). */
+    fun song(id: Digest): Song? = store.entry(id)?.version?.target
+        ?.takeIf { it.type == Song.TYPE }?.let { store.getTyped(it.digest) }
+
     fun setlists(): List<Entry> = store.entries()
         .filter { it.version.target?.type == Setlist.TYPE }
         .sortedBy { it.version.name.lowercase() }
@@ -200,7 +204,8 @@ class Library(dir: File, private val author: String) {
     /** The song entries of a setlist, in order; a song whose entry is gone shows by its object. */
     fun songsOf(setlistId: Digest): List<Pair<Entry?, Song>> {
         val sl = setlist(setlistId) ?: return emptyList()
-        val byObject = songs().associateBy { it.entry.version.target!!.digest }
+        // Only for a song whose entry is gone: every song is read for it.
+        val byObject by lazy { songs().associateBy { it.entry.version.target!!.digest } }
         return sl.songs.mapIndexed { i, r ->
             val d = r.toRef().digest
             val named = sl.entryAt(i)?.let { store.entry(it) }?.takeIf { it.version.target != null }
@@ -392,6 +397,34 @@ class Library(dir: File, private val author: String) {
             val nodes = s.song.nodes.values.filter { it.patchEntry == link }
             if (nodes.isEmpty()) null else PatchUse(s.entry, nodes.all { it.patch?.toRef()?.digest == latest })
         }
+    }
+
+    /**
+     * A library patch that saving a song would change, and the choice that
+     * comes with it (I8.5, I8.13): [others] are the songs on the patch's latest
+     * version, which can move on to [newContent] with this one or stay.
+     * [sound] is what the song calls the sound that uses it.
+     */
+    data class PatchDecision(val sound: String, val patch: Entry, val newContent: Patch, val others: List<Entry>)
+
+    /**
+     * The library patches song [songId] changed between [before] (as opened;
+     * null: a new song, which changes none) and [now]: still linked, content
+     * edited, and the song was on the patch's latest version.
+     */
+    fun patchDecisions(before: RackSong?, now: RackSong, songId: Digest?): List<PatchDecision> {
+        if (before == null) return emptyList()
+        return now.instances.mapNotNull { inst ->
+            val e = inst.engine
+            val slot = inst.slot
+            val was = before.instance(inst.id)?.slot ?: return@mapNotNull null
+            val id = slot.libraryPatch ?: return@mapNotNull null
+            if (was.libraryPatch != id || was.patch(e) == slot.patch(e)) return@mapNotNull null
+            val link = patchLink(id, was.patch(e)) ?: return@mapNotNull null
+            if (!link.latest) return@mapNotNull null
+            val others = songsUsingPatch(id).filter { it.latest && it.song.id != songId }.map { it.song }
+            PatchDecision(now.displayName(inst), link.entry, slot.patch(e), others)
+        }.distinctBy { it.patch.id }
     }
 
     /**

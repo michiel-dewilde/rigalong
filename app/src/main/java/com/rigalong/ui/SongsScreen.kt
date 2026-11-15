@@ -134,7 +134,7 @@ internal fun SongsScreen(player: SongPlayer, lib: Library, host: EngineHost, st:
     var newIntoSetlist by st::newIntoSetlist
     var original by st::original
     var originalName by st::originalName
-    var decisions by remember { mutableStateOf<List<PatchDecision>>(emptyList()) }
+    var decisions by remember { mutableStateOf<List<Library.PatchDecision>>(emptyList()) }
     // Another song asked for while this one has unsaved edits: what to do once the player says.
     var pending by remember { mutableStateOf<(() -> Unit)?>(null) }
     fun guarded(action: () -> Unit) { if (st.unsaved) pending = action else action() }
@@ -144,8 +144,7 @@ internal fun SongsScreen(player: SongPlayer, lib: Library, host: EngineHost, st:
         selected = id
         listShown = false
         val e = lib.store.entry(id)
-        val song = lib.songs().firstOrNull { it.entry.id == id }?.song
-        val rack = song?.let { lib.rackSong(it) }
+        val rack = lib.song(id)?.let { lib.rackSong(it) }
         if (e != null && rack != null) { editing = id to rack; editName = e.version.name; original = rack; originalName = editName }
     }
     fun save(moves: Map<Digest, Pair<com.rigalong.model.Patch, Collection<Digest>>>) {
@@ -231,7 +230,7 @@ internal fun SongsScreen(player: SongPlayer, lib: Library, host: EngineHost, st:
                         onChange = { editing = ed.first to it },
                         onSave = {
                             // A changed library patch: everywhere, only here, or chosen songs (I8.5, I8.13).
-                            val d = patchDecisions(lib, original, ed.second, ed.first)
+                            val d = lib.patchDecisions(original, ed.second, ed.first)
                             if (d.isEmpty()) save(emptyMap()) else decisions = d
                         },
                         onSaveCopy = {

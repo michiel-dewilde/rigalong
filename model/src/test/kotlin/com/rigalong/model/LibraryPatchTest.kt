@@ -53,6 +53,29 @@ class LibraryPatchTest {
     }
 
     @Test
+    fun savingAskedAboutALibraryPatchOnlyWhenItsContentChangedWhileLinked() {
+        val (p, a, b) = scene()
+        val opened = songWith(rhodes, p)
+        val brighter = rhodes.copy(params = mapOf("Tone" to 0.8))
+        // Edited and still linked: the patch, the other song on its latest version, never this one.
+        val d = lib.patchDecisions(opened, songWith(brighter, p), a).single()
+        assertEquals(p, d.patch.id)
+        assertEquals(brighter, d.newContent)
+        assertEquals(listOf(b), d.others.map { it.id })
+        // Nothing to ask: not edited, a new song, or the link let go.
+        assertTrue(lib.patchDecisions(opened, opened, a).isEmpty())
+        assertTrue(lib.patchDecisions(null, songWith(brighter, p), null).isEmpty())
+        assertTrue(lib.patchDecisions(opened, songWith(brighter), a).isEmpty())
+        // A song left on an older version of the patch does not speak for the latest.
+        lib.saveSongAndPatches(a, "A", songWith(brighter, p), mapOf(p to (brighter to emptyList())))
+        val older = lib.patchDecisions(opened, songWith(rhodes.copy(params = mapOf("Tone" to 0.1)), p), b)
+        assertTrue(older.isEmpty())
+        // ...and is no longer among the others when A changes it again.
+        val again = lib.patchDecisions(songWith(brighter, p), songWith(brighter.copy(preset = "wurli"), p), a).single()
+        assertTrue(again.others.isEmpty())
+    }
+
+    @Test
     fun updatingEverywhereMovesEverySongAndTheirSetlists() {
         val (p, a, b, set) = scene()
         val brighter = rhodes.copy(params = mapOf("Tone" to 0.8))

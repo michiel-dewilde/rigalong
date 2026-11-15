@@ -70,6 +70,7 @@ data class Entry(val id: Digest, val latest: Digest, val version: EntryVersion)
  * entry's identity (a tag) to its latest manifest.
  *
  * Not thread-safe: one writer at a time, which is the app's library thread.
+ * Reading is safe from any thread while it writes.
  */
 class Store(val root: File) {
     private val blobs = File(root, "blobs/sha256")
@@ -102,7 +103,22 @@ class Store(val root: File) {
 
     fun has(d: Digest): Boolean = blobFile(d).exists()
     fun get(d: Digest): ByteArray? = blobFile(d).takeIf { it.exists() }?.readBytes()
-    fun getJson(d: Digest): Json = Json.parse(get(d) ?: error("missing object ${d.short}"))
+    fun getJson(d: Digest): Json {
+        synchronized(parsed) { parsed[d] }?.let { return it }
+        val j = Json.parse(get(d) ?: error("missing object ${d.short}"))
+        synchronized(parsed) { parsed[d] = j }
+        return j
+    }
+
+    /**
+     * Objects as parsed, the most recently asked for. An object is its digest,
+     * so what was parsed once is what a second read would give; only [gc]
+     * takes objects away. Listing a library asks for the same few hundred
+     * small objects again and again.
+     */
+    private val parsed = object : LinkedHashMap<Digest, Json>(256, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<Digest, Json>) = size > PARSED_KEPT
+    }
     fun size(d: Digest): Long = blobFile(d).length()
 
     fun allBlobs(): List<Digest> =
@@ -113,12 +129,25 @@ class Store(val root: File) {
 
     /** The app's own JSON object at [d], or null for a binary object. */
     fun appObject(d: Digest): Json.Obj? {
-        val bytes = get(d) ?: return null
-        if (bytes.isEmpty() || bytes[0] != '{'.code.toByte()) return null
-        val j = runCatching { Json.parse(bytes) }.getOrNull() as? Json.Obj ?: return null
+        val j = (synchronized(parsed) { parsed[d] } ?: run {
+            // A manifest lists every object an entry reaches, so every save asks
+            // this of them all: a lead sheet or a sound is not read again to
+            // find that it is not JSON.
+            if (synchronized(binary) { d in binary }) return null
+            val f = blobFile(d)
+            if (!f.exists()) return null
+            val first = f.inputStream().use { it.read() }
+            val read = if (first == '{'.code) runCatching { Json.parse(f.readBytes()) }.getOrNull() else null
+            if (read == null) { synchronized(binary) { binary += d }; return null }
+            synchronized(parsed) { parsed[d] = read }
+            read
+        }) as? Json.Obj ?: return null
         val t = (j["@type"] as? Json.Str)?.value ?: return null
         return if (t.startsWith(MediaTypes.TYPE_PREFIX)) j else null
     }
+
+    /** Objects found not to be JSON. */
+    private val binary = HashSet<Digest>()
 
     /**
      * Every object reachable from [roots], roots included, with the best media
@@ -148,17 +177,49 @@ class Store(val root: File) {
 
     // ------------------------------------------------------------- entries
 
-    /** Entry identity (hex) -> digest of its latest manifest. */
-    private fun readIndex(): Map<String, Digest> {
+    /**
+     * `index.json` as last read, and the entries it names, read once. Looking an
+     * entry up used to read the index and two objects per entry in it, every
+     * time: a setlist of 150 songs took 150 x 300 file reads to list (27 s on a
+     * laptop, 2026-11-15), and every screen and every live set change with a
+     * library sound asked. The file's time and size say whether it is still
+     * the one read; this store drops what it holds whenever it writes.
+     */
+    private inner class Index(val tags: Map<String, Digest>, val modified: Long, val size: Long) {
+        val entries: List<Entry> by lazy {
+            if (versions.size > 4 * tags.size + 64) versions.keys.retainAll(tags.values.toSet())
+            tags.mapNotNull { (tag, manifest) ->
+                if (tag.length != 64) return@mapNotNull null                 // a divergence tag
+                val (v, version) = versions.getOrPut(manifest) {
+                    val v = versionOfManifest(manifest)
+                    v to EntryVersion.fromJson(getJson(v))
+                }
+                Entry(Digest(tag), v, version)
+            }
+        }
+        val byId: Map<Digest, Entry> by lazy { entries.associateBy { it.id } }
+    }
+
+    @Volatile private var held: Index? = null
+    /** Manifest -> the entry version it is of. Objects never change, so neither does this. */
+    private val versions = java.util.concurrent.ConcurrentHashMap<Digest, Pair<Digest, EntryVersion>>()
+
+    private fun index(): Index {
+        val modified = indexFile.lastModified()
+        val size = indexFile.length()
+        held?.let { if (it.modified == modified && it.size == size) return it }
         val o = Json.parse(indexFile.readText()).obj()
-        val out = LinkedHashMap<String, Digest>()
+        val tags = LinkedHashMap<String, Digest>()
         for (m in o["manifests"]?.arr() ?: emptyList()) {
             val mo = m.obj()
             val tag = mo["annotations"]?.obj()?.get(REF_NAME)?.str() ?: continue
-            out[tag] = Digest.parse(mo.req("digest").str())
+            tags[tag] = Digest.parse(mo.req("digest").str())
         }
-        return out
+        return Index(tags, modified, size).also { held = it }
     }
+
+    /** Entry identity (hex) -> digest of its latest manifest. */
+    private fun readIndex(): Map<String, Digest> = index().tags
 
     private fun writeIndex(tags: Map<String, Digest>) {
         val manifests = tags.toSortedMap().map { (tag, d) ->
@@ -180,6 +241,7 @@ class Store(val root: File) {
             indexFile.delete()
             if (!tmp.renameTo(indexFile)) error("could not write index.json")
         }
+        held = null
     }
 
     private fun manifestOf(manifest: Digest): Json.Obj = getJson(manifest).obj()
@@ -187,13 +249,9 @@ class Store(val root: File) {
     private fun versionOfManifest(manifest: Digest): Digest =
         Digest.parse(manifestOf(manifest).req("config").obj().req("digest").str())
 
-    fun entries(): List<Entry> = readIndex().mapNotNull { (tag, manifest) ->
-        if (tag.length != 64) return@mapNotNull null                 // a divergence tag
-        val v = versionOfManifest(manifest)
-        Entry(Digest(tag), v, EntryVersion.fromJson(getJson(v)))
-    }
+    fun entries(): List<Entry> = index().entries
 
-    fun entry(id: Digest): Entry? = entries().firstOrNull { it.id == id }
+    fun entry(id: Digest): Entry? = index().byId[id]
 
     /** Versions of an entry, newest first, following `previous`. */
     fun history(version: Digest): List<Pair<Digest, EntryVersion>> {
@@ -294,6 +352,9 @@ class Store(val root: File) {
         val keep = live() + keepAlso
         var removed = 0
         for (d in allBlobs()) if (d !in keep && blobFile(d).delete()) removed++
+        synchronized(parsed) { parsed.clear() }
+        synchronized(binary) { binary.clear() }
+        versions.clear()
         return removed
     }
 
@@ -348,6 +409,7 @@ class Store(val root: File) {
     internal fun indexTags(): Map<String, Digest> = readIndex()
 
     companion object {
+        private const val PARSED_KEPT = 4096
         const val MANIFEST = "application/vnd.oci.image.manifest.v1+json"
         const val INDEX = "application/vnd.oci.image.index.v1+json"
         const val REF_NAME = "org.opencontainers.image.ref.name"
