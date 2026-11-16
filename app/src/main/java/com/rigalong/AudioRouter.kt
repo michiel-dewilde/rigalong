@@ -157,7 +157,13 @@ class AudioRouter(private val context: Context, private val prefs: SharedPrefere
                         "direct USB failed $directRetries times -- falling back to ALSA. " +
                         "Last reason: $routingStatus")
                     status("direct USB failed: $routingStatus -- playing through ALSA")
-                    usbHandler.post { runCatching { startEngine() } }
+                    usbHandler.post {
+                        // Said where the player looks: the line above claims ALSA plays.
+                        runCatching { startEngine() }.onFailure {
+                            android.util.Log.e("rigalong-ui", "ALSA fallback did not start: $it")
+                            status("direct USB failed, and ALSA did not start either: ${it.message ?: it}")
+                        }
+                    }
                 }
                 return
             }

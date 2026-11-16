@@ -63,13 +63,29 @@ class SheetRenderer(file: File) : AutoCloseable {
     }
 }
 
+/**
+ * How many pages [bytes] has as a PDF Android can show, or the reason it
+ * cannot (thrown): checked before a lead sheet is attached, so a file that
+ * would only say "cannot be opened" on the stage is refused in the editor.
+ */
+fun pdfPageCount(bytes: ByteArray, scratchDir: File): Int {
+    val tmp = File.createTempFile("leadsheet", ".pdf", scratchDir)
+    try {
+        tmp.writeBytes(bytes)
+        val r = SheetRenderer(tmp)
+        try { return r.pageCount.also { require(it > 0) { "no pages" } } } finally { r.close() }
+    } finally {
+        tmp.delete()
+    }
+}
+
 @Composable
 fun LeadSheetView(file: File, firstPage: Int, twoUp: Boolean, onPageCount: (Int) -> Unit, modifier: Modifier = Modifier) {
     val sheet = remember(file) { runCatching { SheetRenderer(file) }.getOrNull() }
     DisposableEffect(sheet) { onDispose { sheet?.close() } }
     if (sheet == null) {
         Box(modifier.background(Panel), contentAlignment = Alignment.Center) {
-            Text("This lead sheet cannot be opened.", color = Dim)
+            Text(androidx.compose.ui.res.stringResource(com.rigalong.R.string.lead_sheet_unreadable), color = Dim)
         }
         return
     }

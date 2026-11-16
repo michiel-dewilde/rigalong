@@ -371,7 +371,12 @@ private fun LeadSheetButton(song: RackSong, player: SongPlayer, onChange: (RackS
         androidx.activity.result.contract.ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) runCatching {
             val bytes = context.contentResolver.openInputStream(uri)!!.use { it.readBytes() }
+            pdfPageCount(bytes, context.cacheDir)     // a PDF the stage can show, or why not
             onChange(song.copy(leadSheet = player.sheet.storePdf(bytes)))
+        }.onFailure {
+            // It used to do nothing at all (REVIEW W9).
+            android.widget.Toast.makeText(context, context.getString(R.string.lead_sheet_failed,
+                it.message ?: it.javaClass.simpleName), android.widget.Toast.LENGTH_LONG).show()
         }
     }
     if (song.leadSheet == null) {
