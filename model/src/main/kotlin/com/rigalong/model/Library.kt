@@ -256,6 +256,40 @@ class Library(dir: File, private val author: String) {
         }
     }
 
+    /** The setlist a run of moves is going on in, and when the last one was (in this process). */
+    private var movingIn: Digest? = null
+    private var movedAt = 0L
+
+    /**
+     * Setlist [id]'s songs in a new order, from moving one (REVIEW W18,
+     * Michiel 2026-11-16): moves that follow each other -- nothing else
+     * changed in between, none more than [MOVE_RUN_MS] after the last -- are
+     * ONE version of the setlist and ONE Undo step, so reordering a set does
+     * not bury the player's saves under a step per move. [now] is for tests.
+     */
+    fun reorderSetlist(id: Digest, songEntries: List<Digest>, now: Long = System.currentTimeMillis()): Digest {
+        val cur = store.entry(id) ?: error("no setlist ${id.short}")
+        val last = readChanges().lastOrNull()
+        val run = movingIn == id && now - movedAt <= MOVE_RUN_MS &&
+            last != null && last.kind == "move" && last.before.keys == setOf(id)
+        movingIn = id
+        movedAt = now
+        val target = setlistTarget(songEntries)
+        if (run) {
+            // The run's Undo step already holds the version before the run; this
+            // one replaces the run's last version instead of adding one.
+            store.amend(id, author, now(), target)
+            return id
+        }
+        return change("move", cur.version.name) { update(id, author, now(), target = target); id }
+    }
+
+    private fun setlistTarget(songEntries: List<Digest>): Ref {
+        val known = songEntries.mapNotNull { id -> store.entry(id)?.version?.target?.let { id to it } }
+        val refs = known.map { RefJ.of(it.second.digest, Song.TYPE) }
+        return Ref(store.putTyped(Setlist(songs = refs, entries = known.map { it.first.toString() })), Setlist.TYPE)
+    }
+
     fun saveSetlist(entryId: Digest?, name: String, songEntries: List<Digest>): Digest = change("setlist", name) {
         val known = songEntries.mapNotNull { id -> store.entry(id)?.version?.target?.let { id to it } }
         val refs = known.map { RefJ.of(it.second.digest, Song.TYPE) }
@@ -481,6 +515,8 @@ class Library(dir: File, private val author: String) {
     companion object {
         /** How many actions Undo can go back. */
         const val MAX_CHANGES = 30
+        /** How long after a move the next is still part of the same run (W18). */
+        const val MOVE_RUN_MS = 60_000L
     }
 
     /**

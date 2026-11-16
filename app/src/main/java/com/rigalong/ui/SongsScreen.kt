@@ -484,7 +484,7 @@ private fun moveTo(lib: Library, setlistId: Digest, ids: List<Digest>, from: Int
     if (from !in ids.indices || to !in ids.indices) return
     val m = ids.toMutableList()
     m.add(to, m.removeAt(from))
-    lib.saveSetlist(setlistId, lib.store.entry(setlistId)?.version?.name ?: "Setlist", m)
+    lib.reorderSetlist(setlistId, m)      // a run of moves: one version, one Undo step
 }
 
 internal fun move(lib: Library, setlistId: Digest, ids: List<Digest>, i: Int, by: Int) {
@@ -492,5 +492,5 @@ internal fun move(lib: Library, setlistId: Digest, ids: List<Digest>, i: Int, by
     val j = i + by
     if (j !in m.indices) return
     m[i] = m[j].also { m[j] = m[i] }
-    lib.saveSetlist(setlistId, lib.store.entry(setlistId)?.version?.name ?: "Setlist", m)
+    lib.reorderSetlist(setlistId, m)      // a run of moves: one version, one Undo step
 }

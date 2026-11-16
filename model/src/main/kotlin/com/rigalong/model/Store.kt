@@ -307,6 +307,18 @@ class Store(val root: File) {
         ))
     }
 
+    /**
+     * Entry [id]'s latest version REPLACED by one with [target]: its previous
+     * is the replaced version's previous, so the replaced one drops out of the
+     * history (and gc may take it). For a run of edits kept as one version
+     * (a setlist reordered move by move). Returns the new version's digest.
+     */
+    fun amend(id: Digest, author: String, time: String, target: Ref): Digest {
+        val cur = entry(id) ?: error("no entry ${id.short}")
+        val v = cur.version
+        return commit(EntryVersion(id, v.name, target, v.previous, author, time, v.tags, v.description, v.derivedFrom))
+    }
+
     /** Writes the manifest for entry version [version] and points tag [id] at it. */
     private fun publish(id: Digest, version: Digest, tag: String = id.hex) {
         val v = EntryVersion.fromJson(getJson(version))

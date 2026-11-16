@@ -109,6 +109,42 @@ class LibraryTest {
     }
 
     @Test
+    fun aRunOfMovesInASetlistIsOneVersionAndOneUndoStep() {
+        val a = lib.saveSong(null, "A", song(0.1))
+        val b = lib.saveSong(null, "B", song(0.2))
+        val c = lib.saveSong(null, "C", song(0.3))
+        val set = lib.saveSetlist(null, "Set", listOf(a, b, c))
+        val versions = lib.history(set).size
+        val t = 1_000_000L
+        lib.reorderSetlist(set, listOf(b, a, c), now = t)
+        lib.reorderSetlist(set, listOf(b, c, a), now = t + 5_000)
+        lib.reorderSetlist(set, listOf(c, b, a), now = t + 9_000)
+        assertEquals(versions + 1, lib.history(set).size)
+        assertEquals(listOf(c, b, a).map { target(it) }, held(set))
+        assertEquals("Set", lib.lastChange()?.name)
+        // One Undo puts the whole reordering back.
+        lib.undo()
+        assertEquals(listOf(a, b, c).map { target(it) }, held(set))
+        assertEquals("setlist", lib.lastChange()?.kind)
+    }
+
+    @Test
+    fun aMoveAfterAnythingElseOrAMinuteLaterIsAStepOfItsOwn() {
+        val a = lib.saveSong(null, "A", song(0.1))
+        val b = lib.saveSong(null, "B", song(0.2))
+        val set = lib.saveSetlist(null, "Set", listOf(a, b))
+        val t = 2_000_000L
+        lib.reorderSetlist(set, listOf(b, a), now = t)
+        lib.saveSong(a, "A", song(0.15))                  // something else between
+        lib.reorderSetlist(set, listOf(a, b), now = t + 1_000)
+        lib.reorderSetlist(set, listOf(b, a), now = t + 1_000 + Library.MOVE_RUN_MS + 1)
+        lib.undo()
+        assertEquals(listOf(a, b).map { target(it) }, held(set))
+        lib.undo()
+        assertEquals(listOf(b, a).map { target(it) }, held(set))
+    }
+
+    @Test
     fun aDeletedSongLeavesTheListsButStillPlaysInSetlists() {
         val s = lib.saveSong(null, "Gone", song(0.5))
         val sl = lib.saveSetlist(null, "Set", listOf(s))
