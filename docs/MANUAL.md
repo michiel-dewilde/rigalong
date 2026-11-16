@@ -58,6 +58,8 @@ What you play from.
   a filter). A value moved back to the song's stops being its own. The stage
   then says "Stored in" and the live set's name for a few seconds, with
   **Undo** beside it.
+  What you change on the stage and do NOT store is gone when you leave the
+  song: every song starts as it is stored, whatever was played before it.
 * **Master**: the overall volume, at the right. It belongs to the room, not
   to the song, so no live set changes it. Hold its label to return to 0 dB.
 * **setBfree**: when the song uses setBfree, its nine drawbars, Leslie (stop /
@@ -126,6 +128,10 @@ On the right is the song being edited:
     the song being edited is what the keys play, on a live set where this
     sound plays. For FluidSynth every preset of every installed SoundFont is
     an entry ("0:012 Marimba", its font beside it).
+    **As loaded** keeps no preset of its own: the sound plays whatever its
+    engine has at that moment. When the song is saved it takes the preset
+    you hear then, so a saved song always names what it plays (setBfree,
+    which has no presets to name, keeps its drawbars as "its own drawbars").
   * **Patch…** shows every setting of that sound (drawbars, models, sends,
     transposition) as sliders over their real ranges. What you change is
     heard at once and kept in the song.
