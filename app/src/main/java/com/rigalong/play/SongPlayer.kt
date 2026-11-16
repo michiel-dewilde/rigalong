@@ -260,6 +260,8 @@ class SongPlayer(private val lib: Library, host: EngineHost, private val prefs: 
         val ls = liveSetIndex.takeIf { it in liveSetNames.indices } ?: return
         for (k in liveSetKeys()) sw.storedValue(ls, k)?.let { engines.applyParam(k, it.toFloat()); sw.noteValue(k, it) }
         refreshSetBfree()
+        // The knobs again: their parameters are the landed presets' now.
+        applyControls()
         note("presets landed: the song's values and live set ${ls + 1}'s own on again")
     }
 
@@ -293,7 +295,7 @@ class SongPlayer(private val lib: Library, host: EngineHost, private val prefs: 
         val own = r.liveSets.getOrNull(i)?.tempo
         val saved = if (own != null) r.copy(liveSets = r.liveSets.toMutableList().also { it[i] = it[i].copy(tempo = with(own) ?: Tempo()) })
             else r.copy(tempo = with(r.tempo))
-        lib.saveSong(id, name, saved)
+        lib.saveSong(id, name, engines.frozen(saved))
         metronome.tappedSaved()
         reload()
     }
@@ -334,7 +336,7 @@ class SongPlayer(private val lib: Library, host: EngineHost, private val prefs: 
             stored += key
         }
         val name = songNames.getOrNull(songIndex) ?: return
-        lib.saveSong(id, name, r)
+        lib.saveSong(id, name, engines.frozen(r))
         reload()
         note("stored into live set ${i + 1}: the levels" + if (stored.isEmpty()) "" else " and $stored")
         // Said on the stage for a while, with a way back.
@@ -436,7 +438,7 @@ class SongPlayer(private val lib: Library, host: EngineHost, private val prefs: 
         val p = setBfreeParam(node, name) ?: return
         val key = "$setBfreeId.$name"
         touch(key, switcher?.currentValue(key) ?: NativeBridge.nativeGetNodeParam(node, p).toDouble())
-        NativeBridge.nativeSetNodeParam(node, p, v)
+        setBfreeId?.let { engines.setParam(it, name, v) }
         switcher?.noteValue(key, v.toDouble())
         setBfree[name] = v
     }

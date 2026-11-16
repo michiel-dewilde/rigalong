@@ -135,7 +135,11 @@ internal fun SongEditor(song: RackSong, name: String, host: EngineHost, player: 
             }
             val preset = @Composable { m: Modifier ->
                 OutlinedButton(onClick = { picker = inst.id }, modifier = m) {
-                    Text(presetLabel(inst.engine, slot) ?: stringResource(R.string.as_loaded_paren), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    // setBfree has no preset to name: with drawbars of its own it is not "as loaded".
+                    val ownDrawbars = inst.engine == RackEngine.SETBFREE && slot.params.keys.any { it.startsWith("Upper ") }
+                    Text(presetLabel(inst.engine, slot)
+                        ?: stringResource(if (ownDrawbars) R.string.own_drawbars else R.string.as_loaded_paren),
+                        maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
             }
             val edits = @Composable {

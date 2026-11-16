@@ -110,15 +110,19 @@ class Rig private constructor(private val app: Context) {
         val missing = com.rigalong.play.EngineRack.missingInEngine()
         check(missing.isEmpty()) { "this build's engine lacks: " + missing.joinToString() }
         content.start()
-        // Once the engine has its nodes: the demo setlist on first run (S14.2),
-        // then back to where the last session was (S13.2).
+        // Back to where the last session was (S13.2), at once: the graph is
+        // there, and a preset asked for before its engine is up is loaded when
+        // it is (the song's values go on again once it has landed). Only the
+        // very first run waits: the demo setlist (S14.2) is made from the
+        // engines' own lists, which have to be read first.
+        val firstRun = runCatching { library.setlists().isEmpty() }.getOrDefault(false)
         handler.postDelayed({
             if (ended) return@postDelayed
             runCatching {
                 library.seedIfEmpty(NativeBridge.nativeSetBfreePresetNames().toList(), firstKeys(), firstSurgePatch())
                 player.resume()
             }.onFailure { android.util.Log.e("rigalong-ui", "start: $it") }
-        }, 2500)
+        }, if (firstRun) 2500L else 0L)
     }
 
     /**

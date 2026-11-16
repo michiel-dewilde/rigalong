@@ -6,7 +6,9 @@ for f in sys.argv[1:]:
     x = np.fromfile(f, dtype='<i4').reshape(-1, 4)[:, :2].astype(np.float64) / 2**31
     m = x.mean(axis=1)
     env = np.sqrt((m[:len(m)//480*480].reshape(-1, 480) ** 2).mean(axis=1))      # 10 ms
-    on = np.argmax(env > 10 * np.median(env[:20]) + 1e-6)                          # the note's start
+    # The note's start: the first 10 ms within 20 dB of its loudest. (Not "10x the first 200 ms":
+    # a tail of the song before, still decaying there, put the start at 0 and the window astray.)
+    on = np.argmax(env > env.max() / 10)
     seg = m[(on + 20) * 480:(on + 170) * 480]                                      # 0,2 s to 1,7 s in
     if len(seg) < 48000:
         print(f"{f}: no note found"); continue

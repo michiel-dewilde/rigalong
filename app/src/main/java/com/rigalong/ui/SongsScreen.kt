@@ -96,6 +96,19 @@ class SongsEdit(private val lib: Library, private val player: SongPlayer) {
         if (e != null && rack != null) { editing = id to rack; editName = e.version.name; original = rack; originalName = editName }
     }
 
+    /**
+     * The open song as the library has it NOW, unless it has edits of its own:
+     * the Library screen's Undo and Restore, and the stage's Store, change
+     * songs without the editor knowing, and a stale song saved again would
+     * put back what was undone. One whose entry is gone (its creation
+     * undone) is closed. Each time the Songs screen is shown.
+     */
+    fun refresh() {
+        if (unsaved) return
+        val id = editing?.first ?: return
+        if (lib.song(id) == null) { editing = null; selected = null; original = null } else open(id)
+    }
+
     /** A song that is not in the library yet, in the editor. */
     fun startNew(song: RackSong, name: String, intoSetlist: Boolean) {
         newIntoSetlist = intoSetlist
@@ -103,6 +116,15 @@ class SongsEdit(private val lib: Library, private val player: SongPlayer) {
         original = null
         editName = name
         selected = null
+    }
+
+    /**
+     * Before a save: the open song's "as loaded" sounds take the presets that
+     * are loaded now ([com.rigalong.play.EngineRack.frozen]), so the editor
+     * shows what is about to be stored and the patch decisions see it.
+     */
+    fun freeze() {
+        editing = editing?.let { (id, song) -> id to player.engines.frozen(song) }
     }
 
     /** The library patches saving the open song would change, each a choice for the player (I8.5, I8.13). */
@@ -145,6 +167,7 @@ class SongsEdit(private val lib: Library, private val player: SongPlayer) {
 
     /** The open song saved as another one, [name], and that one opened. */
     fun saveCopy(name: String) {
+        freeze()
         val song = editing?.second ?: return
         val id = lib.saveSong(null, name, song)
         revision++
@@ -235,6 +258,8 @@ internal fun SongsScreen(player: SongPlayer, lib: Library, host: EngineHost, st:
         delay(300)
         player.hear(ed.first, ed.second, i.coerceAtMost(ed.second.liveSets.size - 1))
     }
+    // The library may have changed elsewhere since the song was opened.
+    LaunchedEffect(Unit) { st.refresh() }
     // Quick edit from the stage: the song, scrolled to its live set or with its patch open.
     LaunchedEffect(player.editRequest) {
         player.editRequest?.let { r -> open(r.song); focus = r; player.editRequest = null }
@@ -280,6 +305,7 @@ internal fun SongsScreen(player: SongPlayer, lib: Library, host: EngineHost, st:
                         onChange = { st.editing = ed.first to it },
                         onSave = {
                             // A changed library patch: everywhere, only here, or chosen songs (I8.5, I8.13).
+                            st.freeze()
                             val d = st.patchDecisions()
                             if (d.isEmpty()) st.save() else decisions = d
                         },

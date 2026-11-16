@@ -81,6 +81,12 @@ public:
     bool instanceBusy(int i) const;
     // The preset it has now, by the same name, or "".
     std::string instancePreset(int i) const;
+    // What it sounds like now, by the name a song would ask for it with, for
+    // every engine that has such a name (setBfree: ""); and a FluidSynth's
+    // preset within its font, or -1. For a song that says "as loaded" to be
+    // given what is loaded when it is saved.
+    std::string instanceSound(int i) const;
+    int instanceProgram(int i) const;
 
     // --- the first instance of each engine -----------------------------------
     // Setup's engine panels and the content lists ask these.

@@ -191,6 +191,9 @@ object NativeBridge {
     external fun nativeInstanceLoadPreset(i: Int, name: String, program: Int, path: String?)
     external fun nativeInstanceBusy(i: Int): Boolean
     external fun nativeInstancePreset(i: Int): String
+    /** What instance [i] sounds like now, by the name a song asks for it with ("" for setBfree); a FluidSynth's preset in its font, or -1. */
+    external fun nativeInstanceSound(i: Int): String
+    external fun nativeInstanceProgram(i: Int): Int
     /** A song's insert effect, whole: a fresh effect of the kind called [type] ("delay") that starts at these values. */
     external fun nativeFxConfigure(index: Int, type: String, names: Array<String>, values: FloatArray)
     /** A value as the player reads it ("250 ms", "1/8"), or null. */

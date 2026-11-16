@@ -456,6 +456,25 @@ std::string Rack::instancePreset(int i) const {
     }
 }
 
+std::string Rack::instanceSound(int i) const {
+    rigalong::Node* n = instanceNode(i);
+    if (n == nullptr) return {};
+    switch (mInstanceType[i]) {
+        case kDexed: return static_cast<rigalong::DexedNode*>(n)->currentVoiceName();
+        case kPlaits: {
+            const int model = static_cast<int>(std::lround(n->getParam(rigalong::PlaitsNode::kEngine)));
+            return model >= 0 && model < rigalong::PlaitsNode::kNumEngines ? rigalong::PlaitsNode::engineName(model) : "";
+        }
+        default: return instancePreset(i);
+    }
+}
+
+int Rack::instanceProgram(int i) const {
+    rigalong::Node* n = instanceNode(i);
+    if (n == nullptr || mInstanceType[i] != kFluid) return -1;
+    return static_cast<rigalong::FluidNode*>(n)->currentPreset();
+}
+
 void Rack::loadInstancePreset(int i, const std::string& name, int program, const std::string& path) {
     rigalong::Node* n = instanceNode(i);
     if (n == nullptr || name.empty()) return;

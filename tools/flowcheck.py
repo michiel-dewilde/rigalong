@@ -296,6 +296,11 @@ def to_library():
 # song, change it in the first and update it everywhere, check both songs
 # follow -- then three Undos leave the library as it was.
 PATCH = "FlowSfizz"
+# The library changes the round trip made, by the name its Undo shows, in
+# order: undo-all takes back exactly these. Never a fixed count: a flow that
+# failed before its change would make that count take one of the player's
+# own (it did, 2026-11-16, Michiel's "Surge XT and sfizz").
+SHARED_CHANGES = []
 
 
 def flow_share_patch(f):
@@ -309,9 +314,11 @@ def flow_share_patch(f):
         shell("input keyevent KEYCODE_DEL")
     type_text(PATCH)
     f.tap("Save")
+    SHARED_CHANGES.append(PATCH)
     f.see(f"Library patch “{PATCH}”", exact=False)
     f.tap("Done")
     f.tap("Save •")                    # the song keeps the link once it is saved
+    SHARED_CHANGES.append("sfizz")
 
 
 def flow_reuse_patch(f):
@@ -321,18 +328,20 @@ def flow_reuse_patch(f):
     f.tap(PATCH)                       # heard at once, the picker stays open
     f.tap("Keep")
     f.tap("Save •")
+    SHARED_CHANGES.append("Surge XT and sfizz")
 
 
 def flow_update_everywhere(f):
     to_songs()
     f.tap("1. sfizz")
-    f.tap("(as loaded)")
-    f.tap("Salamander Grand (tightened)", exact=False)
+    tap_choice(f, "sfizz")             # what it plays: saved, an "as loaded" sound names its preset
+    f.tap("test-saw", exact=False)     # another instrument than the patch's (salamander-tight)
     f.tap("Keep")
     f.tap("Save •")
     f.see("A library patch changed")
     f.see("1 other song uses it.", exact=False)
     f.tap("Save")
+    SHARED_CHANGES.append("sfizz")
     # Both songs on the new version (checked in the Library, not counted).
     to_library()
     # The Library shows a kind at a time: the patches.
@@ -350,11 +359,20 @@ def flow_update_everywhere(f):
 
 
 def flow_undo_all(f):
-    # Four actions to undo: the patch shared, the song saved with it, the
-    # second song, and the update everywhere.
+    # What the round trip changed (at most four: the patch shared, the song
+    # saved with it, the second song, the update everywhere), newest first,
+    # each only while the Undo names it.
     to_library()
-    for _ in range(4):
-        f.tap("Undo", exact=False)
+    while SHARED_CHANGES:
+        name = SHARED_CHANGES.pop()
+        undo = [n for n in find_all("Undo", exact=False) if f"“{name}”" in (n.text or n.desc)]
+        if not undo:
+            raise AssertionError(f"the Undo does not name {name!r}: not undoing")
+        shell(f"input tap {undo[0].x} {undo[0].y}")
+        f.taps += 1
+        time.sleep(1.0)
+    # The first sfizz back on the instrument it had: "as loaded" plays it.
+    shell("am broadcast -a com.rigalong.INSTRUMENT --es name tight")
     if wait_for(PATCH, timeout=2):
         raise AssertionError(f"{PATCH} still in the library after four Undos")
 

@@ -137,7 +137,10 @@ internal fun SoundEditor(song: RackSong, inst: com.rigalong.model.RackInstance, 
                 }
                 val sc = scope
                 if (sc == null) {
-                    LibraryPatchLine(inst.engine, slot, slot.params, lib) { p, link -> onChange(song.withSlot(id, slot.withPatch(p, link))) }
+                    LibraryPatchLine(inst.engine, slot, slot.params, lib,
+                        freeze = { s -> player.engines.frozen(song.withSlot(id, s)).instance(id)?.slot ?: s }) { p, link ->
+                        onChange(song.withSlot(id, slot.withPatch(p, link)))
+                    }
                     if (ownSomewhere.isNotEmpty()) Text(stringResource(R.string.own_in_a_live_set), color = Dim, fontSize = 13.sp)
                 } else {
                     Row(verticalAlignment = Alignment.CenterVertically) {
@@ -201,9 +204,12 @@ internal fun SoundEditor(song: RackSong, inst: com.rigalong.model.RackInstance, 
  * patch and how many songs use it; an older version of one, the latest a tap
  * away; changed from one (unsaved edits, decided at Save); or not in the
  * library, with "Save as library patch" -- which links the slot to it.
+ * [freeze]: the slot as it sounds, an "as loaded" one given what is loaded
+ * (Michiel, 2026-11-16), so a library patch names its preset like a saved song.
  */
 @Composable
 private fun LibraryPatchLine(e: RackEngine, slot: RackSlot, values: Map<String, Double>, lib: Library,
+                             freeze: (RackSlot) -> RackSlot,
                              onReplace: (com.rigalong.model.Patch, Digest?) -> Unit) {
     val now = slot.copy(params = values).patch(e)
     val link = remember(now, slot.libraryPatch) { lib.patchLink(slot.libraryPatch, now) }
@@ -234,9 +240,10 @@ private fun LibraryPatchLine(e: RackEngine, slot: RackSlot, values: Map<String, 
                     OutlinedTextField(value = name, onValueChange = { name = it }, singleLine = true,
                         label = { Text(stringResource(R.string.patch_name)) }, modifier = Modifier.weight(1f))
                     TextButton(enabled = name.isNotBlank(), onClick = {
-                        val id = lib.savePatch(null, name.trim(), now, derivedFrom = link?.entry?.latest)
+                        val saved = freeze(slot.copy(params = values)).patch(e)
+                        val id = lib.savePatch(null, name.trim(), saved, derivedFrom = link?.entry?.latest)
                         naming = false
-                        onReplace(now, id)   // the slot now uses it
+                        onReplace(saved, id)   // the slot now uses it
                     }) { Text(stringResource(R.string.save)) }
                 }
             }

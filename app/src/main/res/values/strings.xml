@@ -125,6 +125,7 @@
     <string name="save_unsaved">Save •</string>
     <string name="engines">Sounds</string>
     <string name="as_loaded_paren">(as loaded)</string>
+    <string name="own_drawbars">(its own drawbars)</string>
     <string name="level">level</string>
     <string name="live_sets">Live sets</string>
     <string name="add_live_set">Add live set</string>

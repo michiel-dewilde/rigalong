@@ -514,6 +514,16 @@ Java_com_rigalong_NativeBridge_nativeAddInstance(JNIEnv* env, jobject, jstring e
     return type < 0 ? -1 : engine().addInstance(type);
 }
 
+JNIEXPORT jstring JNICALL
+Java_com_rigalong_NativeBridge_nativeInstanceSound(JNIEnv* env, jobject, jint i) {
+    return env->NewStringUTF(engine().rack().instanceSound(i).c_str());
+}
+
+JNIEXPORT jint JNICALL
+Java_com_rigalong_NativeBridge_nativeInstanceProgram(JNIEnv*, jobject, jint i) {
+    return engine().rack().instanceProgram(i);
+}
+
 JNIEXPORT jint JNICALL
 Java_com_rigalong_NativeBridge_nativeMaxInstances(JNIEnv*, jobject) {
     return Rack::kMaxInstances;

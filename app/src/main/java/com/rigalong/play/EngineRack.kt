@@ -39,9 +39,42 @@ class EngineRack(private val host: EngineHost, private val note: (String) -> Uni
 
     /** The first instance of [e]: the one the rack starts with, which the setup's lists and "as loaded" speak of. */
     private val firstOf = HashMap<RackEngine, Int>()
-    private fun isFirst(i: Int, e: RackEngine): Boolean = firstOf.getOrPut(e) {
-        (0 until NativeBridge.nativeInstanceCount()).firstOrNull { engineOf(it) == e } ?: return false
-    } == i
+    private fun firstInstance(e: RackEngine): Int? = firstOf[e]
+        ?: (0 until NativeBridge.nativeInstanceCount()).firstOrNull { engineOf(it) == e }?.also { firstOf[e] = it }
+    private fun isFirst(i: Int, e: RackEngine): Boolean = firstInstance(e) == i
+
+    /**
+     * [song] with every "as loaded" sound given what is loaded NOW, for saving
+     * (Michiel, 2026-11-16: freeze on save). "As loaded" plays whatever its
+     * engine has -- the song before it, or after a restart the last song that
+     * loaded something -- so a song kept that way sounded different from one
+     * night to the next. Saved, it names the preset: the one the first
+     * instance of its engine has, which is what "as loaded" plays on any
+     * instance. setBfree has no preset to name: its upper drawbars are kept
+     * as the sound's own values. An engine that is not up yet has nothing to
+     * name, and its sound stays "as loaded".
+     */
+    fun frozen(song: RackSong): RackSong {
+        if (song.instances.none { it.slot.preset.isNullOrEmpty() }) return song
+        val on = assignment(song, add = false)
+        return song.copy(instances = song.instances.map { inst ->
+            val e = inst.engine
+            val slot = inst.slot
+            if (!slot.preset.isNullOrEmpty()) return@map inst
+            val first = firstInstance(e) ?: return@map inst
+            if (e == RackEngine.SETBFREE) {
+                val node = nodeOf(on[inst.id] ?: first) ?: return@map inst
+                val bars = SongPlayer.SETBFREE_DRAWBARS.filter { it !in slot.params }.mapNotNull { name ->
+                    paramIndex(node, name)?.let { name to NativeBridge.nativeGetNodeParam(node, it).toDouble() }
+                }
+                return@map if (bars.isEmpty()) inst else inst.copy(slot = slot.copy(params = slot.params + bars))
+            }
+            val name = runCatching { NativeBridge.nativeInstanceSound(first) }.getOrDefault("")
+            if (name.isEmpty()) return@map inst
+            val program = if (e == RackEngine.FLUID) NativeBridge.nativeInstanceProgram(first).takeIf { it >= 0 } else null
+            inst.copy(slot = slot.copy(preset = name, program = program))
+        })
+    }
 
     /**
      * The engine instance each of [song]'s instances plays on: the k-th of an
@@ -49,7 +82,7 @@ class EngineRack(private val host: EngineHost, private val note: (String) -> Uni
      * the default patch first), more added when the song has more. The same
      * song always gets the same ones, so the stage and the editor agree.
      */
-    private fun assignment(song: RackSong?): Map<String, Int> {
+    private fun assignment(song: RackSong?, add: Boolean = true): Map<String, Int> {
         if (song == null) return emptyMap()
         val count = runCatching { NativeBridge.nativeInstanceCount() }.getOrDefault(0)
         val byType = HashMap<RackEngine, MutableList<Int>>()
@@ -59,7 +92,7 @@ class EngineRack(private val host: EngineHost, private val note: (String) -> Uni
         for (inst in song.instances) {
             val k = seen.merge(inst.engine, 1, Int::plus)!! - 1
             val pool = byType.getOrPut(inst.engine) { mutableListOf() }
-            while (pool.size <= k) {
+            while (add && pool.size <= k) {
                 val n = NativeBridge.nativeAddInstance(inst.engine.nodeType)
                 if (n < 0) break
                 pool += n
@@ -87,7 +120,52 @@ class EngineRack(private val host: EngineHost, private val note: (String) -> Uni
 
     private fun setParamAt(i: Int, param: String, v: Float) {
         val node = nodeOf(i) ?: return
-        paramIndex(node, param)?.let { NativeBridge.nativeSetNodeParam(node, it, v) }
+        val p = paramIndex(node, param) ?: return
+        remember(i, node, param, p)
+        NativeBridge.nativeSetNodeParam(node, p, v)
+    }
+
+    /**
+     * WHAT WAS WRITTEN ON EACH ENGINE INSTANCE, AND WHAT IT WAS BEFORE: every
+     * sound parameter set since the instance's preset went on -- by a song's
+     * patch, a live set, a knob, the stage's drawbars, the editor -- with the
+     * value it had before the first of them, which is the preset's own.
+     *
+     * A song change puts them back ([setUp]). Without it a parameter one song
+     * sets and the next leaves to its preset stayed on into the next song
+     * whenever the preset itself did not load again: the same Surge XT patch
+     * in two songs running, and setBfree and Plaits always, whose presets set
+     * only the drawbars and the model. The organ of a song that asks for no
+     * overdrive played with the overdrive of the song before it, and without
+     * it after a fresh start.
+     *
+     * The level is not kept here: every song sets it, and an instance the
+     * song does not use stays at 0.
+     */
+    private val presetValues = HashMap<Int, LinkedHashMap<String, Float>>()
+
+    private fun remember(i: Int, node: Int, param: String, p: Int) {
+        if (param == "Level") return
+        val kept = presetValues.getOrPut(i) { LinkedHashMap() }
+        if (param in kept) return
+        // While a preset is still landing the engine has the last one's
+        // values: what is written now goes on again once it is in
+        // ([applyPatchValues]), and is remembered then.
+        if (busy(i)) return
+        kept[param] = NativeBridge.nativeGetNodeParam(node, p)
+    }
+
+    /** Instance [i]'s written parameters back to its preset's own values. */
+    private fun restorePresetValues(i: Int) {
+        val kept = presetValues.remove(i) ?: return
+        if (busy(i)) return     // a preset is landing, and brings its own
+        val node = nodeOf(i) ?: return
+        for ((name, v) in kept) paramIndex(node, name)?.let { NativeBridge.nativeSetNodeParam(node, it, v) }
+    }
+
+    /** A sound parameter of the stage song's instance [id], from the stage (setBfree's drawbars). */
+    fun setParam(id: String, param: String, v: Float) {
+        onEngine[id]?.let { setParamAt(it, param, v) }
     }
 
     /** The engine's value of "<instance>.<parameter>" now. */
@@ -218,6 +296,9 @@ class EngineRack(private val host: EngineHost, private val note: (String) -> Uni
 
     /** [song]'s instances on the engine's, with their patches; engine instances it does not use are silenced and parked. */
     fun setUp(song: RackSong?) {
+        // What the last song wrote on the engines goes first: each instance as
+        // its preset has it, for the song that leaves a parameter to its preset.
+        for (i in presetValues.keys.toList()) restorePresetValues(i)
         // Every song sets the whole reverb, so one song's room never stays
         // with the next.
         previewReverb(song?.reverb.orEmpty())
@@ -277,6 +358,9 @@ class EngineRack(private val host: EngineHost, private val note: (String) -> Uni
             // used to be skipped here while not ready, and played whatever the
             // engine came up with).
             if (NativeBridge.nativeInstancePreset(i) == preset && program == null) return
+            // Another preset: what was written over the last one goes back
+            // first (setBfree's and Plaits' presets leave the rest as it is).
+            restorePresetValues(i)
             val path = if (e == RackEngine.SFIZZ) host.instrumentPath(preset) else null
             NativeBridge.nativeInstanceLoadPreset(i, preset, program ?: -1, path)
         }.onFailure { Log.e("rigalong-ui", "preset $preset for instance $i (${e.key}): $it") }
@@ -355,6 +439,8 @@ class EngineRack(private val host: EngineHost, private val note: (String) -> Uni
             val node = nodeOfInstance(inst.id) ?: continue
             for ((param, cc) in inst.controls) {
                 val p = paramIndex(node, param) ?: continue
+                // A knob may move it from here on: what it is now is what a song change goes back to.
+                onEngine[inst.id]?.let { remember(it, node, param, p) }
                 val range = NativeBridge.nativeNodeParamRange(node, p)
                 ccs += cc; nodes += node; params += p
                 mins += range[0]; maxs += range[1]; ints += range[2] > 0.5f
