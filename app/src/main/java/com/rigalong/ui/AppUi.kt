@@ -53,7 +53,7 @@ import com.rigalong.play.EngineHost
 
 @Composable
 fun AppUi(player: SongPlayer, lib: Library, host: EngineHost) {
-    var screen by remember { mutableIntStateOf(0) }
+    var screen by remember { mutableStateOf(Screen.STAGE) }
     var health by remember { mutableStateOf("") }
     // The song open in Songs outlives the screen -- and the app: unsaved edits are kept on disk.
     val songsEdit = remember { SongsEdit(lib, player).also { it.restore() } }
@@ -76,12 +76,12 @@ fun AppUi(player: SongPlayer, lib: Library, host: EngineHost) {
         }
     }
     LaunchedEffect(screen) {
-        player.onStage = screen == 0
+        player.onStage = screen == Screen.STAGE
         // The editor's song is heard only while the editor is open.
-        if (screen != 1) player.stopHearing()
+        if (screen != Screen.SONGS) player.stopHearing()
     }
-    LaunchedEffect(Unit) { player.backToStage = { screen = 0 } }
-    LaunchedEffect(Unit) { player.showSongs = { screen = 1 } }
+    LaunchedEffect(Unit) { player.backToStage = { screen = Screen.STAGE } }
+    LaunchedEffect(Unit) { player.showSongs = { screen = Screen.SONGS } }
     LaunchedEffect(Unit) { player.switches.watch() }
     LaunchedEffect(Unit) {
         while (true) {
@@ -112,10 +112,10 @@ fun AppUi(player: SongPlayer, lib: Library, host: EngineHost) {
             Spacer(Modifier.height(8.dp))
             Box(Modifier.weight(1f)) {
                 when (screen) {
-                    0 -> StageScreen(player, host)
-                    1 -> SongsScreen(player, lib, host, songsEdit)
-                    2 -> LibraryScreen(player, lib, host, onOpened = { screen = 0 })
-                    else -> SetupScreen(player, host, lib)
+                    Screen.STAGE -> StageScreen(player, host)
+                    Screen.SONGS -> SongsScreen(player, lib, host, songsEdit)
+                    Screen.LIBRARY -> LibraryScreen(player, lib, host, onOpened = { screen = Screen.STAGE })
+                    Screen.SETUP -> SetupScreen(player, host, lib)
                 }
             }
             if (keys) {
@@ -126,22 +126,25 @@ fun AppUi(player: SongPlayer, lib: Library, host: EngineHost) {
     }
 }
 
+/** The four views the top bar switches between (REVIEW W16: they were the numbers 0 to 3). */
+internal enum class Screen { STAGE, SONGS, LIBRARY, SETUP }
+
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun TopBar(player: SongPlayer, health: String, screen: Int, songsUnsaved: Boolean, onScreen: (Int) -> Unit) {
+private fun TopBar(player: SongPlayer, health: String, screen: Screen, songsUnsaved: Boolean, onScreen: (Screen) -> Unit) {
     // EDIT LOCK (S17.3): from the stage, the editors open only on a long
     // press, so a stray tap mid-song never leaves the stage.
-    val locked = screen == 0
+    val locked = screen == Screen.STAGE
     val tabs: @Composable () -> Unit = {
-        Tab(stringResource(R.string.tab_stage), screen == 0) { onScreen(0) }
-        Tab(if (songsUnsaved) stringResource(R.string.tab_songs_unsaved) else stringResource(R.string.tab_songs), screen == 1, locked) { onScreen(1) }
-        Tab(stringResource(R.string.tab_library), screen == 2, locked) { onScreen(2) }
-        Tab(stringResource(R.string.tab_setup), screen == 3, locked) { onScreen(3) }
+        Tab(stringResource(R.string.tab_stage), screen == Screen.STAGE) { onScreen(Screen.STAGE) }
+        Tab(if (songsUnsaved) stringResource(R.string.tab_songs_unsaved) else stringResource(R.string.tab_songs), screen == Screen.SONGS, locked) { onScreen(Screen.SONGS) }
+        Tab(stringResource(R.string.tab_library), screen == Screen.LIBRARY, locked) { onScreen(Screen.LIBRARY) }
+        Tab(stringResource(R.string.tab_setup), screen == Screen.SETUP, locked) { onScreen(Screen.SETUP) }
     }
     // The health line opens the figures (S19.3): Setup, where they are -- on
     // a long press from the stage, like the tabs.
     val status: @Composable (Modifier) -> Unit = { m ->
-        Column(m.combinedClickable(onClick = { if (!locked) onScreen(3) }, onLongClick = { onScreen(3) })) {
+        Column(m.combinedClickable(onClick = { if (!locked) onScreen(Screen.SETUP) }, onLongClick = { onScreen(Screen.SETUP) })) {
             Text(player.setlistName.ifEmpty { stringResource(R.string.no_setlist) }, color = Dim, fontSize = 14.sp, maxLines = 1,
                 overflow = TextOverflow.Ellipsis)
             Text(health, color = if (health.startsWith("!")) Warn else Dim, fontSize = 12.sp, maxLines = 1,
