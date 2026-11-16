@@ -447,6 +447,37 @@ patches) and **Device sounds**. **Search** narrows the tab you are on.
     with the app's own messages, to the share sheet: email it, or attach it
     to an issue. It never leaves the tablet otherwise.
 
+### Where each setting is kept
+
+Three places, and which one counts for a setting:
+
+* **The library**: songs, setlists, library patches, CP-88 sounds and the
+  environments. Exported and imported with Library > Export / Import.
+* **The tablet's own settings** for this app: what Setup is set to now.
+* **The Undo list** beside the library: the last 30 actions, kept across
+  restarts, not exported.
+
+What you change in Setup is the tablet's setting at once. An environment is
+a saved copy of part of them; **loading one overwrites those settings**, and
+changing a setting afterwards does not change the saved environment until
+you save it again.
+
+| Setting | Kept in | Saved in an environment |
+|---|---|---|
+| Audio out: device, mode, USB buffer | tablet | yes |
+| MIDI in: device, mode | tablet | yes |
+| External devices (channels, reserved slots, live set selection) | tablet | yes |
+| Footswitches | tablet | yes |
+| Lead sheet: two pages, half turns, keys turn pages | tablet | yes |
+| Click: sound, bar count, keep going, count-in bars, level, MIDI clock, output | tablet | yes |
+| Do Not Disturb | tablet | yes |
+| Master volume | tablet | yes (the room's) |
+| Setlist, song and live set on stage | tablet | no |
+| The first sfizz's instrument (what "as loaded" plays) | tablet, set by songs | no |
+| The ALSA path's buffer (2 bursts) | not kept: every start | no |
+| Answers to "use it directly?", devices seen, permission questions | tablet | no |
+| Songs, setlists, patches, CP-88 sounds | library | no |
+
 ---
 
 ## Where RigAlong sounds
