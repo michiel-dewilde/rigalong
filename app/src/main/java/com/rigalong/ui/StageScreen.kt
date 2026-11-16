@@ -480,7 +480,13 @@ private fun TempoBox(player: SongPlayer, s: Float = 1f) {
     var dialog by remember { mutableStateOf(false) }
     if (dialog) TempoDialog(player) { dialog = false }
     var now by remember { mutableStateOf(System.nanoTime()) }
-    LaunchedEffect(Unit) { while (true) { now = System.nanoTime(); delay(16) } }
+    // A frame clock only while the click runs: stopped, nothing here moves, and
+    // 60 redraws a second took time from the render thread for nothing (REVIEW W14).
+    val running = player.metronome.clickRunning
+    LaunchedEffect(running) {
+        now = System.nanoTime()
+        while (running) { delay(16); now = System.nanoTime() }
+    }
     val bpm = player.metronome.bpm
     val beatNs = bpm?.let { (60e9 / it).toLong() }
     val phase = if (beatNs != null && beatNs > 0) ((now - player.metronome.beatOrigin).mod(beatNs)).toDouble() / beatNs else 1.0
