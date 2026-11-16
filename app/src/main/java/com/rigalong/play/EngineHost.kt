@@ -12,6 +12,8 @@ interface EngineHost {
     /** The SFZ file of installed instrument [id], for an added sfizz instance; null if not installed. */
     fun instrumentPath(id: String): String?
     fun currentInstrument(): String?
+    /** The heads of installed instrument [id]'s samples into the page cache, in the background. */
+    fun warmInstrument(id: String)
     /** The stage's one line: the path and its latency when all is well, else what is wrong ("! ..."). */
     fun healthLine(): String
     /** Every figure on one line, the ones the screen leaves out included: for the diagnostics log. */

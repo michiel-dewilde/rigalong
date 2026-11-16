@@ -178,13 +178,23 @@ class EngineContent(private val context: Context, private val prefs: SharedPrefe
         currentInstrument = instrument
         prefs.edit().putString("instrumentId", instrument.id).apply()
         NativeBridge.nativeLoadInstrument(instrument.id, instrument.sfz.absolutePath)
-        warmInstrument(instrument)
+        warm(instrument)
     }
+
+    /** The heads of installed instrument [id]'s samples into the page cache: for an added sfizz instance. */
+    fun warm(id: String) { library.firstOrNull { it.id == id }?.let { warm(it) } }
 
     fun select(id: String) { library.firstOrNull { it.id == id }?.let { select(it) } }
 
     /** The SFZ file of installed instrument [id], or null. */
     fun path(id: String): String? = library.firstOrNull { it.id == id }?.sfz?.absolutePath
+
+    /** When each folder was last read, so it is not read again within [REWARM_MS]. */
+    private val warmedAt = java.util.concurrent.ConcurrentHashMap<String, Long>()
+    /** One warm-up at a time, the next queued behind it (it used to be skipped). */
+    private val warmer = java.util.concurrent.Executors.newSingleThreadExecutor { r ->
+        Thread(r, "sfizz-warm").apply { priority = Thread.MIN_PRIORITY; isDaemon = true }
+    }
 
     /** Sample heads are being read into the page cache, and how much so far. */
     @Volatile var warming = false
@@ -204,8 +214,12 @@ class EngineContent(private val context: Context, private val prefs: SharedPrefe
      * Ordinary priority, and deliberately NOT pinned to the fast cores: it must
      * never compete with the audio thread. Finishing in 4 s instead of 2 s costs
      * nothing; stealing a big core costs a glitch.
+     *
+     * Every sfizz instrument, the first sfizz's and an added instance's alike
+     * (REVIEW W11: added instances were never warmed, and an instrument chosen
+     * while another was warming was skipped).
      */
-    private fun warmInstrument(instrument: Instrument) {
+    private fun warm(instrument: Instrument) {
         // Only the HEAD of each sample is read, not the whole library.
         //
         // What blocks the render thread is the note-START path: sfizz reaching for
@@ -217,18 +231,27 @@ class EngineContent(private val context: Context, private val prefs: SharedPrefe
         // sfizz preloads 65536 frames per sample, which is 256 kB at 16-bit
         // stereo, so 512 kB per file covers it with margin. For Salamander that is
         // ~330 MB read in about a second, instead of 1.2 GB over a minute.
-        if (warming) return
-        warming = true
-        warmedMb = 0
-        Thread {
-            val root = instrument.sfz.parentFile?.parentFile ?: instrument.sfz.parentFile
+        // The folder above the instrument's: an instrument may play another's
+        // samples (the tightened Salamander plays the big one's).
+        val root = instrument.sfz.parentFile?.parentFile ?: instrument.sfz.parentFile ?: return
+        val now = System.currentTimeMillis()
+        val last = warmedAt[root.path]
+        if (last != null && now - last < REWARM_MS) {
+            android.util.Log.i("rigalong-ui", "page cache: ${instrument.id} -- ${root.name}/ read ${(now - last) / 1000} s ago")
+            return
+        }
+        warmedAt[root.path] = now
+        warmer.execute {
+            warming = true
+            warmedMb = 0
+            val t0 = android.os.SystemClock.uptimeMillis()
             val buf = ByteArray(1 shl 18)
             val headBytesPerFile = 512L * 1024L
             var total = 0L
             try {
-                root?.walkTopDown()
-                    ?.filter { it.isFile && it.extension.lowercase() in setOf("wav", "flac", "ogg") }
-                    ?.forEach { f ->
+                root.walkTopDown()
+                    .filter { it.isFile && it.extension.lowercase() in setOf("wav", "flac", "ogg") }
+                    .forEach { f ->
                         f.inputStream().use { input ->
                             var fromThisFile = 0L
                             while (fromThisFile < headBytesPerFile) {
@@ -240,11 +263,14 @@ class EngineContent(private val context: Context, private val prefs: SharedPrefe
                             }
                         }
                     }
-            } catch (_: Exception) {
+            } catch (e: Exception) {
                 // Best effort: a failure here costs performance, never correctness.
+                android.util.Log.w("rigalong-ui", "page cache: ${root.name}/ not all read: $e")
             }
+            android.util.Log.i("rigalong-ui", "page cache: ${instrument.id} -- ${total shr 20} MB of ${root.name}/ in " +
+                "${android.os.SystemClock.uptimeMillis() - t0} ms")
             warming = false
-        }.apply { priority = Thread.MIN_PRIORITY; isDaemon = true }.start()
+        }
     }
 
     /** Seeds the private instruments folder from assets, once. */
@@ -348,6 +374,8 @@ class EngineContent(private val context: Context, private val prefs: SharedPrefe
 }
 
 /** Surge XT's factory set as the APK carries it (app/build.gradle.kts, packSurgeFactory). */
+/** A sample folder read into the page cache is not read again sooner than this. */
+private const val REWARM_MS = 10 * 60 * 1000L
 private const val SURGE_ZIP = "surge-xt-core.zip"
 /** In Surge XT's folder: which zip (by its length) the app unpacked there. Absent: the folder is somebody's own. */
 private const val SURGE_MARK = ".rigalong-factory"

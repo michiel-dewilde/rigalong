@@ -285,6 +285,7 @@ class Rig private constructor(private val app: Context) {
         override fun selectInstrument(id: String) = content.select(id)
         override fun instrumentPath(id: String): String? = content.path(id)
         override fun currentInstrument() = content.currentInstrument?.id
+        override fun warmInstrument(id: String) = content.warm(id)
         override fun importInstrumentZip(input: java.io.InputStream, fileName: String) = content.importInstrumentZip(input, fileName)
         override fun installEngineFile(kind: com.rigalong.model.EngineFiles.Kind, fileName: String, bytes: ByteArray) =
             content.installEngineFile(kind, fileName, bytes)

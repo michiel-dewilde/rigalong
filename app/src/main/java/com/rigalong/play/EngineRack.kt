@@ -362,6 +362,7 @@ class EngineRack(private val host: EngineHost, private val note: (String) -> Uni
             // first (setBfree's and Plaits' presets leave the rest as it is).
             restorePresetValues(i)
             val path = if (e == RackEngine.SFIZZ) host.instrumentPath(preset) else null
+            if (e == RackEngine.SFIZZ) host.warmInstrument(preset)
             NativeBridge.nativeInstanceLoadPreset(i, preset, program ?: -1, path)
         }.onFailure { Log.e("rigalong-ui", "preset $preset for instance $i (${e.key}): $it") }
     }

@@ -706,6 +706,11 @@ def make_patch(engine, search, pick, name, param, at):
     time.sleep(1.2)
     if search:                         # a short list is tapped as it is
         s.tap("Search")
+        # Emptied first: the field may hold an earlier search, and the tap
+        # puts the cursor inside it ("sf3" came out "s3sf", 2026-11-16).
+        shell("input keyevent KEYCODE_MOVE_END")
+        for _ in range(24):
+            shell("input keyevent KEYCODE_DEL")
         type_text(search)
         hide_keyboard()                # it covers Keep
         time.sleep(0.5)
