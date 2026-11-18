@@ -92,6 +92,32 @@ class DeviceRig(private val lib: Library, private val prefs: SharedPreferences, 
     /** The same keys, for what the device did not give: not asked again until [forget]. */
     private val unread = HashSet<String>()
 
+    /**
+     * Whether the app has the devices it gives sounds to (the stage, or a
+     * song heard in Songs), from the first live set selected until
+     * [release]. Set on the caller's thread.
+     */
+    @Volatile private var held = false
+    /**
+     * Per device name: where the device was when the app last let go of it
+     * or, after that, where its own buttons took it -- where [release] gives
+     * it back (Michiel, 2026-11-18). A device that has not said yet goes home.
+     */
+    private val own = ConcurrentHashMap<String, Map<String, Int>>().apply {
+        // Kept between sessions: an app that ended without letting go (an update, a crash) still knows.
+        for ((k, v) in prefs.all) if (k.startsWith(OWN) && v is String) {
+            val address = v.split(',').mapNotNull { kv -> kv.split('=').takeIf { it.size == 2 }?.let { it[0] to (it[1].toIntOrNull() ?: return@mapNotNull null) } }.toMap()
+            if (address.isNotEmpty()) put(k.removePrefix(OWN), address)
+        }
+    }
+
+    private fun keepOwn(d: ExternalSynth, address: Map<String, Int>) {
+        own[d.name] = address
+        prefs.edit().putString(OWN + d.name, address.entries.joinToString(",") { "${it.key}=${it.value}" }).apply()
+    }
+    /** Per device name: its current sound as the app found it when it took the device, edits and all. On the queue only. */
+    private val before = HashMap<String, ByteArray>()
+
     fun driver(d: ExternalSynth): DeviceDriver = Devices.driver(d.kind) ?: com.rigalong.model.devices.MidiDeviceDriver
 
     fun update(list: List<ExternalSynth>) {
@@ -356,6 +382,7 @@ class DeviceRig(private val lib: Library, private val prefs: SharedPreferences, 
      * set without a slot leaves the device alone.
      */
     fun liveSetSelected(index: Int, liveSet: LiveSet?) {
+        take()
         val actions = devices.map { it to liveSet?.devices?.get(it.name) }
         queue.execute {
             for ((d, a) in actions) {
@@ -374,20 +401,89 @@ class DeviceRig(private val lib: Library, private val prefs: SharedPreferences, 
         d.home.ifEmpty { driver(d).address.filter { !it.optional }.associate { it.key to it.range.first } }
 
     /**
-     * The app lets go of the devices it gives sounds to: each goes to its
-     * home, a sound of its own, and is an ordinary instrument again (Michiel,
-     * 2026-11-13: off the stage and on exit the CP-88 returns to normal). The
-     * reserved areas keep what was written; the next live set selected takes
-     * the device back.
+     * The app takes the devices it gives sounds to, before its first
+     * selection: each one's current sound is read first -- what the player
+     * had on it, unstored edits included -- for [release] to give back. A
+     * device MIDI out cannot reach yet is taken at the next selection.
+     */
+    fun take() {
+        if (held) return
+        held = true
+        // The app ended last time without letting go (an update, a crash): the
+        // device is still on the app's slot, and that is not the player's sound.
+        val stale = prefs.getBoolean(HELD, false)
+        prefs.edit().putBoolean(HELD, true).apply()
+        val all = devices.filter { driver(it).sounds != null && areas(it).isNotEmpty() }
+        queue.execute {
+            before.clear()
+            if (stale) {
+                Log.i(TAG, "taken again after the app ended holding the devices: their sounds before are not known")
+                return@execute
+            }
+            for (d in all) {
+                val s = driver(d).sounds ?: continue
+                runCatching { read(d, s, s.dumpRequest()) }
+                    .onSuccess { before[d.name] = it; Log.i(TAG, "${d.name} taken from '${s.name(it).trim()}'") }
+                    .onFailure {
+                        Log.w(TAG, "${d.name}: its sound could not be read before the stage (${it.message})")
+                        // Nothing went out to it either: taken for real once MIDI out is there.
+                        if (!runCatching { NativeBridge.nativeUsbMidiOutReady() }.getOrDefault(false)) {
+                            held = false
+                            prefs.edit().putBoolean(HELD, false).apply()
+                        }
+                    }
+            }
+        }
+    }
+
+    /**
+     * The app lets go of the devices it gives sounds to, and each is an
+     * ordinary instrument again (Michiel, 2026-11-13: off the stage and on
+     * exit the CP-88 returns to normal) -- as the player left it (Michiel,
+     * 2026-11-18): back on the live set its own buttons chose last (the
+     * device cannot be asked which one it is on; one that has not said goes
+     * home), and its sound as it was when the app took it, if it had been
+     * edited without storing. The reserved areas keep what was written; the
+     * next live set selected takes the device back. Nothing happens if the
+     * app does not have the devices.
      */
     fun release() {
+        if (!held) return
+        held = false
+        prefs.edit().putBoolean(HELD, false).apply()
         val all = devices.toList()
         queue.execute {
             for (d in all) {
-                if (driver(d).sounds == null || areas(d).isEmpty()) continue
-                select(d, home(d))
+                val s = driver(d).sounds ?: continue
+                if (areas(d).isEmpty()) continue
+                val back = own[d.name] ?: home(d)
+                select(d, back)
+                keepOwn(d, back)
+                before.remove(d.name)?.let { giveBack(d, s, it) }
             }
         }
+    }
+
+    /**
+     * [was], the device's sound before the app took it, into its current
+     * sound if what [release] just selected differs: an edit the player had
+     * not stored is there again. On the queue.
+     */
+    private fun giveBack(d: ExternalSynth, s: DeviceSounds, was: ByteArray) {
+        val name = s.name(was).trim()
+        // The read is answered once the device has the selected sound loaded.
+        val now = runCatching { read(d, s, s.dumpRequest()) }.getOrNull()
+        if (now != null && now.contentEquals(was)) {
+            Log.i(TAG, "${d.name} back on '$name' as it was")
+            return
+        }
+        if (!s.audition(was).all(::send)) {
+            note("${d.name}: its sound '$name' from before the stage could not be put back (MIDI out)")
+            return
+        }
+        val after = runCatching { read(d, s, s.dumpRequest()) }.getOrNull()
+        note("${d.name}: its sound '$name' from before the stage put back" +
+            if (after == null || !after.contentEquals(was)) " (the device did not confirm it)" else "")
     }
 
     private fun select(d: ExternalSynth, address: Map<String, Int>) {
@@ -399,10 +495,11 @@ class DeviceRig(private val lib: Library, private val prefs: SharedPreferences, 
     }
 
     /** MIDI out has come up under an open song: every device is brought in line ([forget], then the song again). */
-    fun midiOutReady(liveSets: List<LiveSet>, index: Int) {
+    fun midiOutReady(liveSets: List<LiveSet>, index: Int, select: Boolean) {
         forget()
         writeSong(liveSets)
-        liveSetSelected(index, liveSets.getOrNull(index))
+        // Off the stage the device is the player's: its slots are written, it is not taken.
+        if (select) liveSetSelected(index, liveSets.getOrNull(index))
         if (devices.isNotEmpty()) queue.execute { note("MIDI out ready: the devices brought in line ($status)") }
     }
 
@@ -450,6 +547,8 @@ class DeviceRig(private val lib: Library, private val prefs: SharedPreferences, 
             val sent = lastSent[d.name]
             if (sent != null && sent.first == address && System.currentTimeMillis() - sent.second < 2000) return -1
             describe("${d.name} ${drv.describe(address)}")
+            // The player on the device's own, the app not having it: where [release] gives it back next time.
+            if (!held) keepOwn(d, address)
             val s = drv.sounds ?: return -1
             val all = areas(d).ifEmpty { return -1 }
             // A slot of a reserved area: the live set that has it.
@@ -516,6 +615,9 @@ class DeviceRig(private val lib: Library, private val prefs: SharedPreferences, 
 
     companion object {
         private const val KEY = "devices"
+        /** Whether the app has the devices (see held), and per device where it gives one back. */
+        private const val HELD = "device.held"
+        private const val OWN = "device.own."
         private const val TAG = "rigalong-devices"
         /** How long a write waits for the receipt: the CP-88 sends it 1-8 ms after the footer (LOG.md 2026-10-12). */
         private const val RECEIPT_MS = 300L

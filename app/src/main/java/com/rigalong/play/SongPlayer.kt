@@ -172,6 +172,8 @@ class SongPlayer(private val lib: Library, host: EngineHost, private val prefs: 
             midiOutWasReady = true
             devices.forget()
         }
+        // Taken before the song's slots are written, so that what is read is the player's own sound.
+        if (sounding() && liveSets.isNotEmpty()) devices.take()
         devices.writeSong(liveSets)
         if (liveSets.isNotEmpty()) selectLiveSet(liveSet.coerceIn(0, liveSets.size - 1))
         parkIfSilent()
@@ -595,7 +597,7 @@ class SongPlayer(private val lib: Library, host: EngineHost, private val prefs: 
             // It may be another unit than before (the stage's spare, a rental),
             // or the same one having lost what was written: what this tablet
             // wrote last says nothing.
-            devices.midiOutReady(liveSetObjects, liveSetIndex)
+            devices.midiOutReady(liveSetObjects, liveSetIndex, select = sounding())
         }
         midiOutWasReady = ready
     }

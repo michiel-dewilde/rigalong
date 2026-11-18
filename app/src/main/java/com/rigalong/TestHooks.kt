@@ -43,7 +43,7 @@ class TestHooks(
             "NOTE", "CC", "PANIC", "STRESS", "PROFILE", "DUMP", "PARAM", "INSTANCE", "INSTRUMENT", "RESCAN",
             "MASTER", "CONCEAL", "RESETPEAKS", "FILL", "RENDERPRIO", "USBSTALL",
             "ROUTE", "OUTPUT", "SHARING", "RATE", "RESET", "REINIT", "DEVHEALTH", "SYSEX", "MEASURE",
-            "STAGE", "DEVICESELFTEST", "DEVICEWRITESELECT", "RESET_LIBRARY", "BACKUP", "RESTORE", "EXPORT", "IMPORT")
+            "STAGE", "FOLLOW", "DEVICESELFTEST", "DEVICEWRITESELECT", "RESET_LIBRARY", "BACKUP", "RESTORE", "EXPORT", "IMPORT")
     }
 
     fun register() {
@@ -204,6 +204,10 @@ class TestHooks(
             // -------------------------------------------------------- the stage
             // The stage, without the screen (1-based):  --ei song 2 --ei liveset 3
             "STAGE" -> stage(intent)
+            // A selection as from a device's own buttons, without the device sending it
+            // (bank MSB/LSB, program, 0-based):  --ei msb 63 --ei lsb 0 --ei pc 2
+            "FOLLOW" -> Log.i("rigalong-stage", "follow: " + player.devices.followed(
+                intent.getIntExtra("msb", 63), intent.getIntExtra("lsb", 0), intent.getIntExtra("pc", 0)) {})
             // A device's own-sound path end to end ([deviceSelfTest]):  --ei liveset 1
             "DEVICESELFTEST" -> deviceSelfTest(intent.getIntExtra("liveset", 1))
             //   --es delays 0,0,10,10,50,50
