@@ -43,7 +43,7 @@ class TestHooks(
             "NOTE", "CC", "PANIC", "STRESS", "PROFILE", "DUMP", "PARAM", "INSTANCE", "INSTRUMENT", "RESCAN",
             "MASTER", "CONCEAL", "RESETPEAKS", "FILL", "RENDERPRIO", "USBSTALL",
             "ROUTE", "OUTPUT", "SHARING", "RATE", "RESET", "REINIT", "DEVHEALTH", "SYSEX", "MEASURE",
-            "STAGE", "DEVICESELFTEST", "DEVICEWRITESELECT", "RESET_LIBRARY")
+            "STAGE", "DEVICESELFTEST", "DEVICEWRITESELECT", "RESET_LIBRARY", "BACKUP", "RESTORE")
     }
 
     fun register() {
@@ -218,7 +218,48 @@ class TestHooks(
                 Log.i(TAG, "library reset; ending")
                 android.os.Process.killProcess(android.os.Process.myPid())
             }
+            // The library and the app's settings, copied where adb can read them:
+            //   files/backup/<yyyyMMdd-HHmmss>/   (adb pull /sdcard/Android/data/com.rigalong/files/backup)
+            "BACKUP" -> backup()
+            // A backup put back, and the app ended (start it again):  --es from 20261118-140000
+            "RESTORE" -> restore(intent.getStringExtra("from").orEmpty())
         }
+    }
+
+    private val prefsFile get() = File(context.dataDir, "shared_prefs/rigalong.xml")
+
+    /**
+     * Everything that is the player's own and not content: the library folder
+     * (songs, setlists, patches, device sounds, environments, lead sheets, the
+     * Undo list, an unsaved song) and the settings file. Instruments, SoundFonts
+     * and banks are content, installed again from their sources.
+     */
+    private fun backup() {
+        val stamp = java.text.SimpleDateFormat("yyyyMMdd-HHmmss", java.util.Locale.ROOT).format(java.util.Date())
+        val out = File(context.getExternalFilesDir(null), "backup/$stamp")
+        val r = runCatching {
+            File(context.filesDir, "library").copyRecursively(File(out, "library"), overwrite = true)
+            if (prefsFile.exists()) prefsFile.copyTo(File(out, "rigalong.xml"), overwrite = true)
+        }
+        Log.i(TAG, "backup ${if (r.isSuccess) "written" else "FAILED: ${r.exceptionOrNull()}"}: $out " +
+            "(${out.walkTopDown().count { it.isFile }} files)")
+    }
+
+    /** [stamp]'s backup instead of the library and the settings; then the app ends, so nothing writes over it. */
+    private fun restore(stamp: String) {
+        val from = File(context.getExternalFilesDir(null), "backup/$stamp")
+        if (stamp.isEmpty() || !File(from, "library").isDirectory) {
+            Log.e(TAG, "restore: no backup '$stamp' in ${from.parentFile}")
+            return
+        }
+        val lib = File(context.filesDir, "library")
+        val r = runCatching {
+            lib.deleteRecursively()
+            File(from, "library").copyRecursively(lib, overwrite = true)
+            File(from, "rigalong.xml").takeIf { it.exists() }?.copyTo(prefsFile, overwrite = true)
+        }
+        Log.i(TAG, "restore from $stamp ${if (r.isSuccess) "done" else "FAILED: ${r.exceptionOrNull()}"}; ending")
+        android.os.Process.killProcess(android.os.Process.myPid())
     }
 
     private fun stage(intent: Intent) {
