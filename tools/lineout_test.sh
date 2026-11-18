@@ -4,7 +4,8 @@
 # recorded by the Scarlett 2i2 on the ZBook (hw:Gen, 4 channels, inputs on 1-2) and analysed
 # there by lineout.py (copy it to the ZBook's home first: scp tools/lineout.py bk@zbookg5:).
 # The app must be on the Stage (off it, it is silent), on the seeded setlist.
-ADB=/c/Users/michi/AppData/Local/Android/Sdk/platform-tools/adb.exe
+# adb: $ADB if set, else the SDK's under %LOCALAPPDATA% (Windows), else the one on PATH.
+ADB=${ADB:-$( [ -n "$LOCALAPPDATA" ] && p="$(cygpath -u "$LOCALAPPDATA" 2>/dev/null)/Android/Sdk/platform-tools/adb.exe" && [ -x "$p" ] && echo "$p" || echo adb )}
 name=${1:-take}
 B="am broadcast -a com.rigalong"
 $ADB shell "$B.STAGE --ei song 2 --ei liveset 1 >/dev/null; $B.RESETPEAKS >/dev/null"

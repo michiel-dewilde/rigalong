@@ -2,7 +2,8 @@
 # lineout_engines.sh TAG : middle C held 2 s on a live set of each engine (the seeded songs),
 # recorded from the CP-88's line out; level and pitch of each, to compare two states of the app
 # (before and after a re-route, two builds). Needs lineout_note.py in the ZBook's home.
-ADB=/c/Users/michi/AppData/Local/Android/Sdk/platform-tools/adb.exe
+# adb: $ADB if set, else the SDK's under %LOCALAPPDATA% (Windows), else the one on PATH.
+ADB=${ADB:-$( [ -n "$LOCALAPPDATA" ] && p="$(cygpath -u "$LOCALAPPDATA" 2>/dev/null)/Android/Sdk/platform-tools/adb.exe" && [ -x "$p" ] && echo "$p" || echo adb )}
 tag=${1:-t}
 B="am broadcast -a com.rigalong"
 files=""
