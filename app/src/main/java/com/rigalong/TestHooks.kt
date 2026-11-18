@@ -43,7 +43,7 @@ class TestHooks(
             "NOTE", "CC", "PANIC", "STRESS", "PROFILE", "DUMP", "PARAM", "INSTANCE", "INSTRUMENT", "RESCAN",
             "MASTER", "CONCEAL", "RESETPEAKS", "FILL", "RENDERPRIO", "USBSTALL",
             "ROUTE", "OUTPUT", "SHARING", "RATE", "RESET", "REINIT", "DEVHEALTH", "SYSEX", "MEASURE",
-            "STAGE", "DEVICESELFTEST", "DEVICEWRITESELECT", "RESET_LIBRARY", "BACKUP", "RESTORE")
+            "STAGE", "DEVICESELFTEST", "DEVICEWRITESELECT", "RESET_LIBRARY", "BACKUP", "RESTORE", "EXPORT", "IMPORT")
     }
 
     fun register() {
@@ -223,7 +223,36 @@ class TestHooks(
             "BACKUP" -> backup()
             // A backup put back, and the app ended (start it again):  --es from 20261118-140000
             "RESTORE" -> restore(intent.getStringExtra("from").orEmpty())
+            // A setlist with its songs (and what they use), as Library > Export makes it, to
+            //   files/export/<name>.rigalong.tar:   --es setlist "Missy"   (part of its name)
+            // With --ez environments true, every environment goes with it.
+            "EXPORT" -> exportSetlist(intent.getStringExtra("setlist").orEmpty(), intent.getBooleanExtra("environments", false))
+            // A library archive from the app's files folder, as Library > Import takes it:  --es file X.rigalong.tar
+            "IMPORT" -> importArchive(intent.getStringExtra("file").orEmpty())
         }
+    }
+
+    private fun exportSetlist(name: String, environments: Boolean) {
+        val sl = library.setlists().firstOrNull { it.version.name.contains(name, ignoreCase = true) }
+        if (sl == null) {
+            Log.e(TAG, "export: no setlist like '$name' in ${library.setlists().map { it.version.name }}")
+            return
+        }
+        val ids = listOf(sl.id) + library.songsOf(sl.id).mapNotNull { it.first?.id } +
+            (if (environments) library.environments().map { it.id } else emptyList())
+        val out = File(context.getExternalFilesDir(null), "export/${sl.version.name}.rigalong.tar")
+        out.parentFile?.mkdirs()
+        val r = runCatching { out.outputStream().use { com.rigalong.model.Exchange.export(library.store, ids, it) } }
+        Log.i(TAG, "export of '${sl.version.name}' (${ids.size} entries) ${if (r.isSuccess) "written" else "FAILED: ${r.exceptionOrNull()}"}: $out")
+    }
+
+    private fun importArchive(file: String) {
+        val f = File(context.getExternalFilesDir(null), file)
+        val r = runCatching { f.inputStream().use { com.rigalong.model.Exchange.import(library.store, it) } }
+        r.onSuccess { res ->
+            Log.i(TAG, "import of $file: ${res.objects} objects, " + res.results.values.groupingBy { it::class.simpleName }.eachCount())
+            player.reload()
+        }.onFailure { Log.e(TAG, "import of $file FAILED: $it") }
     }
 
     private val prefsFile get() = File(context.dataDir, "shared_prefs/rigalong.xml")
