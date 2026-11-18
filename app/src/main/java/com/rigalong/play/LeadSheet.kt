@@ -38,11 +38,19 @@ class LeadSheet(private val prefs: SharedPreferences, private val store: Store) 
             .putBoolean("sheet.keysTurnPages", keysTurnPages).apply()
     }
 
-    /** In 2-up a half turn moves one page, so the right page becomes the left (I9.3). */
-    private fun turnStep() = if (twoUp && !halfTurn) 2 else 1
+    /**
+     * How many pages the stage SHOWS now: two side by side only in landscape,
+     * whatever [twoUp] says (the stage sets it). Turning counted from the
+     * setting stopped an upright sheet of two pages at its first page, for the
+     * swipe and the page keys alike (Michiel, 2026-11-18).
+     */
+    var showing by mutableIntStateOf(1)
+
+    /** With two pages shown a half turn moves one page, so the right page becomes the left (I9.3); else both. */
+    private fun turnStep() = if (showing == 2 && !halfTurn) 2 else 1
 
     fun forward() {
-        val last = (pages - (if (twoUp) 2 else 1)).coerceAtLeast(0)
+        val last = (pages - showing).coerceAtLeast(0)
         page = (page + turnStep()).coerceAtMost(last)
     }
 

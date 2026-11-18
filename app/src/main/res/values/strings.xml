@@ -338,7 +338,7 @@
     <string name="stage_dnd">Do Not Disturb while the app is in front (alarms and media still sound)</string>
     <string name="lead_sheets">Lead sheets</string>
     <string name="two_up">Two pages side by side (landscape)</string>
-    <string name="half_turn">Half turns: the right page moves to the left</string>
+    <string name="half_turn">With two pages shown, turn one page at a time (the right page moves to the left); off: both at once. Swipes and page keys alike</string>
     <string name="keys_turn_pages">Page-turner keys turn pages when a song has a lead sheet (otherwise: live sets)</string>
     <string name="mode_alsa">ALSA</string>
     <string name="mode_usb_interface">USB interface</string>

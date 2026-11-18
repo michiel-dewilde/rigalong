@@ -65,6 +65,8 @@ internal fun StageScreen(player: SongPlayer, host: EngineHost, health: String = 
     }
     BoxWithConstraints(Modifier.fillMaxSize()) {
         val portrait = maxHeight > maxWidth
+        val two = player.sheet.twoUp && !portrait
+        LaunchedEffect(two) { player.sheet.showing = if (two) 2 else 1 }
         val sheetView = @Composable { m: Modifier ->
             LeadSheetView(sheet, player.sheet.page, player.sheet.twoUp && !portrait, { player.sheet.pages = it }, m,
                 onForward = player.sheet::forward, onBack = player.sheet::back)
