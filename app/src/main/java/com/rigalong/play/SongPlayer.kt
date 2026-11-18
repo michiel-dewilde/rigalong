@@ -432,6 +432,29 @@ class SongPlayer(private val lib: Library, host: EngineHost, private val prefs: 
         }
     }
 
+    /**
+     * The Leslie or the percussion changed by the keyboard -- a pedal or a
+     * slider through setBfree's own controller map: the stage shows it,
+     * "Store in this live set" keeps it, and the song change puts it back, as
+     * if moved on the stage. Polled.
+     */
+    private fun followLeslie() {
+        val id = setBfreeId ?: return
+        if (settling) return
+        val node = setBfreeNode() ?: return
+        for (name in listOf(SETBFREE_LESLIE, SETBFREE_PERC)) {
+            val p = setBfreeParam(node, name) ?: continue
+            val shown = setBfree[name] ?: continue
+            val now = runCatching { NativeBridge.nativeGetNodeParam(node, p) }.getOrNull() ?: continue
+            if (now == shown) continue
+            val key = "$id.$name"
+            touch(key, switcher?.currentValue(key) ?: shown.toDouble())
+            engines.noteChanged(id, name, shown)
+            switcher?.noteValue(key, now.toDouble())
+            setBfree[name] = now
+        }
+    }
+
     /** A stage setBfree control moved: heard at once, and kept in mind for "Store in live set". */
     fun setSetBfree(name: String, v: Float) {
         val node = setBfreeNode() ?: return
@@ -587,6 +610,7 @@ class SongPlayer(private val lib: Library, host: EngineHost, private val prefs: 
         watchMidiOut()
         settle()
         pollControls()
+        followLeslie()
         midiLearn.poll()
         metronome.poll()
         takeSelections()

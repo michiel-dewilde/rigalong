@@ -434,6 +434,19 @@ void SetBfreeNode::process(const ProcessArgs& args) {
             uint8_t msg[3] = {e.status, e.data1, e.data2};
             parse_raw_midi_data(mInst, msg, 3);
         }
+        // THE LESLIE AND THE PERCUSSION AS setBfree HAS THEM NOW. Its own
+        // controller map turns a pedal (rotary.speed-toggle, CC 64) or a slider
+        // (rotary.speed-preset, CC 1) into a speed change inside the engine,
+        // and percussion on CC 66/80 likewise; this node's values -- what the
+        // stage shows, what is stored -- did not follow (Michiel, 2026-11-17).
+        // Read back after the MIDI; the stage polls them.
+        static const int kUi[3] = {1, 0, 2};   // WHIRL_SLOW 0, WHIRL_STOP 1, WHIRL_FAST 2 -> stop 0 / slow 1 / fast 2
+        const int sel = mInst->whirl->revSelect;
+        if (sel >= 0 && sel < 3 && std::lround(mParams[kRotary]) != kUi[sel]) {
+            mParams[kRotary] = static_cast<float>(kUi[sel]);
+        }
+        const float perc = mInst->synth->percEnabled ? 1.0f : 0.0f;
+        if ((mParams[kPercEnable] > 0.5f) != (perc > 0.5f)) mParams[kPercEnable] = perc;
     }
     renderTo(args.numFrames);
 

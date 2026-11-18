@@ -163,6 +163,17 @@ class EngineRack(private val host: EngineHost, private val note: (String) -> Uni
         for ((name, v) in kept) paramIndex(node, name)?.let { NativeBridge.nativeSetNodeParam(node, it, v) }
     }
 
+    /**
+     * The stage song's instance [id] had [param] changed inside its engine --
+     * setBfree's Leslie by a pedal -- from [before]: remembered like a write,
+     * so the song change puts it back.
+     */
+    fun noteChanged(id: String, param: String, before: Float) {
+        val i = onEngine[id] ?: return
+        if (param == "Level" || busy(i)) return
+        presetValues.getOrPut(i) { LinkedHashMap() }.putIfAbsent(param, before)
+    }
+
     /** A sound parameter of the stage song's instance [id], from the stage (setBfree's drawbars). */
     fun setParam(id: String, param: String, v: Float) {
         onEngine[id]?.let { setParamAt(it, param, v) }
