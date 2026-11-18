@@ -108,11 +108,14 @@ fun AppUi(player: SongPlayer, lib: Library, host: EngineHost) {
         // Edge to edge is the rule at target SDK 36: keep clear of the status
         // and navigation bars, and of a display cutout, ourselves.
         Column(Modifier.fillMaxSize().safeDrawingPadding().padding(12.dp)) {
-            TopBar(player, health, screen, songsUnsaved = songsEdit.unsaved, onScreen = { screen = it })
-            Spacer(Modifier.height(8.dp))
+            // A lead sheet full screen on the stage takes the top bar's room too; its own row has PANIC.
+            if (!(screen == Screen.STAGE && player.sheet.fullScreenShown)) {
+                TopBar(player, health, screen, songsUnsaved = songsEdit.unsaved, onScreen = { screen = it })
+                Spacer(Modifier.height(8.dp))
+            }
             Box(Modifier.weight(1f)) {
                 when (screen) {
-                    Screen.STAGE -> StageScreen(player, host)
+                    Screen.STAGE -> StageScreen(player, host, health)
                     Screen.SONGS -> SongsScreen(player, lib, host, songsEdit)
                     Screen.LIBRARY -> LibraryScreen(player, lib, host, onOpened = { screen = Screen.STAGE })
                     Screen.SETUP -> SetupScreen(player, host, lib)

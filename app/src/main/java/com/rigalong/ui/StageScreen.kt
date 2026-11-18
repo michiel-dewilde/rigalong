@@ -25,6 +25,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -49,7 +50,7 @@ import com.rigalong.play.EngineHost
 /* The stage: the song, its live sets, the levels, setBfree's drawbars, the master and the tempo. */
 
 @Composable
-internal fun StageScreen(player: SongPlayer, host: EngineHost) {
+internal fun StageScreen(player: SongPlayer, host: EngineHost, health: String = "") {
     // With a lead sheet the screen is split between it and the controls (S9.1, S15.3)
     // -- on a screen with room for both: a tablet, an unfolded foldable. On a
     // phone (its short side under 600 dp, Android's line between the two) the
@@ -65,18 +66,32 @@ internal fun StageScreen(player: SongPlayer, host: EngineHost) {
     BoxWithConstraints(Modifier.fillMaxSize()) {
         val portrait = maxHeight > maxWidth
         val sheetView = @Composable { m: Modifier ->
-            LeadSheetView(sheet, player.sheet.page, player.sheet.twoUp && !portrait, { player.sheet.pages = it }, m)
+            LeadSheetView(sheet, player.sheet.page, player.sheet.twoUp && !portrait, { player.sheet.pages = it }, m,
+                onForward = player.sheet::forward, onBack = player.sheet::back)
+        }
+        if (player.sheet.fullScreen) {
+            FullScreenSheet(player, health) { m -> sheetView(m) }
+            return@BoxWithConstraints
+        }
+        // The sheet with its way to full screen in a corner, where a page is usually blank.
+        val sheetWithButton = @Composable { m: Modifier ->
+            Box(m) {
+                sheetView(Modifier.fillMaxSize())
+                SheetButton(stringResource(R.string.sheet_full_screen), Modifier.align(Alignment.TopEnd).padding(6.dp)) {
+                    player.sheet.fullScreen = true
+                }
+            }
         }
         if (portrait) {
             // Portrait: the sheet above, the controls below (S15.4).
             Column(Modifier.fillMaxSize()) {
-                sheetView(Modifier.fillMaxWidth().weight(0.6f))
+                sheetWithButton(Modifier.fillMaxWidth().weight(0.6f))
                 Spacer(Modifier.height(8.dp))
                 StageControls(player, host, Modifier.fillMaxWidth().weight(0.4f))
             }
         } else {
             Row(Modifier.fillMaxSize()) {
-                sheetView(Modifier.fillMaxHeight().weight(0.6f))
+                sheetWithButton(Modifier.fillMaxHeight().weight(0.6f))
                 Spacer(Modifier.width(10.dp))
                 StageControls(player, host, Modifier.fillMaxHeight().weight(0.4f))
             }
@@ -258,6 +273,53 @@ private fun stageSounds(player: SongPlayer): List<com.rigalong.model.RackInstanc
     val all = player.rack?.instances.orEmpty()
     if (player.stageAllSounds) return all
     return all.filter { player.engines.playing[it.id] == true }.ifEmpty { all }
+}
+
+/**
+ * The lead sheet as large as the screen allows (Michiel, 2026-11-18): one slim
+ * row -- the previous and next song, which song and live set this is, what the
+ * status line would warn of, PANIC, and the way back -- and the sheet below.
+ * Live sets still come from the CP-88's buttons and the page keys still turn
+ * pages; the app's own top bar is hidden while this shows (AppUi).
+ */
+@Composable
+private fun FullScreenSheet(player: SongPlayer, health: String, sheet: @Composable (Modifier) -> Unit) {
+    // Android's own bars out of the way too, while this shows; a swipe from the edge brings them back.
+    val view = androidx.compose.ui.platform.LocalView.current
+    DisposableEffect(view) {
+        val window = (view.context as? android.app.Activity)?.window
+        val bars = window?.let { androidx.core.view.WindowCompat.getInsetsController(it, view) }
+        bars?.systemBarsBehavior = androidx.core.view.WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+        bars?.hide(androidx.core.view.WindowInsetsCompat.Type.systemBars())
+        onDispose { bars?.show(androidx.core.view.WindowInsetsCompat.Type.systemBars()) }
+    }
+    Column(Modifier.fillMaxSize()) {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp),
+            modifier = Modifier.fillMaxWidth().height(52.dp)) {
+            SheetButton("◀", enabled = player.songIndex > 0) { player.previousSong() }
+            Column(Modifier.weight(1f)) {
+                Text((player.songNames.getOrNull(player.songIndex) ?: "—") +
+                    (player.liveSetNames.getOrNull(player.liveSetIndex)?.let { "  ·  $it" } ?: ""),
+                    fontSize = 18.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                if (health.startsWith("!")) Text(health, color = Warn, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
+            SheetButton("▶", enabled = player.songIndex + 1 < player.songNames.size) { player.nextSong() }
+            androidx.compose.material3.Button(onClick = player.engines::panic, colors = androidx.compose.material3.ButtonDefaults.buttonColors(containerColor = Danger),
+                modifier = Modifier.height(44.dp)) { Text(stringResource(R.string.panic), fontWeight = FontWeight.Bold, color = Color.White) }
+            SheetButton(stringResource(R.string.sheet_back_to_stage)) { player.sheet.fullScreen = false }
+        }
+        Spacer(Modifier.height(4.dp))
+        sheet(Modifier.fillMaxWidth().weight(1f))
+    }
+}
+
+/** A small button over or beside the lead sheet, readable on the page's white. */
+@Composable
+private fun SheetButton(label: String, modifier: Modifier = Modifier, enabled: Boolean = true, onClick: () -> Unit) {
+    Box(modifier.background(Panel.copy(alpha = if (enabled) 0.85f else 0.4f), RoundedCornerShape(8.dp))
+        .clickable(enabled = enabled, onClick = onClick).padding(horizontal = 14.dp, vertical = 10.dp)) {
+        Text(label, color = if (enabled) Color.White else Dim, fontSize = 16.sp)
+    }
 }
 
 /** A lead sheet is shown where the screen's short side has at least this many dp: tablets, not phones. */

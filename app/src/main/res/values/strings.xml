@@ -256,6 +256,8 @@
 
     <string name="attach_lead_sheet">Lead sheet…</string>
     <string name="remove_lead_sheet">Remove lead sheet</string>
+    <string name="sheet_full_screen">Full screen</string>
+    <string name="sheet_back_to_stage">Back to the stage</string>
     <string name="lead_sheet_failed">The lead sheet could not be attached: %1$s</string>
     <string name="lead_sheet_unreadable">This lead sheet cannot be opened.</string>
 

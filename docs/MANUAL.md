@@ -87,6 +87,11 @@ What you play from.
   (the top in portrait), one or two pages at a time. On a phone (a screen
   whose short side is under 600 dp) it is not shown: it would be too small
   to read and would leave no room for the controls. Any tablet shows it.
+  **Full screen** (in the sheet's corner) gives it the whole screen, with
+  one slim row above: the previous and next song, the song and live set,
+  any warning, PANIC and **Back to the stage**. The CP88/CP73's live set
+  buttons and the page turner work as always. A swipe on the sheet turns
+  the page: to the left forward, to the right back.
 
 **Footswitches and page turners**: Bluetooth page turners such as the
 PageFlip Butterfly work as keyboards.

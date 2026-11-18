@@ -5,6 +5,8 @@ import android.graphics.Color as AColor
 import android.graphics.pdf.PdfRenderer
 import android.os.ParcelFileDescriptor
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -13,6 +15,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -55,6 +58,12 @@ class SheetRenderer(file: File) : AutoCloseable {
         }
     }
 
+    /** Page [index]'s width over its height (1/1.414 for A4 upright); A4's for a page that is not there. */
+    fun aspect(index: Int): Float = synchronized(this) {
+        if (index !in 0 until renderer.pageCount) return 0.7071f
+        renderer.openPage(index).use { it.width.toFloat() / it.height.coerceAtLeast(1) }
+    }
+
     override fun close() {
         synchronized(this) {
             renderer.close()
@@ -80,7 +89,8 @@ fun pdfPageCount(bytes: ByteArray, scratchDir: File): Int {
 }
 
 @Composable
-fun LeadSheetView(file: File, firstPage: Int, twoUp: Boolean, onPageCount: (Int) -> Unit, modifier: Modifier = Modifier) {
+fun LeadSheetView(file: File, firstPage: Int, twoUp: Boolean, onPageCount: (Int) -> Unit, modifier: Modifier = Modifier,
+                  onForward: () -> Unit = {}, onBack: () -> Unit = {}) {
     val sheet = remember(file) { runCatching { SheetRenderer(file) }.getOrNull() }
     DisposableEffect(sheet) { onDispose { sheet?.close() } }
     if (sheet == null) {
@@ -90,16 +100,39 @@ fun LeadSheetView(file: File, firstPage: Int, twoUp: Boolean, onPageCount: (Int)
         return
     }
     LaunchedEffect(sheet) { onPageCount(sheet.pageCount) }
-    BoxWithConstraints(modifier) {
+    // A swipe turns the page, as the page keys do: to the left forward, to the right back.
+    var swiped by remember { mutableStateOf(0f) }
+    BoxWithConstraints(modifier.pointerInput(sheet) {
+        val far = 48.dp.toPx()
+        detectHorizontalDragGestures(
+            onDragStart = { swiped = 0f },
+            onDragEnd = { if (swiped < -far) onForward() else if (swiped > far) onBack() },
+            onHorizontalDrag = { change, dx -> change.consume(); swiped += dx })
+    }) {
+        // The pages as large as the room allows at their own proportions, side by
+        // side as a pair with a small gap -- centred together, so what room is left
+        // over is outside the pair, not a stretch between the pages (Michiel, 2026-11-18).
         val columns = if (twoUp) 2 else 1
-        val widthPx = (constraints.maxWidth / columns).coerceAtLeast(200)
-        Row(Modifier.fillMaxSize(), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+        val density = androidx.compose.ui.platform.LocalDensity.current
+        val gapPx = with(density) { PAGE_GAP.toPx() }
+        val aspect = remember(sheet, firstPage) { sheet.aspect(firstPage) }
+        val roomW = (constraints.maxWidth - gapPx * (columns - 1)) / columns
+        val roomH = constraints.maxHeight.toFloat()
+        val pageW = minOf(roomW, roomH * aspect).coerceAtLeast(1f)
+        val pageH = pageW / aspect
+        val pageSize = with(density) { androidx.compose.ui.unit.DpSize(pageW.toDp(), pageH.toDp()) }
+        Row(Modifier.fillMaxSize(), horizontalArrangement = Arrangement.spacedBy(PAGE_GAP, Alignment.CenterHorizontally),
+            verticalAlignment = Alignment.CenterVertically) {
             for (k in 0 until columns) {
-                PageImage(sheet, firstPage + k, widthPx, Modifier.weight(1f).fillMaxHeight())
+                PageImage(sheet, firstPage + k, pageW.toInt().coerceAtLeast(200),
+                    Modifier.size(pageSize))
             }
         }
     }
 }
+
+/** Between two pages side by side. */
+private val PAGE_GAP = 8.dp
 
 @Composable
 private fun PageImage(sheet: SheetRenderer, index: Int, widthPx: Int, modifier: Modifier) {

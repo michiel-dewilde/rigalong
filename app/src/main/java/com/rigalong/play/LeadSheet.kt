@@ -55,5 +55,11 @@ class LeadSheet(private val prefs: SharedPreferences, private val store: Store) 
      */
     var screenFits by mutableStateOf(true)
 
+    /** The sheet as large as the screen allows, the stage's controls out of the way (Michiel, 2026-11-18). */
+    var fullScreen by mutableStateOf(false)
+
+    /** Full screen is in force: asked for, a sheet open, and room for it. */
+    val fullScreenShown: Boolean get() = fullScreen && file != null && screenFits
+
     val turnsPages: Boolean get() = keysTurnPages && file != null && screenFits
 }
