@@ -84,15 +84,17 @@ What you play from.
 * **On-screen keys**: when no MIDI controller is attached, a keyboard at the
   bottom of every screen plays what the current live set plays.
 * **Lead sheet**: when the song has one, it takes the left part of the screen
-  (the top in portrait), one or two pages at a time.
+  (the top in portrait), one or two pages at a time. On a phone (a screen
+  whose short side is under 600 dp) it is not shown: it would be too small
+  to read and would leave no room for the controls. Any tablet shows it.
 
 **Footswitches and page turners**: Bluetooth page turners such as the
 PageFlip Butterfly work as keyboards.
 
 * Page Down, right arrow or space goes forward; Page Up or left arrow goes
   back.
-* When the song has a lead sheet they turn pages; otherwise they move between
-  live sets. Setup can change this.
+* When the song has a lead sheet they turn pages; otherwise (and on a phone)
+  they move between live sets. Setup can change this.
 * MIDI footswitches, including the CP88/CP73's foot switch jacks, work too
   once you have taught them in Setup.
 

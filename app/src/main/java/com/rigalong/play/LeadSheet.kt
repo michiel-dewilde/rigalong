@@ -49,5 +49,11 @@ class LeadSheet(private val prefs: SharedPreferences, private val store: Store) 
     fun back() { page = (page - turnStep()).coerceAtLeast(0) }
 
     /** A page-turner key turns pages here: the song has a lead sheet and the setup says so. */
-    val turnsPages: Boolean get() = keysTurnPages && file != null
+    /**
+     * The screen has room for a lead sheet (the stage says; see StageScreen):
+     * where it has not, none is shown and the page keys select live sets.
+     */
+    var screenFits by mutableStateOf(true)
+
+    val turnsPages: Boolean get() = keysTurnPages && file != null && screenFits
 }

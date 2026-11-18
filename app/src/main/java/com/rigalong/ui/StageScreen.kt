@@ -50,8 +50,14 @@ import com.rigalong.play.EngineHost
 
 @Composable
 internal fun StageScreen(player: SongPlayer, host: EngineHost) {
-    // With a lead sheet the screen is split between it and the controls (S9.1, S15.3).
-    val sheet = player.sheet.file
+    // With a lead sheet the screen is split between it and the controls (S9.1, S15.3)
+    // -- on a screen with room for both: a tablet, an unfolded foldable. On a
+    // phone (its short side under 600 dp, Android's line between the two) the
+    // sheet would be too small to read and would squeeze the controls away, so
+    // it is not shown, and the page keys select live sets (Michiel, 2026-11-18).
+    val fits = androidx.compose.ui.platform.LocalConfiguration.current.smallestScreenWidthDp >= SHEET_MIN_SCREEN_DP
+    LaunchedEffect(fits) { player.sheet.screenFits = fits }
+    val sheet = player.sheet.file?.takeIf { fits }
     if (sheet == null) {
         StageControls(player, host, Modifier.fillMaxSize())
         return
@@ -254,6 +260,8 @@ private fun stageSounds(player: SongPlayer): List<com.rigalong.model.RackInstanc
     return all.filter { player.engines.playing[it.id] == true }.ifEmpty { all }
 }
 
+/** A lead sheet is shown where the screen's short side has at least this many dp: tablets, not phones. */
+private const val SHEET_MIN_SCREEN_DP = 600
 private const val LEVEL_MIN = 110f
 private const val MASTER_MIN = 90f
 
